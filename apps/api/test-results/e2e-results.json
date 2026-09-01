@@ -1,0 +1,1221 @@
+{
+  "config": {
+    "configFile": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\playwright.config.ts",
+    "rootDir": "C:/Projetos/docflow-mvp/apps/api/e2e/specs",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "../test-results/e2e-html",
+          "open": "never"
+        }
+      ],
+      [
+        "json",
+        {
+          "outputFile": "../test-results/e2e-results.json"
+        }
+      ],
+      [
+        "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\reporters\\readiness-reporter.ts",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "C:/Projetos/docflow-mvp/apps/api/test-results/e2e-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "C:/Projetos/docflow-mvp/apps/api/e2e/specs",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 180000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.55.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "01-auth.spec.ts",
+      "file": "01-auth.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Auth critical path @flow",
+          "file": "01-auth.spec.ts",
+          "line": 7,
+          "column": 6,
+          "specs": [
+            {
+              "title": "POST /auth/login issues JWT + refresh; /auth/me and refresh rotate @flow",
+              "ok": true,
+              "tags": [
+                "flow",
+                "flow"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 966,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:20.991Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "791b3c4e0869e77b2651-5ab968fc32f7b028099a",
+              "file": "01-auth.spec.ts",
+              "line": 8,
+              "column": 7
+            },
+            {
+              "title": "invalid credentials return 401 without leaking tenant existence @flow @secrets",
+              "ok": true,
+              "tags": [
+                "flow",
+                "flow",
+                "secrets"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 597,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:21.985Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "791b3c4e0869e77b2651-ba68a71d5120fae0926e",
+              "file": "01-auth.spec.ts",
+              "line": 52,
+              "column": 7
+            },
+            {
+              "title": "expired token and wrong JWT secret are rejected with 401 @flow @rbac",
+              "ok": true,
+              "tags": [
+                "flow",
+                "flow",
+                "rbac"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 365,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:22.594Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "791b3c4e0869e77b2651-ec010eb030666a0857cf",
+              "file": "01-auth.spec.ts",
+              "line": 76,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "02-documents-to-payment.spec.ts",
+      "file": "02-documents-to-payment.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Document upload → extract → verify → payable @flow",
+          "file": "02-documents-to-payment.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "upload PDF, apply AT-QR, manual verify, generate payable @flow",
+              "ok": false,
+              "tags": [
+                "flow",
+                "flow"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 470,
+                      "error": {
+                        "message": "Error: {\"statusCode\":400,\"error\":\"Bad Request\",\"message\":\"File is required\",\"path\":\"/api/v1/documents/upload\",\"timestamp\":\"2026-08-30T23:45:23.443Z\",\"requestId\":\"dc7adba8-183f-44d5-baac-812af152aac5\"}\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m",
+                        "stack": "Error: {\"statusCode\":400,\"error\":\"Bad Request\",\"message\":\"File is required\",\"path\":\"/api/v1/documents/upload\",\"timestamp\":\"2026-08-30T23:45:23.443Z\",\"requestId\":\"dc7adba8-183f-44d5-baac-812af152aac5\"}\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts:35:56",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                          "column": 56,
+                          "line": 35
+                        },
+                        "snippet": "  33 |       { origin: 'UPLOAD', type: 'FATURA_RECEBIDA' },\n  34 |     );\n> 35 |     expect(upload.status, JSON.stringify(upload.body)).toBe(201);\n     |                                                        ^\n  36 |     const doc = unwrap<{ id: string; status: string; fileName: string }>(upload.body);\n  37 |     expect(doc.id).toBeTruthy();\n  38 |     expect(doc.status).toBe('NOVO');"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                            "column": 56,
+                            "line": 35
+                          },
+                          "message": "Error: {\"statusCode\":400,\"error\":\"Bad Request\",\"message\":\"File is required\",\"path\":\"/api/v1/documents/upload\",\"timestamp\":\"2026-08-30T23:45:23.443Z\",\"requestId\":\"dc7adba8-183f-44d5-baac-812af152aac5\"}\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n\n  33 |       { origin: 'UPLOAD', type: 'FATURA_RECEBIDA' },\n  34 |     );\n> 35 |     expect(upload.status, JSON.stringify(upload.body)).toBe(201);\n     |                                                        ^\n  36 |     const doc = unwrap<{ id: string; status: string; fileName: string }>(upload.body);\n  37 |     expect(doc.id).toBeTruthy();\n  38 |     expect(doc.status).toBe('NOVO');\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts:35:56"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:22.986Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                        "column": 56,
+                        "line": 35
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "559522e75bcd09df7124-1e093c3b5ddd191d444f",
+              "file": "02-documents-to-payment.spec.ts",
+              "line": 6,
+              "column": 7
+            },
+            {
+              "title": "image upload is accepted and listed in inbox pagination @flow",
+              "ok": false,
+              "tags": [
+                "flow",
+                "flow"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 1082,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts:108:27",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                          "column": 27,
+                          "line": 108
+                        },
+                        "snippet": "  106 |       { origin: 'UPLOAD' },\n  107 |     );\n> 108 |     expect(upload.status).toBe(201);\n      |                           ^\n  109 |\n  110 |     const inbox = await api.data<{\n  111 |       items: unknown[];"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                            "column": 27,
+                            "line": 108
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n\n  106 |       { origin: 'UPLOAD' },\n  107 |     );\n> 108 |     expect(upload.status).toBe(201);\n      |                           ^\n  109 |\n  110 |     const inbox = await api.data<{\n  111 |       items: unknown[];\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts:108:27"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:24.781Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\02-documents-to-payment.spec.ts",
+                        "column": 27,
+                        "line": 108
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "559522e75bcd09df7124-d1da75d88e6314ff0e79",
+              "file": "02-documents-to-payment.spec.ts",
+              "line": 96,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "03-reconciliation.spec.ts",
+      "file": "03-reconciliation.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Bank reconciliation full loop @flow",
+          "file": "03-reconciliation.spec.ts",
+          "line": 6,
+          "column": 6,
+          "specs": [
+            {
+              "title": "CSV import → STRONG match → accept/reject → no duplicate matches @flow @audit",
+              "ok": false,
+              "tags": [
+                "flow",
+                "flow",
+                "audit"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 1805,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\03-reconciliation.spec.ts:35:27",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\03-reconciliation.spec.ts",
+                          "column": 27,
+                          "line": 35
+                        },
+                        "snippet": "  33 |       { origin: 'UPLOAD', type: 'FATURA_RECEBIDA' },\n  34 |     );\n> 35 |     expect(upload.status).toBe(201);\n     |                           ^\n  36 |     const doc = unwrap<{ id: string }>(upload.body);\n  37 |\n  38 |     await api.data('PATCH', `/documents/${doc.id}`, {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\03-reconciliation.spec.ts",
+                            "column": 27,
+                            "line": 35
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m400\u001b[39m\n\n  33 |       { origin: 'UPLOAD', type: 'FATURA_RECEBIDA' },\n  34 |     );\n> 35 |     expect(upload.status).toBe(201);\n     |                           ^\n  36 |     const doc = unwrap<{ id: string }>(upload.body);\n  37 |\n  38 |     await api.data('PATCH', `/documents/${doc.id}`, {\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\03-reconciliation.spec.ts:35:27"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:27.202Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\03-reconciliation.spec.ts",
+                        "column": 27,
+                        "line": 35
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "db24fad4b2b53610b384-815cd8049fcb23180d2e",
+              "file": "03-reconciliation.spec.ts",
+              "line": 7,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "04-payments-sepa.spec.ts",
+      "file": "04-payments-sepa.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Payment scheduling & SEPA export @flow",
+          "file": "04-payments-sepa.spec.ts",
+          "line": 6,
+          "column": 6,
+          "specs": [
+            {
+              "title": "one-off + recurring schedules, approve, export valid pain.001 XML @flow",
+              "ok": false,
+              "tags": [
+                "flow",
+                "flow"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 2968,
+                      "error": {
+                        "message": "Error: POST /payments/schedule expected 201, got 400: {\"statusCode\":400,\"error\":\"ForeignKeyViolation\",\"message\":\"Foreign key constraint failed\",\"path\":\"/api/v1/payments/schedule\",\"timestamp\":\"2026-08-30T23:45:33.371Z\",\"requestId\":\"wave3-e2e\"}",
+                        "stack": "Error: POST /payments/schedule expected 201, got 400: {\"statusCode\":400,\"error\":\"ForeignKeyViolation\",\"message\":\"Foreign key constraint failed\",\"path\":\"/api/v1/payments/schedule\",\"timestamp\":\"2026-08-30T23:45:33.371Z\",\"requestId\":\"wave3-e2e\"}\n    at Api.data (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:120:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\04-payments-sepa.spec.ts:30:20",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                          "column": 13,
+                          "line": 120
+                        },
+                        "snippet": "   at ..\\helpers\\api.ts:120\n\n  118 |     const res = await this.json<{ data?: T } & T>(method, path, opts);\n  119 |     if (res.status !== expected) {\n> 120 |       throw new Error(\n      |             ^\n  121 |         `${method} ${path} expected ${expected}, got ${res.status}: ${JSON.stringify(res.body)}`,\n  122 |       );\n  123 |     }"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                            "column": 13,
+                            "line": 120
+                          },
+                          "message": "Error: POST /payments/schedule expected 201, got 400: {\"statusCode\":400,\"error\":\"ForeignKeyViolation\",\"message\":\"Foreign key constraint failed\",\"path\":\"/api/v1/payments/schedule\",\"timestamp\":\"2026-08-30T23:45:33.371Z\",\"requestId\":\"wave3-e2e\"}\n\n   at ..\\helpers\\api.ts:120\n\n  118 |     const res = await this.json<{ data?: T } & T>(method, path, opts);\n  119 |     if (res.status !== expected) {\n> 120 |       throw new Error(\n      |             ^\n  121 |         `${method} ${path} expected ${expected}, got ${res.status}: ${JSON.stringify(res.body)}`,\n  122 |       );\n  123 |     }\n    at Api.data (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:120:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\04-payments-sepa.spec.ts:30:20"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:30.394Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                        "column": 13,
+                        "line": 120
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "e443979587200aa63924-b614cdce50a422f1db18",
+              "file": "04-payments-sepa.spec.ts",
+              "line": 7,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "05-parties.spec.ts",
+      "file": "05-parties.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Party management + anti-fraud @flow",
+          "file": "05-parties.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "create vendor with NIF/IBAN, track IBAN history, anti-fraud checks @flow",
+              "ok": false,
+              "tags": [
+                "flow",
+                "flow"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 4472,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m400\u001b[39m\nReceived: \u001b[31m429\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m400\u001b[39m\nReceived: \u001b[31m429\u001b[39m\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\05-parties.spec.ts:45:28",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\05-parties.spec.ts",
+                          "column": 28,
+                          "line": 45
+                        },
+                        "snippet": "  43 |       },\n  44 |     });\n> 45 |     expect(invalid.status).toBe(400);\n     |                            ^\n  46 |     expect(JSON.stringify(invalid.body)).toMatch(/IBAN inválido/i);\n  47 |\n  48 |     const dupe = await api.json('POST', '/parties', {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\05-parties.spec.ts",
+                            "column": 28,
+                            "line": 45
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m400\u001b[39m\nReceived: \u001b[31m429\u001b[39m\n\n  43 |       },\n  44 |     });\n> 45 |     expect(invalid.status).toBe(400);\n     |                            ^\n  46 |     expect(JSON.stringify(invalid.body)).toMatch(/IBAN inválido/i);\n  47 |\n  48 |     const dupe = await api.json('POST', '/parties', {\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\05-parties.spec.ts:45:28"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:34.150Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\05-parties.spec.ts",
+                        "column": 28,
+                        "line": 45
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "20c3c5a89d9b4278457b-0b075368f94a501b0fa2",
+              "file": "05-parties.spec.ts",
+              "line": 6,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "06-multi-tenant.spec.ts",
+      "file": "06-multi-tenant.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Multi-tenant isolation @tenant @flow",
+          "file": "06-multi-tenant.spec.ts",
+          "line": 6,
+          "column": 6,
+          "specs": [
+            {
+              "title": "tenant A cannot read tenant B documents, parties, payments, or audit @tenant",
+              "ok": false,
+              "tags": [
+                "tenant",
+                "flow",
+                "tenant"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 5,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 8487,
+                      "error": {
+                        "message": "Error: POST /auth/register exhausted retries (429)",
+                        "stack": "Error: POST /auth/register exhausted retries (429)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:188:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\06-multi-tenant.spec.ts:11:15",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                          "column": 13,
+                          "line": 188
+                        },
+                        "snippet": "   at ..\\helpers\\api.ts:188\n\n  186 |     }\n  187 |     if (!body) {\n> 188 |       throw new Error('POST /auth/register exhausted retries (429)');\n      |             ^\n  189 |     }\n  190 |\n  191 |     if (overrides.withBank !== false) {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                            "column": 13,
+                            "line": 188
+                          },
+                          "message": "Error: POST /auth/register exhausted retries (429)\n\n   at ..\\helpers\\api.ts:188\n\n  186 |     }\n  187 |     if (!body) {\n> 188 |       throw new Error('POST /auth/register exhausted retries (429)');\n      |             ^\n  189 |     }\n  190 |\n  191 |     if (overrides.withBank !== false) {\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:188:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\06-multi-tenant.spec.ts:11:15"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:39.304Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                        "column": 13,
+                        "line": 188
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f0f46f808817b22711b9-355ce365f41a6acebf66",
+              "file": "06-multi-tenant.spec.ts",
+              "line": 7,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "07-security.spec.ts",
+      "file": "07-security.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Security: RBAC, XSS, IDOR, input validation @rbac @secrets",
+          "file": "07-security.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "OPERADOR cannot approve payables (ADMIN/APPROVER only) @rbac",
+              "ok": false,
+              "tags": [
+                "rbac",
+                "secrets",
+                "rbac"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 6,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 4378,
+                      "error": {
+                        "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.7\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n",
+                        "stack": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.7\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:8:19",
+                        "location": {
+                          "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                          "column": 4000,
+                          "line": 1
+                        }
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                            "column": 4000,
+                            "line": 1
+                          },
+                          "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.7\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:8:19"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:48.544Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                        "column": 4000,
+                        "line": 1
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "2758f7831d417d59cdcf-468da228d2b6d45fc06f",
+              "file": "07-security.spec.ts",
+              "line": 6,
+              "column": 7
+            },
+            {
+              "title": "XSS payloads in metadata are stored as data, not executed; errors stay JSON @secrets",
+              "ok": false,
+              "tags": [
+                "rbac",
+                "secrets",
+                "secrets"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 7,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 338,
+                      "error": {
+                        "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n",
+                        "stack": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:81:29",
+                        "location": {
+                          "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                          "column": 4000,
+                          "line": 1
+                        }
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                            "column": 4000,
+                            "line": 1
+                          },
+                          "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:81:29"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:53.598Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                        "column": 4000,
+                        "line": 1
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "2758f7831d417d59cdcf-c9763bbb91f0803fb3f7",
+              "file": "07-security.spec.ts",
+              "line": 77,
+              "column": 7
+            },
+            {
+              "title": "error envelope never leaks stack traces @secrets",
+              "ok": false,
+              "tags": [
+                "rbac",
+                "secrets",
+                "secrets"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 8,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 331,
+                      "error": {
+                        "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/documents/not-a-uuid\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n",
+                        "stack": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/documents/not-a-uuid\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:112:28",
+                        "location": {
+                          "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                          "column": 4000,
+                          "line": 1
+                        }
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                            "column": 4000,
+                            "line": 1
+                          },
+                          "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/documents/not-a-uuid\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\07-security.spec.ts:112:28"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:54.714Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                        "column": 4000,
+                        "line": 1
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "2758f7831d417d59cdcf-f53f1ab530c8ca9a63b9",
+              "file": "07-security.spec.ts",
+              "line": 110,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "09-errors.spec.ts",
+      "file": "09-errors.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Error scenarios @errors @secrets",
+          "file": "09-errors.spec.ts",
+          "line": 5,
+          "column": 6,
+          "specs": [
+            {
+              "title": "health liveness never leaks connection strings @secrets @errors",
+              "ok": false,
+              "tags": [
+                "errors",
+                "secrets",
+                "secrets",
+                "errors"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 9,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 347,
+                      "error": {
+                        "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/health\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n",
+                        "stack": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/health\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:8:30",
+                        "location": {
+                          "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                          "column": 4000,
+                          "line": 1
+                        }
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                            "column": 4000,
+                            "line": 1
+                          },
+                          "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → GET http://localhost:4000/api/v1/health\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:8:30"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:55.812Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                        "column": 4000,
+                        "line": 1
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "30723334ac8b94ce07b7-b1515dd1b16c5a20116a",
+              "file": "09-errors.spec.ts",
+              "line": 6,
+              "column": 7
+            },
+            {
+              "title": "malformed CSV returns 400 and does not crash @errors",
+              "ok": false,
+              "tags": [
+                "errors",
+                "secrets",
+                "errors"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 10,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 346,
+                      "error": {
+                        "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n",
+                        "stack": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:23:29",
+                        "location": {
+                          "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                          "column": 4000,
+                          "line": 1
+                        }
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                            "column": 4000,
+                            "line": 1
+                          },
+                          "message": "Error: apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\nCall log:\n\u001b[2m  - → POST http://localhost:4000/api/v1/auth/register\u001b[22m\n\u001b[2m    - user-agent: Playwright/1.55.0 (x64; windows 10.0) node/22.16\u001b[22m\n\u001b[2m    - accept: application/json\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - X-Request-Id: wave3-e2e\u001b[22m\n\u001b[2m    - Content-Type: application/json\u001b[22m\n\u001b[2m    - X-Forwarded-For: 203.0.113.3\u001b[22m\n\u001b[2m    - content-length: 194\u001b[22m\n\n    at apiRequestContext.fetch: connect ECONNREFUSED ::1:4000\n    at Api.raw (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:85:25)\n    at Api.json (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:100:28)\n    at Api.registerTenant (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:170:30)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:23:29"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:56.864Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "apiRequestContext.fetch: connect ECONNREFUSED :",
+                        "column": 4000,
+                        "line": 1
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "30723334ac8b94ce07b7-2d7e6486733bcf030d29",
+              "file": "09-errors.spec.ts",
+              "line": 21,
+              "column": 7
+            },
+            {
+              "title": "IBAN blacklist returns 400 with a user-friendly message @errors",
+              "ok": true,
+              "tags": [
+                "errors",
+                "secrets",
+                "errors"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 11,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 683,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:57.898Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "30723334ac8b94ce07b7-52f7ad1f13f64f711a39",
+              "file": "09-errors.spec.ts",
+              "line": 42,
+              "column": 7
+            },
+            {
+              "title": "duplicate party NIF returns 409 with helpful message @errors",
+              "ok": false,
+              "tags": [
+                "errors",
+                "secrets",
+                "errors"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 11,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 232,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m409\u001b[39m\nReceived: \u001b[31m429\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m409\u001b[39m\nReceived: \u001b[31m429\u001b[39m\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:82:25",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts",
+                          "column": 25,
+                          "line": 82
+                        },
+                        "snippet": "  80 |       data: { type: 'FORNECEDOR', name: 'Segundo', nif },\n  81 |     });\n> 82 |     expect(dupe.status).toBe(409);\n     |                         ^\n  83 |     expect(JSON.stringify(dupe.body)).toMatch(/Já existe entidade com este NIF/i);\n  84 |   });\n  85 |"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts",
+                            "column": 25,
+                            "line": 82
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m409\u001b[39m\nReceived: \u001b[31m429\u001b[39m\n\n  80 |       data: { type: 'FORNECEDOR', name: 'Segundo', nif },\n  81 |     });\n> 82 |     expect(dupe.status).toBe(409);\n     |                         ^\n  83 |     expect(JSON.stringify(dupe.body)).toMatch(/Já existe entidade com este NIF/i);\n  84 |   });\n  85 |\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts:82:25"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:58.596Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\09-errors.spec.ts",
+                        "column": 25,
+                        "line": 82
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "30723334ac8b94ce07b7-3fc9f5c64ed72d545a2e",
+              "file": "09-errors.spec.ts",
+              "line": 65,
+              "column": 7
+            },
+            {
+              "title": "invalid IBAN is rejected before DB write @errors",
+              "ok": true,
+              "tags": [
+                "errors",
+                "secrets",
+                "errors"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 12,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 780,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:45:59.515Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "30723334ac8b94ce07b7-336b5e3f993e6878f85b",
+              "file": "09-errors.spec.ts",
+              "line": 86,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "10-audit-consistency.spec.ts",
+      "file": "10-audit-consistency.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Audit trail + financial accuracy @audit @flow",
+          "file": "10-audit-consistency.spec.ts",
+          "line": 6,
+          "column": 6,
+          "specs": [
+            {
+              "title": "mutations write audit rows, hash chain is intact, amounts stay Decimal @audit",
+              "ok": false,
+              "tags": [
+                "audit",
+                "flow",
+                "audit"
+              ],
+              "tests": [
+                {
+                  "timeout": 180000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 12,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 677,
+                      "error": {
+                        "message": "Error: POST /payments/payables expected 201, got 429: {\"statusCode\":429,\"error\":\"InternalServerError\",\"message\":\"ThrottlerException: Too Many Requests\",\"path\":\"/api/v1/payments/payables\",\"timestamp\":\"2026-08-30T23:46:00.991Z\",\"requestId\":\"wave3-e2e\"}",
+                        "stack": "Error: POST /payments/payables expected 201, got 429: {\"statusCode\":429,\"error\":\"InternalServerError\",\"message\":\"ThrottlerException: Too Many Requests\",\"path\":\"/api/v1/payments/payables\",\"timestamp\":\"2026-08-30T23:46:00.991Z\",\"requestId\":\"wave3-e2e\"}\n    at Api.data (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:120:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\10-audit-consistency.spec.ts:43:22",
+                        "location": {
+                          "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                          "column": 13,
+                          "line": 120
+                        },
+                        "snippet": "   at ..\\helpers\\api.ts:120\n\n  118 |     const res = await this.json<{ data?: T } & T>(method, path, opts);\n  119 |     if (res.status !== expected) {\n> 120 |       throw new Error(\n      |             ^\n  121 |         `${method} ${path} expected ${expected}, got ${res.status}: ${JSON.stringify(res.body)}`,\n  122 |       );\n  123 |     }"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                            "column": 13,
+                            "line": 120
+                          },
+                          "message": "Error: POST /payments/payables expected 201, got 429: {\"statusCode\":429,\"error\":\"InternalServerError\",\"message\":\"ThrottlerException: Too Many Requests\",\"path\":\"/api/v1/payments/payables\",\"timestamp\":\"2026-08-30T23:46:00.991Z\",\"requestId\":\"wave3-e2e\"}\n\n   at ..\\helpers\\api.ts:120\n\n  118 |     const res = await this.json<{ data?: T } & T>(method, path, opts);\n  119 |     if (res.status !== expected) {\n> 120 |       throw new Error(\n      |             ^\n  121 |         `${method} ${path} expected ${expected}, got ${res.status}: ${JSON.stringify(res.body)}`,\n  122 |       );\n  123 |     }\n    at Api.data (C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts:120:13)\n    at C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\specs\\10-audit-consistency.spec.ts:43:22"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-08-30T23:46:00.313Z",
+                      "annotations": [],
+                      "attachments": [],
+                      "errorLocation": {
+                        "file": "C:\\Projetos\\docflow-mvp\\apps\\api\\e2e\\helpers\\api.ts",
+                        "column": 13,
+                        "line": 120
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "f932a0d93e93d8f6dc25-5bc01ffc99cb9fa5a715",
+              "file": "10-audit-consistency.spec.ts",
+              "line": 7,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-08-30T23:45:19.113Z",
+    "duration": 41906.015,
+    "expected": 5,
+    "skipped": 0,
+    "unexpected": 13,
+    "flaky": 0
+  }
+}

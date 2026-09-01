@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+nest-build.log
+jest-crm.log
+tsc.log
+
+# Environment — committed overrides via .env.example, real values via .env (local-only)
+.env
+.env.*
+!.env.example
+
+# Uploads / runtime artefacts
+uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tool state
+.gemini/
+.grok/
+.overclock-app/
+
+# Prisma migrations are committed, but generated artefacts are not
+# (the migrations folder IS committed — only the runtime DB and shadow DB
+# artefacts should be ignored, not the .sql files).

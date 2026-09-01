@@ -1,0 +1,86 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\soft-status.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock soft status"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\handoff-deliver.cmd\"",
+            "timeout": 5,
+            "statusMessage": "Overclock handoff delivery"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+- generic [active] [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: DocFlow
+          - generic [ref=e13]: Document Intelligence
+        - paragraph [ref=e14]: Gestão inteligente de documentos & conciliação
+      - region [ref=e15]:
+        - generic [ref=e16]:
+          - heading "Entrar" [level=2] [ref=e17]
+          - paragraph [ref=e18]: Aceda ao workspace da sua organização.
+        - generic [ref=e19]:
+          - generic [ref=e20]:
+            - generic [ref=e21]: Tenant (slug)*
+            - textbox "Tenant (slug)" [ref=e23]:
+              - /placeholder: a-minha-empresa
+            - paragraph [ref=e24]: Identificador único da sua organização.
+          - generic [ref=e25]:
+            - generic [ref=e26]: Email*
+            - textbox "Email" [ref=e28]
+          - generic [ref=e29]:
+            - generic [ref=e30]: Password*
+            - textbox "Password" [ref=e32]
+          - generic [ref=e33]:
+            - generic [ref=e34] [cursor=pointer]:
+              - checkbox "Manter sessão" [ref=e35]
+              - generic [ref=e36]: Manter sessão
+            - link "Esqueci-me da password" [ref=e37] [cursor=pointer]:
+              - /url: /forgot-password
+          - button "Entrar no DocFlow" [ref=e39] [cursor=pointer]
+        - generic [ref=e43]: ou
+        - link "Criar nova organização" [ref=e44] [cursor=pointer]:
+          - /url: /register
+        - paragraph [ref=e48]:
+          - text: Não tem conta?
+          - link "Comece agora" [ref=e49] [cursor=pointer]:
+            - /url: /register
+      - paragraph [ref=e50]:
+        - text: Ao continuar concorda com os
+        - link "Termos" [ref=e51] [cursor=pointer]:
+          - /url: /legal/terms
+        - text: e a
+        - link "Política de Privacidade" [ref=e52] [cursor=pointer]:
+          - /url: /legal/privacy
+        - text: .
+  - region "Notifications alt+T"

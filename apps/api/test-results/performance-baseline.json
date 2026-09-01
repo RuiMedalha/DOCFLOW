@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-08-30T23:46:00Z",
+  "note": "Incomplete harness — API process instability and throttle flood. Login sampled from server logs.",
+  "summary": [
+    {
+      "endpoint": "POST /auth/login",
+      "n": 2,
+      "min": 215,
+      "p50": 350,
+      "p95": 500,
+      "max": 586,
+      "budgetMs": 500,
+      "met": false
+    }
+  ],
+  "unmeasured": [
+    "POST /documents/upload (10MB)",
+    "POST /banking/csv/import (10k rows)",
+    "POST /reconciliation/run",
+    "POST /payments/sepa/export"
+  ]
+}

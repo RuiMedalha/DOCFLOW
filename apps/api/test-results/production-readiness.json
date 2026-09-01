@@ -1,0 +1,75 @@
+{
+  "goLive": "NO",
+  "generatedAt": "2026-08-30T23:46:01.235Z",
+  "counts": {
+    "passed": 5,
+    "failed": 13,
+    "skipped": 0
+  },
+  "checklist": [
+    {
+      "id": "flows",
+      "label": "All critical flows pass E2E tests",
+      "tag": "flow",
+      "ok": false,
+      "tested": 10,
+      "failed": 7
+    },
+    {
+      "id": "secrets",
+      "label": "No sensitive data in logs/errors",
+      "tag": "secrets",
+      "ok": false,
+      "tested": 9,
+      "failed": 6
+    },
+    {
+      "id": "perf",
+      "label": "Performance baselines met",
+      "tag": "perf",
+      "ok": false,
+      "tested": 0,
+      "failed": 0
+    },
+    {
+      "id": "tenant",
+      "label": "Multi-tenant isolation verified",
+      "tag": "tenant",
+      "ok": false,
+      "tested": 1,
+      "failed": 1
+    },
+    {
+      "id": "rbac",
+      "label": "RBAC working on all restricted routes",
+      "tag": "rbac",
+      "ok": false,
+      "tested": 4,
+      "failed": 3
+    },
+    {
+      "id": "audit",
+      "label": "Audit trail unbroken",
+      "tag": "audit",
+      "ok": false,
+      "tested": 2,
+      "failed": 2
+    }
+  ],
+  "failed": [
+    "upload PDF, apply AT-QR, manual verify, generate payable @flow",
+    "image upload is accepted and listed in inbox pagination @flow",
+    "CSV import → STRONG match → accept/reject → no duplicate matches @flow @audit",
+    "one-off + recurring schedules, approve, export valid pain.001 XML @flow",
+    "create vendor with NIF/IBAN, track IBAN history, anti-fraud checks @flow",
+    "tenant A cannot read tenant B documents, parties, payments, or audit @tenant",
+    "OPERADOR cannot approve payables (ADMIN/APPROVER only) @rbac",
+    "XSS payloads in metadata are stored as data, not executed; errors stay JSON @secrets",
+    "error envelope never leaks stack traces @secrets",
+    "health liveness never leaks connection strings @secrets @errors",
+    "malformed CSV returns 400 and does not crash @errors",
+    "duplicate party NIF returns 409 with helpful message @errors",
+    "mutations write audit rows, hash chain is intact, amounts stay Decimal @audit"
+  ],
+  "perfMisses": []
+}

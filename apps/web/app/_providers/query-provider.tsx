@@ -1,0 +1,31 @@
+'use client';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+
+/**
+ * DocFlow — TanStack Query provider.
+ *
+ * Single QueryClient per browser session; defaults tuned for an enterprise
+ * SaaS where most queries mutate quickly and shouldn't thrash the server.
+ */
+export function QueryProvider({ children }: { children: ReactNode }) {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            gcTime: 5 * 60_000,
+            refetchOnWindowFocus: false,
+            retry: 1,
+          },
+          mutations: {
+            retry: 0,
+          },
+        },
+      }),
+  );
+
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}

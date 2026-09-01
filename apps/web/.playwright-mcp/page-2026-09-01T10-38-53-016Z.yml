@@ -1,0 +1,116 @@
+- generic [active] [ref=e1]:
+  - link "Saltar para o conteúdo principal" [ref=e64] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e65]:
+    - complementary "Navegação principal" [ref=e66]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - link "DocFlow Document Intelligence" [ref=e69] [cursor=pointer]:
+            - /url: /dashboard
+            - generic [ref=e73]:
+              - generic [ref=e74]: DocFlow
+              - generic [ref=e75]: Document Intelligence
+          - button "Recolher barra lateral" [ref=e76] [cursor=pointer]
+        - generic [ref=e79]: demo
+        - navigation "Secções" [ref=e87]:
+          - list [ref=e88]:
+            - listitem [ref=e89]:
+              - link "Dashboard" [ref=e90] [cursor=pointer]:
+                - /url: /dashboard
+            - listitem [ref=e97]:
+              - link "Documentos" [ref=e98] [cursor=pointer]:
+                - /url: /documents
+            - listitem [ref=e103]:
+              - link "Banca" [ref=e104] [cursor=pointer]:
+                - /url: /banking
+            - listitem [ref=e108]:
+              - link "Conciliação" [ref=e109] [cursor=pointer]:
+                - /url: /reconciliation
+            - listitem [ref=e116]:
+              - link "CRM" [ref=e117] [cursor=pointer]:
+                - /url: /crm
+            - listitem [ref=e124]:
+              - link "Entidades" [ref=e125] [cursor=pointer]:
+                - /url: /parties
+            - listitem [ref=e132]:
+              - link "Pagamentos" [ref=e133] [cursor=pointer]:
+                - /url: /payments
+          - generic [ref=e138]: Configuração
+          - list [ref=e139]:
+            - listitem [ref=e140]:
+              - link "Definições" [ref=e141] [cursor=pointer]:
+                - /url: /settings
+            - listitem [ref=e146]:
+              - link "Ajuda" [ref=e147] [cursor=pointer]:
+                - /url: /help
+        - generic [ref=e152]: Sistema operacional
+    - generic [ref=e157]:
+      - banner [ref=e158]:
+        - navigation "Breadcrumb" [ref=e159]:
+          - list [ref=e160]:
+            - listitem [ref=e161]:
+              - generic [ref=e162]: Início
+        - generic [ref=e163]:
+          - button "Pesquisarâ€¦ âŒ˜K" [ref=e164] [cursor=pointer]:
+            - generic [ref=e168]: Pesquisarâ€¦
+            - generic [ref=e169]: âŒ˜K
+          - button "Mudar para tema claro" [ref=e170] [cursor=pointer]
+          - button "Notificações" [ref=e179] [cursor=pointer]
+          - button "Menu do utilizador" [ref=e184] [cursor=pointer]:
+            - generic [ref=e185]: A
+      - main [ref=e188]:
+        - generic [ref=e189]:
+          - generic [ref=e191]:
+            - heading "Dashboard" [level=1] [ref=e192]
+            - paragraph [ref=e193]: Visão geral da atividade, KPIs e conciliação.
+          - generic [ref=e194]: A carregar dados em tempo real…
+          - generic [ref=e197]:
+            - link [ref=e198] [cursor=pointer]:
+              - /url: /documents
+              - generic [ref=e201]:
+                - paragraph [ref=e202]: Documentos
+                - paragraph [ref=e203]: "0"
+            - link [ref=e208] [cursor=pointer]:
+              - /url: /banking
+              - generic [ref=e211]:
+                - paragraph [ref=e212]: Movimentos
+                - paragraph [ref=e213]: "0"
+            - link [ref=e218] [cursor=pointer]:
+              - /url: /parties
+              - generic [ref=e221]:
+                - paragraph [ref=e222]: Entidades
+                - paragraph [ref=e223]: "0"
+            - link [ref=e229] [cursor=pointer]:
+              - /url: /crm/contacts
+              - generic [ref=e232]:
+                - paragraph [ref=e233]: Contactos CRM
+                - paragraph [ref=e234]: "0"
+            - link [ref=e241] [cursor=pointer]:
+              - /url: /payments
+              - generic [ref=e244]:
+                - paragraph [ref=e245]: A pagar
+                - paragraph [ref=e246]: "0"
+            - link [ref=e251] [cursor=pointer]:
+              - /url: /reconciliation
+              - generic [ref=e254]:
+                - paragraph [ref=e255]: Conciliação
+                - paragraph [ref=e256]: "0"
+          - generic [ref=e261]:
+            - generic [ref=e262]:
+              - generic [ref=e263]:
+                - heading "Documentos recentes" [level=2] [ref=e264]
+                - link "Ver tudo" [ref=e265] [cursor=pointer]:
+                  - /url: /documents
+              - list
+            - generic [ref=e268]:
+              - generic [ref=e269]:
+                - heading "Sugestões de conciliação" [level=2] [ref=e270]
+                - link "Rever" [ref=e271] [cursor=pointer]:
+                  - /url: /reconciliation
+              - list
+  - region "Notifications alt+T"
+  - status [ref=e53]:
+    - generic [ref=e58]:
+      - text: Static route
+      - button "Hide static indicator" [ref=e59] [cursor=pointer]
+  - alert [ref=e63]

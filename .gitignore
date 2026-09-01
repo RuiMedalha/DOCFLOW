@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.turbo/
+
+# Env & secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+apps/api/.env
+apps/web/.env.local
+**/*.env
+**/*.env.local
+
+# User data — uploads and extracted test artifacts
+apps/api/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Cache
+.cache/
+.eslintcache
+*.tsbuildinfo

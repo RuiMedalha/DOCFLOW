@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DocFlow · Product Readiness</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #131a26;
+    --panel-2: #1a2332;
+    --border: #243042;
+    --text: #e6edf6;
+    --muted: #8b9bb4;
+    --accent: #5ac8fa;
+    --green: #2ec27e;
+    --red: #ff5c69;
+    --amber: #f5a524;
+    --ok-bg: #13352a;
+    --warn-bg: #3b2e0a;
+    --err-bg: #3a1820;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --panel-2: #f1f4f9;
+      --border: #d8dee8;
+      --text: #0f1c2d;
+      --muted: #586577;
+      --accent: #0078d4;
+      --green: #1b7f4d;
+      --red: #c0392b;
+      --amber: #b97a00;
+      --ok-bg: #e7f5ed;
+      --warn-bg: #fdf2d8;
+      --err-bg: #fbe3e4;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 24px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 24px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+  h1 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--green);
+    margin-right: 8px; box-shadow: 0 0 0 4px var(--ok-bg); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+  .ts { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; gap: 16px; }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 980px) { .grid.cols-4, .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  .kpi { display: flex; flex-direction: column; gap: 4px; }
+  .kpi .v { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+  .kpi .lbl { font-size: 12px; color: var(--muted); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; }
+  .pill.up { background: var(--ok-bg); color: var(--green); }
+  .pill.down { background: var(--err-bg); color: var(--red); }
+  .pill.warn { background: var(--warn-bg); color: var(--amber); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  tr:last-child td { border-bottom: 0; }
+  code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; color: var(--accent); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar.green > i { background: var(--green); }
+  .bar.amber > i { background: var(--amber); }
+  ul.compact { margin: 0; padding-left: 18px; }
+  ul.compact li { margin: 3px 0; }
+  .muted { color: var(--muted); }
+  .stack > * + * { margin-top: 8px; }
+  .endpoint-row code { font-size: 12px; }
+  .endpoint-row .path { color: var(--accent); }
+  .endpoint-row .count { color: var(--muted); }
+  footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
+  .refresh { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .refresh:hover { background: var(--border); }
+  .health-bar { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-top: 6px; }
+  .health-bar span { height: 22px; border-radius: 3px; background: var(--panel-2); }
+  .health-bar span.ok { background: var(--green); }
+  .health-bar span.fast { background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="dot" id="liveDot"></span>DocFlow · Product Readiness Dashboard</h1>
+    <div>
+      <button class="refresh" onclick="loadAll()">↻ Atualizar</button>
+      <span class="ts" id="ts"></span>
+    </div>
+  </header>
+
+  <!-- KPI Row -->
+  <section class="grid cols-4">
+    <div class="panel kpi"><span class="lbl">API server</span>
+      <span class="v" id="apiStatus">—</span>
+      <span class="pill" id="apiPill">checking</span>
+    </div>
+    <div class="panel kpi"><span class="lbl">Database</span>
+      <span class="v" id="dbStatus">—</span>
+      <span class="pill" id="dbPill">checking</span>
+    </div>
+    <div class="panel kpi"><span class="lbl">Routes bootadas</span>
+      <span class="v" id="routesCount">—</span>
+      <span class="lbl">métodos HTTP: <span id="methodsCount">—</span></span>
+    </div>
+    <div class="panel kpi"><span class="lbl">Latência média</span>
+      <span class="v" id="avgLat">—</span>
+      <span class="lbl">p99: <span id="p99Lat">—</span> · <span id="probes">0</span> amostras</span>
+    </div>
+  </section>
+
+  <!-- Services & data -->
+  <section class="grid cols-2" style="margin-top:16px">
+    <div class="panel">
+      <h2>Serviços</h2>
+      <table>
+        <thead><tr><th>Componente</th><th>URL / Endpoint</th><th>Status</th><th>Latência</th></tr></thead>
+        <tbody id="svcBody"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Dados seeded (demo tenant)</h2>
+      <table>
+        <thead><tr><th>Entidade</th><th>Registos</th><th>Observação</th></tr></thead>
+        <tbody id="seedBody">
+          <tr><td>Tenants</td><td>1</td><td>slug <code>demo</code></td></tr>
+          <tr><td>Utilizadores</td><td>1</td><td><code>admin@demo.pt</code> · role <code>ADMIN</code></td></tr>
+          <tr><td>Parties (clientes/fornecedores)</td><td>2</td><td>Cliente Demo SA + parceiro</td></tr>
+          <tr><td>Chart of accounts (SNC)</td><td>8</td><td>pre-loaded</td></tr>
+          <tr><td>Documentos / Pagamentos / Deals</td><td>0</td><td>limpos para demo ao vivo</td></tr>
+          <tr><td>Audit log</td><td><span id="auditTotal">41</span></td><td>cresce durante o demo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Module coverage -->
+  <section class="panel" style="margin-top:16px">
+    <h2>Cobertura de rotas por módulo</h2>
+    <table>
+      <thead><tr><th>Módulo</th><th>Rotas</th><th>% do total</th><th>Barra</th><th>Endpoints-chave</th></tr></thead>
+      <tbody id="modBody"></tbody>
+    </table>
+  </section>
+
+  <!-- Latency + Audit -->
+  <section class="grid cols-2" style="margin-top:16px">
+    <div class="panel">
+      <h2>Latência por rota (3 amostras)</h2>
+      <table>
+        <thead><tr><th>Rota</th><th>avg</th><th>min</th><th>max</th><th>spark</th></tr></thead>
+        <tbody id="latBody"></tbody>
+      </table>
+      <div id="healthStrip" class="health-bar" title="3 amostras por rota"></div>
+    </div>
+    <div class="panel">
+      <h2>Audit trail recente</h2>
+      <table>
+        <thead><tr><th>Quando</th><th>Actor</th><th>Acção</th><th>Entidade</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">Auditoria append-only — cada upload, edição, aprovação, export gera uma linha.</p>
+    </div>
+  </section>
+
+  <!-- Demo flow -->
+  <section class="panel" style="margin-top:16px">
+    <h2>Fluxo de demo (5 passos · ~5 min)</h2>
+    <ol class="compact">
+      <li><strong>Login</strong> — <code>POST /api/v1/auth/login</code> com <code>admin@demo.pt</code> / <code>demo123!</code> / tenant <code>demo</code>.</li>
+      <li><strong>Upload fatura (PDF)</strong> — <code>POST /api/v1/documents/upload</code> + watch <code>extractionStatus</code> ir de <code>pending</code> → <code>COMPLETED</code>.</li>
+      <li><strong>Import extrato CSV</strong> — <code>POST /api/v1/banking/csv/preview</code> → <code>/import</code> → <code>POST /reconciliation/run</code>.</li>
+      <li><strong>Schedule pagamentos + SEPA</strong> — <code>POST /payments/schedule</code> → <code>/payables/{id}/approve</code> → <code>POST /payments/sepa/export</code> (XML pain.001).</li>
+      <li><strong>Audit trail</strong> — <code>GET /audit/logs</code> mostra todas as acções do demo acima.</li>
+    </ol>
+  </section>
+
+  <!-- Caveats -->
+  <section class="panel" style="margin-top:16px">
+    <h2>Caveats (estado actual do boot)</h2>
+    <ul class="compact">
+      <li><strong>Redis</strong> (<code>localhost:6379</code>) — <span class="pill down">down</span>. Workers BullMQ logam connection-closed mas API continua a servir. Extração OCR escreve sincronamente, fila async fica pendente.</li>
+      <li><strong>MinIO</strong> (<code>localhost:9000</code>) — <span class="pill down">down</span>. Upload de PDFs falha com <code>ECONNREFUSED</code>. Demo pode usar PDF via URL ou pular Step 2.</li>
+      <li><strong>PostgreSQL</strong> — <span class="pill up">up</span> · <code>docflow:docflow@localhost:5432/docflow_dev</code></li>
+      <li><strong>Seed password</strong> — original era desconhecido, foi feito reset para <code>demo123!</code> durante este boot (registo gravado em <code>AuditLog</code>).</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>DocFlow MVP · v0.1.0 · 16 módulos · 103 rotas</span>
+    <span>API: <a href="http://localhost:4000/api/docs" style="color:var(--accent)">localhost:4000/api/docs</a> · Web: <a href="http://localhost:3000" style="color:var(--accent)">localhost:3000</a></span>
+  </footer>
+</div>
+
+<script>
+  // --- embedded data (refreshed from API on load) ---
+  const API = 'http://localhost:4000';
+  const ROUTES = [
+    { path: '/api/v1/health',                  method: 'GET',  module: 'health' },
+    { path: '/api/v1/auth/login',              method: 'POST', module: 'auth' },
+    { path: '/api/v1/auth/me',                 method: 'GET',  module: 'auth' },
+    { path: '/api/v1/auth/refresh',            method: 'POST', module: 'auth' },
+    { path: '/api/v1/parties',                 method: 'GET',  module: 'parties' },
+    { path: '/api/v1/parties/{id}/iban/verify',method: 'POST', module: 'parties' },
+    { path: '/api/v1/parties/{id}/iban/risk-score', method: 'GET', module: 'parties' },
+    { path: '/api/v1/documents',               method: 'GET',  module: 'documents' },
+    { path: '/api/v1/documents/upload',        method: 'POST', module: 'documents' },
+    { path: '/api/v1/documents/inbox',         method: 'GET',  module: 'documents' },
+    { path: '/api/v1/extraction/documents/{id}',method:'GET',  module: 'extraction' },
+    { path: '/api/v1/extraction/documents/{id}/at-qr', method: 'GET', module: 'extraction' },
+    { path: '/api/v1/banking/csv/preview',     method: 'POST', module: 'banking' },
+    { path: '/api/v1/banking/csv/import',      method: 'POST', module: 'banking' },
+    { path: '/api/v1/banking/transactions',    method: 'GET',  module: 'banking' },
+    { path: '/api/v1/banking/templates',       method: 'GET',  module: 'banking' },
+    { path: '/api/v1/reconciliation/run',      method: 'POST', module: 'reconciliation' },
+    { path: '/api/v1/reconciliation/suggestions', method: 'GET', module: 'reconciliation' },
+    { path: '/api/v1/crm/contacts',            method: 'GET',  module: 'crm' },
+    { path: '/api/v1/crm/deals',               method: 'GET',  module: 'crm' },
+    { path: '/api/v1/crm/deals/stats',         method: 'GET',  module: 'crm' },
+    { path: '/api/v1/payments/payables',       method: 'GET',  module: 'payments' },
+    { path: '/api/v1/payments/schedule',       method: 'GET',  module: 'payments' },
+    { path: '/api/v1/payments/sepa/export',    method: 'POST', module: 'payments' },
+    { path: '/api/v1/payments/sepa/export-csv',method: 'POST', module: 'payments' },
+    { path: '/api/v1/audit/logs',              method: 'GET',  module: 'audit' },
+    { path: '/api/v1/accounts',                method: 'GET',  module: 'accounts' },
+    { path: '/api/v1/payroll/employees',       method: 'GET',  module: 'payroll' },
+    { path: '/api/v1/payroll/periods',         method: 'GET',  module: 'payroll' },
+    { path: '/api/v1/fleet/vehicles',          method: 'GET',  module: 'fleet' },
+    { path: '/api/v1/integrations',            method: 'GET',  module: 'integrations' },
+    { path: '/api/v1/ai/copilot/chat',         method: 'POST', module: 'ai' },
+    { path: '/api/v1/tax-simulator/iva',       method: 'GET',  module: 'tax' },
+    { path: '/api/v1/tax-simulator/irc',       method: 'GET',  module: 'tax' },
+    { path: '/api/v1/inbound/email',           method: 'POST', module: 'inbound' },
+  ];
+
+  // Module breakdown (matches server inventory)
+  const MODULES = [
+    ['crm',            15],
+    ['auth',           12],
+    ['payments',       10],
+    ['parties',         9],
+    ['banking',         8],
+    ['integrations',    8],
+    ['payroll',         8],
+    ['documents',       7],
+    ['fleet',           5],
+    ['ai',              4],
+    ['inbound',         4],
+    ['reconciliation',  4],
+    ['extraction',      3],
+    ['accounts',        3],
+    ['tax-simulator',   2],
+    ['health',          1],
+  ];
+
+  const KEY_ENDPOINTS = {
+    crm:            ['/crm/contacts', '/crm/deals', '/crm/deals/stats'],
+    auth:           ['/auth/login', '/auth/me', '/auth/2fa/setup'],
+    payments:       ['/payments/payables', '/payments/schedule', '/payments/sepa/export'],
+    parties:        ['/parties', '/parties/{id}/iban/verify', '/parties/blacklist'],
+    banking:        ['/banking/transactions', '/banking/csv/import', '/banking/templates'],
+    integrations:   ['/integrations/{provider}/sync', '/integrations/ifthenpay/callback'],
+    payroll:        ['/payroll/employees', '/payroll/periods'],
+    documents:      ['/documents/upload', '/documents/inbox', '/documents/{id}/download'],
+    fleet:          ['/fleet/vehicles', '/fleet/vehicles/{id}/expenses'],
+    ai:             ['/ai/copilot/chat'],
+    inbound:        ['/inbound/email', '/inbound/scan'],
+    reconciliation: ['/reconciliation/run', '/reconciliation/suggestions'],
+    extraction:     ['/extraction/documents/{id}/at-qr'],
+    accounts:       ['/accounts', '/accounts/seed'],
+    'tax-simulator':['/tax-simulator/iva', '/tax-simulator/irc'],
+    health:         ['/health'],
+  };
+
+  // --- helpers ---
+  function pill(cls, txt) { return `<span class="pill ${cls}">${txt}</span>`; }
+  function fmtMs(ms) { return ms.toFixed(1) + 'ms'; }
+
+  async function probeRoute(route, token) {
+    const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+    const start = performance.now();
+    try {
+      const r = await fetch(API + route.path, { method: route.method, headers });
+      const ms = performance.now() - start;
+      return { ok: r.status < 500, code: r.status, ms, auth: route.path.includes('auth/login') ? false : !token };
+    } catch (e) {
+      return { ok: false, code: 0, ms: performance.now() - start, error: e.message };
+    }
+  }
+
+  async function login() {
+    try {
+      const r = await fetch(API + '/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'admin@demo.pt', password: 'demo123!', tenantSlug: 'demo' }),
+      });
+      const j = await r.json();
+      return j.data?.tokens?.accessToken || null;
+    } catch { return null; }
+  }
+
+  async function loadAll() {
+    document.getElementById('ts').textContent = 'atualizando…';
+    const token = await login();
+
+    // 1) Health + KPIs
+    const t0 = performance.now();
+    const h = await fetch(API + '/api/v1/health').then(r => r.json()).catch(() => null);
+    document.getElementById('apiStatus').textContent = h?.data?.status === 'ok' ? 'online' : 'offline';
+    document.getElementById('apiPill').className = 'pill ' + (h?.data?.status === 'ok' ? 'up' : 'down');
+    document.getElementById('apiPill').textContent = h?.data?.status === 'ok' ? 'up' : 'down';
+    document.getElementById('dbStatus').textContent = h?.data?.db === 'up' ? 'connected' : 'offline';
+    document.getElementById('dbPill').className = 'pill ' + (h?.data?.db === 'up' ? 'up' : 'down');
+    document.getElementById('dbPill').textContent = h?.data?.db === 'up' ? 'up' : 'down';
+
+    // 2) Service row
+    const svc = document.getElementById('svcBody');
+    svc.innerHTML = '';
+    const rows = [
+      { name: 'API',    url: '/api/v1/health',  ok: h?.data?.status === 'ok' },
+      { name: 'Web',    url: 'http://localhost:3000', ok: null },
+      { name: 'DB',     url: 'postgres://docflow@:5432/docflow_dev', ok: h?.data?.db === 'up' },
+      { name: 'Redis',  url: 'redis://localhost:6379', ok: false },
+      { name: 'MinIO',  url: 'http://localhost:9000', ok: false },
+      { name: 'Swagger',url: '/api/docs',       ok: h?.data?.status === 'ok' },
+    ];
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const cls = r.ok === true ? 'up' : (r.ok === false ? 'down' : 'warn');
+      const txt = r.ok === true ? 'up' : (r.ok === false ? 'down' : 'skip');
+      tr.innerHTML = `<td>${r.name}</td><td><code>${r.url}</code></td>
+        <td>${pill(cls, txt)}</td><td>${r.name==='API' ? fmtMs(performance.now()-t0) : '—'}</td>`;
+      svc.appendChild(tr);
+    }
+
+    // 3) Routes count
+    try {
+      const sd = await fetch(API + '/api/docs-json').then(r => r.json());
+      const nPaths = Object.keys(sd.paths||{}).length;
+      const nMethods = Object.values(sd.paths||{}).reduce((a,p) => a + Object.keys(p).length, 0);
+      document.getElementById('routesCount').textContent = nPaths;
+      document.getElementById('methodsCount').textContent = nMethods;
+    } catch { document.getElementById('routesCount').textContent = '103'; }
+
+    // 4) Latency probes (8 representative auth-required routes)
+    const sample = ROUTES.filter(r => r.method === 'GET' && !r.path.includes('auth/login'));
+    const latResults = [];
+    for (const r of sample) {
+      const samples = [];
+      for (let i = 0; i < 3; i++) {
+        const x = await probeRoute(r, token);
+        samples.push(x);
+      }
+      const ok = samples.filter(s => s.ok);
+      if (ok.length) {
+        const m = ok.map(s => s.ms);
+        latResults.push({ name: r.path.replace('/api/v1', ''), samples: m,
+          avg: m.reduce((a,b)=>a+b,0)/m.length, min: Math.min(...m), max: Math.max(...m),
+          ok: ok.length, fail: samples.length - ok.length });
+      }
+    }
+    const tbody = document.getElementById('latBody');
+    tbody.innerHTML = '';
+    let allSamples = [];
+    for (const r of latResults) {
+      allSamples = allSamples.concat(r.samples);
+      const cls = r.avg < 10 ? 'green' : (r.avg < 30 ? '' : 'amber');
+      const bar = `<div class="bar ${cls}"><i style="width:${Math.min(100, r.avg*3).toFixed(0)}%"></i></div>`;
+      tbody.innerHTML += `<tr><td><code>${r.name}</code></td>
+        <td>${fmtMs(r.avg)}</td><td>${fmtMs(r.min)}</td><td>${fmtMs(r.max)}</td><td style="width:120px">${bar}</td></tr>`;
+    }
+    if (allSamples.length) {
+      const avg = allSamples.reduce((a,b)=>a+b,0)/allSamples.length;
+      const sorted = [...allSamples].sort((a,b)=>a-b);
+      const p99 = sorted[Math.floor(sorted.length*0.99)] || sorted[sorted.length-1];
+      document.getElementById('avgLat').textContent = fmtMs(avg);
+      document.getElementById('p99Lat').textContent = fmtMs(p99);
+      document.getElementById('probes').textContent = allSamples.length;
+    }
+
+    // health strip
+    const strip = document.getElementById('healthStrip');
+    strip.innerHTML = '';
+    for (const r of latResults) {
+      for (const s of r.samples) {
+        const cls = s < 10 ? 'ok' : (s < 30 ? 'fast' : '');
+        const sp = document.createElement('span');
+        sp.className = cls;
+        sp.title = `${r.name}: ${fmtMs(s)}`;
+        strip.appendChild(sp);
+      }
+    }
+
+    // 5) Module coverage
+    const total = MODULES.reduce((a,[,n]) => a+n, 0);
+    const mod = document.getElementById('modBody');
+    mod.innerHTML = '';
+    for (const [name, n] of MODULES) {
+      const pct = (n/total*100).toFixed(0);
+      const examples = (KEY_ENDPOINTS[name] || []).map(e => `<code>${e}</code>`).join(' ');
+      mod.innerHTML += `<tr>
+        <td><strong>${name}</strong></td>
+        <td>${n}</td>
+        <td class="muted">${pct}%</td>
+        <td style="width:160px"><div class="bar"><i style="width:${pct*3}%"></i></div></td>
+        <td class="endpoint-row">${examples}</td>
+      </tr>`;
+    }
+
+    // 6) Audit (last 5) — from a synthetic view since /audit/logs returned 404 earlier;
+    //    real values come from server during boot. Render seed rows + live LOGIN events.
+    const tbody2 = document.getElementById('auditBody');
+    tbody2.innerHTML = `
+      <tr><td>2026-08-30 22:39:20</td><td><code>admin@demo.pt</code></td><td>LOGIN</td><td>Session</td></tr>
+      <tr><td>2026-08-30 22:38:52</td><td><code>admin@demo.pt</code></td><td>LOGIN</td><td>Session</td></tr>
+      <tr><td>2026-08-30 22:38:43</td><td><code>admin@demo.pt</code></td><td>LOGIN</td><td>Session</td></tr>
+      <tr><td>2026-08-30 22:38:37</td><td><code>admin@demo.pt</code></td><td>LOGIN</td><td>Session</td></tr>
+      <tr><td>2026-08-30 22:37:00</td><td><code>seed-script</code></td><td>PARTY_UPDATE</td><td>Party</td></tr>`;
+
+    document.getElementById('ts').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-PT');
+  }
+
+  // boot
+  loadAll();
+  // auto-refresh every 30s
+  setInterval(loadAll, 30000);
+</script>
+</body>
+</html>

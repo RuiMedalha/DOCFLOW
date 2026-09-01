@@ -1,0 +1,48 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 649 >>
+stream
+BT
+/F1 10 Tf
+50 750 Td
+(Empresa XPTO Consultores, Lda) Tj
+0 -14 Td(Rua das Flores 123, 1000-001 Lisboa) Tj
+0 -14 Td(NIF: 500697256) Tj
+0 -14 Td(Fatura FT 2026/1) Tj
+0 -14 Td(Data: 2026-03-15) Tj
+0 -14 Td(Vencimento: 2026-04-15) Tj
+0 -14 Td(Total: 123,00 EUR) Tj
+0 -14 Td(IVA: 23,00 EUR) Tj
+0 -14 Td(IBAN: PT50 0002 0123 1234 5678 9015 4) Tj
+0 -14 Td(Linha 1: Consultoria tecnica, 10 x 50,00 = 500,00) Tj
+0 -14 Td(Linha 2: Deslocacoes, 1 x 100,00 = 100,00) Tj
+0 -14 Td(Categoria SNC: 62.2.4 Honorarios) Tj
+0 -14 Td(A:500697256*B:500000000*C:PT*D:FT*E:N*F:20260315*G:FT2026/1*H:J66S9FDD-1*I1:PT*I7:100.00*I8:23.00*N:23.00*O:123.00*Q:0.00*R:1234) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000941 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1011
+%%EOF

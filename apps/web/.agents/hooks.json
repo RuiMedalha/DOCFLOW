@@ -1,0 +1,12 @@
+{
+  "overclock-handoff-deliver": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "cmd.exe /d /c \"C:\\Users\\Rui Medalha\\.overclock-app\\handoff-deliver.cmd\"",
+        "timeout": 5
+      }
+    ]
+  }
+}

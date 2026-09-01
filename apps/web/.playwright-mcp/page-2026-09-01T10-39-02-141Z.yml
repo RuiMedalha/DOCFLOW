@@ -1,0 +1,193 @@
+- generic [active] [ref=f1e1]:
+  - link "Saltar para o conteúdo principal" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f1e3]:
+    - complementary "Navegação principal" [ref=f1e4]:
+      - generic [ref=f1e5]:
+        - generic [ref=f1e6]:
+          - link "DocFlow Document Intelligence" [ref=f1e7] [cursor=pointer]:
+            - /url: /dashboard
+            - generic [ref=f1e11]:
+              - generic [ref=f1e12]: DocFlow
+              - generic [ref=f1e13]: Document Intelligence
+          - button "Recolher barra lateral" [ref=f1e14] [cursor=pointer]
+        - generic [ref=f1e17]: demo
+        - navigation "Secções" [ref=f1e25]:
+          - list [ref=f1e26]:
+            - listitem [ref=f1e27]:
+              - link "Dashboard" [ref=f1e28] [cursor=pointer]:
+                - /url: /dashboard
+            - listitem [ref=f1e35]:
+              - link "Documentos" [ref=f1e36] [cursor=pointer]:
+                - /url: /documents
+            - listitem [ref=f1e41]:
+              - link "Banca" [ref=f1e42] [cursor=pointer]:
+                - /url: /banking
+            - listitem [ref=f1e46]:
+              - link "Conciliação" [ref=f1e47] [cursor=pointer]:
+                - /url: /reconciliation
+            - listitem [ref=f1e54]:
+              - link "CRM" [ref=f1e55] [cursor=pointer]:
+                - /url: /crm
+            - listitem [ref=f1e62]:
+              - link "Entidades" [ref=f1e63] [cursor=pointer]:
+                - /url: /parties
+            - listitem [ref=f1e70]:
+              - link "Pagamentos" [ref=f1e71] [cursor=pointer]:
+                - /url: /payments
+          - generic [ref=f1e76]: Configuração
+          - list [ref=f1e77]:
+            - listitem [ref=f1e78]:
+              - link "Definições" [ref=f1e79] [cursor=pointer]:
+                - /url: /settings
+            - listitem [ref=f1e84]:
+              - link "Ajuda" [ref=f1e85] [cursor=pointer]:
+                - /url: /help
+        - generic [ref=f1e90]: Sistema operacional
+    - generic [ref=f1e95]:
+      - banner [ref=f1e96]:
+        - navigation "Breadcrumb" [ref=f1e97]:
+          - list [ref=f1e98]:
+            - listitem [ref=f1e99]:
+              - link "Início" [ref=f1e100] [cursor=pointer]:
+                - /url: /dashboard
+            - listitem [ref=f1e101]:
+              - generic [ref=f1e104]: Documentos
+        - generic [ref=f1e105]:
+          - button "Pesquisarâ€¦ âŒ˜K" [ref=f1e106] [cursor=pointer]:
+            - generic [ref=f1e110]: Pesquisarâ€¦
+            - generic [ref=f1e111]: âŒ˜K
+          - button "Alternar tema" [disabled]
+          - button "Notificações" [ref=f1e113] [cursor=pointer]
+          - button "Menu do utilizador" [ref=f1e118] [cursor=pointer]:
+            - generic [ref=f1e119]: A
+      - main [ref=f1e122]:
+        - generic [ref=f1e123]:
+          - generic [ref=f1e124]:
+            - generic [ref=f1e125]:
+              - heading "Documentos" [level=1] [ref=f1e126]
+              - paragraph [ref=f1e127]: Inbox documental com extração IA — faturas, recibos e notas.
+            - generic [ref=f1e128]:
+              - button "Atualizar lista" [disabled]: Atualizar
+          - generic [ref=f1e129]:
+            - generic [ref=f1e131] [cursor=pointer]:
+              - button "Choose File" [ref=f1e132]
+              - paragraph [ref=f1e137]: Arraste ficheiros ou clique para selecionar
+              - paragraph [ref=f1e138]: PDF, JPG, PNG, WEBP, DOCX · até 20 MB por ficheiro · multi-ficheiro
+            - generic [ref=f1e139]:
+              - generic [ref=f1e140]:
+                - searchbox "Pesquisar documentos" [ref=f1e142]
+                - combobox "Filtrar por estado" [ref=f1e143]:
+                  - option "Todos os estados" [selected]
+                  - option "Novo"
+                  - option "Processado"
+                  - option "Em revisão"
+                  - option "Conciliado"
+                  - option "Arquivado"
+                  - option "Erro"
+                - combobox "Filtrar por tipo" [ref=f1e144]:
+                  - option "Todos os tipos" [selected]
+                  - option "Fatura"
+                  - option "Recibo"
+                  - option "Nota de crédito"
+                  - option "Nota de débito"
+                  - option "Guia de transporte"
+                  - option "Outro"
+              - generic [ref=f1e145]:
+                - generic [ref=f1e146]:
+                  - textbox "Data inicial" [ref=f1e149]
+                  - generic [ref=f1e150]: até
+                  - textbox "Data final" [ref=f1e151]
+                - generic [ref=f1e152]: 0 resultados
+            - table [ref=f1e157]:
+              - rowgroup [ref=f1e158]:
+                - row [ref=f1e159]:
+                  - columnheader [ref=f1e160]:
+                    - checkbox "Selecionar todas as linhas" [ref=f1e161] [cursor=pointer]
+                  - columnheader [ref=f1e162]:
+                    - button "Ficheiro" [ref=f1e163] [cursor=pointer]
+                  - columnheader [ref=f1e167]:
+                    - button "Tipo" [ref=f1e168] [cursor=pointer]
+                  - columnheader [ref=f1e172]:
+                    - button "Fornecedor" [ref=f1e173] [cursor=pointer]
+                  - columnheader [ref=f1e177]:
+                    - button "NIF" [ref=f1e178] [cursor=pointer]
+                  - columnheader [ref=f1e182]:
+                    - button "Data" [ref=f1e183] [cursor=pointer]
+                  - columnheader [ref=f1e187]:
+                    - button "Total" [ref=f1e188] [cursor=pointer]
+                  - columnheader [ref=f1e192]:
+                    - button "IVA" [ref=f1e193] [cursor=pointer]
+                  - columnheader [ref=f1e197]:
+                    - button "Estado" [ref=f1e198] [cursor=pointer]
+                  - columnheader [ref=f1e202]:
+                    - button "Pasta" [ref=f1e203] [cursor=pointer]
+              - rowgroup [ref=f1e207]:
+                - row [ref=f1e208]:
+                  - cell [ref=f1e209]
+                  - cell [ref=f1e211]
+                  - cell [ref=f1e213]
+                  - cell [ref=f1e215]
+                  - cell [ref=f1e217]
+                  - cell [ref=f1e219]
+                  - cell [ref=f1e221]
+                  - cell [ref=f1e223]
+                  - cell [ref=f1e225]
+                  - cell [ref=f1e227]
+                - row [ref=f1e229]:
+                  - cell [ref=f1e230]
+                  - cell [ref=f1e232]
+                  - cell [ref=f1e234]
+                  - cell [ref=f1e236]
+                  - cell [ref=f1e238]
+                  - cell [ref=f1e240]
+                  - cell [ref=f1e242]
+                  - cell [ref=f1e244]
+                  - cell [ref=f1e246]
+                  - cell [ref=f1e248]
+                - row [ref=f1e250]:
+                  - cell [ref=f1e251]
+                  - cell [ref=f1e253]
+                  - cell [ref=f1e255]
+                  - cell [ref=f1e257]
+                  - cell [ref=f1e259]
+                  - cell [ref=f1e261]
+                  - cell [ref=f1e263]
+                  - cell [ref=f1e265]
+                  - cell [ref=f1e267]
+                  - cell [ref=f1e269]
+                - row [ref=f1e271]:
+                  - cell [ref=f1e272]
+                  - cell [ref=f1e274]
+                  - cell [ref=f1e276]
+                  - cell [ref=f1e278]
+                  - cell [ref=f1e280]
+                  - cell [ref=f1e282]
+                  - cell [ref=f1e284]
+                  - cell [ref=f1e286]
+                  - cell [ref=f1e288]
+                  - cell [ref=f1e290]
+                - row [ref=f1e292]:
+                  - cell [ref=f1e293]
+                  - cell [ref=f1e295]
+                  - cell [ref=f1e297]
+                  - cell [ref=f1e299]
+                  - cell [ref=f1e301]
+                  - cell [ref=f1e303]
+                  - cell [ref=f1e305]
+                  - cell [ref=f1e307]
+                  - cell [ref=f1e309]
+                  - cell [ref=f1e311]
+                - row [ref=f1e313]:
+                  - cell [ref=f1e314]
+                  - cell [ref=f1e316]
+                  - cell [ref=f1e318]
+                  - cell [ref=f1e320]
+                  - cell [ref=f1e322]
+                  - cell [ref=f1e324]
+                  - cell [ref=f1e326]
+                  - cell [ref=f1e328]
+                  - cell [ref=f1e330]
+                  - cell [ref=f1e332]
+  - region "Notifications alt+T"
+  - alert [ref=f1e334]

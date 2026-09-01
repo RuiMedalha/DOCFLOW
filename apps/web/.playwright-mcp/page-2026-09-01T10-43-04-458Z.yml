@@ -1,0 +1,201 @@
+- generic [active] [ref=f9e1]:
+  - link "Saltar para o conteúdo principal" [ref=f9e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f9e3]:
+    - complementary "Navegação principal" [ref=f9e4]:
+      - generic [ref=f9e5]:
+        - generic [ref=f9e6]:
+          - link "DocFlow Document Intelligence" [ref=f9e7] [cursor=pointer]:
+            - /url: /dashboard
+            - generic [ref=f9e11]:
+              - generic [ref=f9e12]: DocFlow
+              - generic [ref=f9e13]: Document Intelligence
+          - button "Recolher barra lateral" [ref=f9e14] [cursor=pointer]
+        - generic [ref=f9e17]: demo
+        - navigation "Secções" [ref=f9e25]:
+          - list [ref=f9e26]:
+            - listitem [ref=f9e27]:
+              - link "Dashboard" [ref=f9e28] [cursor=pointer]:
+                - /url: /dashboard
+            - listitem [ref=f9e35]:
+              - link "Documentos" [ref=f9e36] [cursor=pointer]:
+                - /url: /documents
+            - listitem [ref=f9e41]:
+              - link "Banca" [ref=f9e42] [cursor=pointer]:
+                - /url: /banking
+            - listitem [ref=f9e46]:
+              - link "Conciliação" [ref=f9e47] [cursor=pointer]:
+                - /url: /reconciliation
+            - listitem [ref=f9e54]:
+              - link "CRM" [ref=f9e55] [cursor=pointer]:
+                - /url: /crm
+            - listitem [ref=f9e62]:
+              - link "Entidades" [ref=f9e63] [cursor=pointer]:
+                - /url: /parties
+            - listitem [ref=f9e70]:
+              - link "Pagamentos" [ref=f9e71] [cursor=pointer]:
+                - /url: /payments
+          - generic [ref=f9e76]: Configuração
+          - list [ref=f9e77]:
+            - listitem [ref=f9e78]:
+              - link "Definições" [ref=f9e79] [cursor=pointer]:
+                - /url: /settings
+            - listitem [ref=f9e84]:
+              - link "Ajuda" [ref=f9e85] [cursor=pointer]:
+                - /url: /help
+        - generic [ref=f9e90]: Sistema operacional
+    - generic [ref=f9e95]:
+      - banner [ref=f9e96]:
+        - navigation "Breadcrumb" [ref=f9e97]:
+          - list [ref=f9e98]:
+            - listitem [ref=f9e99]:
+              - link "Início" [ref=f9e100] [cursor=pointer]:
+                - /url: /dashboard
+            - listitem [ref=f9e101]:
+              - link "Documentos" [ref=f9e104] [cursor=pointer]:
+                - /url: /documents
+            - listitem [ref=f9e105]:
+              - generic [ref=f9e108]: Cmtiif81f001rg5e8b2vqy2e3
+        - generic [ref=f9e109]:
+          - button "Pesquisarâ€¦ âŒ˜K" [ref=f9e110] [cursor=pointer]:
+            - generic [ref=f9e114]: Pesquisarâ€¦
+            - generic [ref=f9e115]: âŒ˜K
+          - button "Mudar para tema claro" [ref=f9e116] [cursor=pointer]
+          - button "Notificações" [ref=f9e125] [cursor=pointer]
+          - button "Menu do utilizador" [ref=f9e130] [cursor=pointer]:
+            - generic [ref=f9e131]: A
+      - main [ref=f9e134]:
+        - generic [ref=f9e135]:
+          - generic [ref=f9e141]:
+            - generic [ref=f9e142]:
+              - heading "J6T6HBN8-1751" [level=1] [ref=f9e143]
+              - paragraph [ref=f9e144]: LIZOTEL PROFESSIONAL · 506144860
+            - generic [ref=f9e145]:
+              - button "Voltar" [ref=f9e146] [cursor=pointer]
+              - 'generic "Estado: EM_REVISAO" [ref=f9e149]': EM REVISAO
+          - generic [ref=f9e150]:
+            - complementary [ref=f9e151]:
+              - generic [ref=f9e152]:
+                - generic [ref=f9e153]:
+                  - generic "image.jpg" [ref=f9e158]
+                  - generic "Campos QR-AT detetados" [ref=f9e159]: 13 campos destacados
+                  - link "Abrir numa nova janela" [ref=f9e160] [cursor=pointer]:
+                    - /url: blob:https://due-garage-suffered-william.trycloudflare.com/a2cfc210-065b-4f30-aaa5-13f07121c095
+                  - link "Transferir" [ref=f9e165] [cursor=pointer]:
+                    - /url: blob:https://due-garage-suffered-william.trycloudflare.com/a2cfc210-065b-4f30-aaa5-13f07121c095
+                - iframe [ref=f9e170]
+              - generic [ref=f9e171]:
+                - heading "Autenticação AT" [level=3] [ref=f9e172]
+                - button "QR-AT detectável 2 erros NIF 506144860 · J6T6HBN8-1751" [ref=f9e174] [cursor=pointer]:
+                  - generic [ref=f9e182]:
+                    - generic [ref=f9e183]:
+                      - generic [ref=f9e184]: QR-AT detectável
+                      - generic [ref=f9e185]: 2 erros
+                    - paragraph [ref=f9e188]: NIF 506144860 · J6T6HBN8-1751
+              - generic [ref=f9e191]:
+                - heading "Verificação IBAN" [level=3] [ref=f9e192]
+                - status [ref=f9e193]:
+                  - generic [ref=f9e196]:
+                    - paragraph [ref=f9e197]: IBAN sem histórico
+                    - paragraph [ref=f9e198]: É a primeira vez que vemos o IBAN PT50001800032176233102036 (sem fornecedor associado). Verifique antes de pagar.
+            - generic [ref=f9e200]:
+              - generic [ref=f9e201]:
+                - heading "Campos extraídos" [level=2] [ref=f9e203]
+                - generic [ref=f9e204]:
+                  - button "Re-extrair" [ref=f9e205] [cursor=pointer]
+                  - button "Aprovar" [ref=f9e211] [cursor=pointer]
+                  - button "Guardar" [ref=f9e215] [cursor=pointer]
+              - group "Identidade do documento" [ref=f9e220]:
+                - generic [ref=f9e222]:
+                  - generic [ref=f9e223]:
+                    - generic [ref=f9e224]: Fornecedor
+                    - generic "Confiança OCR 95%" [ref=f9e226]: 95%
+                  - textbox "Nome do emitente" [ref=f9e228]: LIZOTEL PROFESSIONAL
+                - generic [ref=f9e229]:
+                  - generic [ref=f9e230]:
+                    - generic [ref=f9e231]:
+                      - generic [ref=f9e232]: NIF
+                      - generic "Confiança OCR 95%" [ref=f9e234]: 95%
+                    - textbox "500000001" [ref=f9e236]: "506144860"
+                  - generic [ref=f9e237]:
+                    - generic [ref=f9e238]:
+                      - generic [ref=f9e239]: Nº documento
+                      - generic "Confiança OCR 95%" [ref=f9e241]: 95%
+                    - textbox "FT 2026/1234" [ref=f9e243]: J6T6HBN8-1751
+                - generic [ref=f9e244]:
+                  - generic [ref=f9e245]:
+                    - generic [ref=f9e246]: ATCUD
+                    - generic "Confiança OCR 95%" [ref=f9e248]: 95%
+                  - textbox "ABC1234-56789" [ref=f9e250]: "1"
+              - group "Datas e IBAN" [ref=f9e251]:
+                - generic [ref=f9e253]:
+                  - generic [ref=f9e254]:
+                    - generic [ref=f9e255]:
+                      - generic [ref=f9e256]: Data do doc.
+                      - generic "Confiança OCR 95%" [ref=f9e258]: 95%
+                    - textbox [ref=f9e260]: 2026-07-31
+                  - generic [ref=f9e261]:
+                    - generic [ref=f9e262]:
+                      - generic [ref=f9e263]: Vencimento
+                      - generic "Confiança OCR 95%" [ref=f9e265]: 95%
+                    - textbox [ref=f9e267]: 2026-08-30
+                - generic [ref=f9e268]:
+                  - generic [ref=f9e269]:
+                    - generic [ref=f9e270]: IBAN
+                    - generic [ref=f9e271]:
+                      - generic [ref=f9e272]: 01/09/2026
+                      - generic "Confiança OCR 95%" [ref=f9e273]: 95%
+                  - textbox "PT50 0035 0651 0000 0000 0712" [ref=f9e275]: PT50001800032176233102036
+              - group "Montantes" [ref=f9e276]:
+                - generic [ref=f9e278]:
+                  - generic [ref=f9e279]:
+                    - generic [ref=f9e280]:
+                      - generic [ref=f9e281]: Base
+                      - generic "Confiança OCR 95%" [ref=f9e283]: 95%
+                    - generic [ref=f9e285]:
+                      - spinbutton "0,00" [ref=f9e286]: "117.25"
+                      - generic: EUR
+                  - generic [ref=f9e287]:
+                    - generic [ref=f9e288]:
+                      - generic [ref=f9e289]: IVA
+                      - generic "Confiança OCR 95%" [ref=f9e291]: 95%
+                    - generic [ref=f9e293]:
+                      - spinbutton "0,00" [ref=f9e294]: "26.97"
+                      - generic: EUR
+                  - generic [ref=f9e295]:
+                    - generic [ref=f9e296]:
+                      - generic [ref=f9e297]: Total
+                      - generic "Confiança OCR 95%" [ref=f9e299]: 95%
+                    - generic [ref=f9e301]:
+                      - spinbutton "0,00" [ref=f9e302]: "144.22"
+                      - generic: EUR
+                - generic [ref=f9e303]:
+                  - generic [ref=f9e304]: "Soma linhas: 0,00 EUR"
+                  - generic [ref=f9e305]: "Base+IVA: 144,22 EUR"
+                  - generic [ref=f9e306]: "Δ Total−Linhas: 144,22 EUR"
+              - group "Contabilização" [ref=f9e307]:
+                - generic [ref=f9e309]:
+                  - generic [ref=f9e310]:
+                    - generic [ref=f9e311]: Conta débito
+                    - combobox [ref=f9e313]:
+                      - option "— Selecionar —" [selected]
+                  - generic [ref=f9e314]:
+                    - generic [ref=f9e315]: Conta crédito
+                    - combobox [ref=f9e317]:
+                      - option "— Selecionar —" [selected]
+              - generic [ref=f9e318]:
+                - generic [ref=f9e319]:
+                  - paragraph [ref=f9e320]: Enviar para TOConline
+                  - paragraph [ref=f9e321]: Stub — gera payload SAF-T e coloca na fila de exportação.
+                - button "Enviar" [disabled]
+              - paragraph [ref=f9e322]: Documento por aprovar. Verifique campos com baixa confiança antes de contabilizar.
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f9e335]:
+        - button "Close toast" [ref=f9e336] [cursor=pointer]
+        - generic [ref=f9e343]: property tenantId should not exist,property fileName should not exist,property mimeType should not exist,property fileSize should not exist,property pdfKey should not exist,property origin should not exist,property docHash should not exist,property docNature should not exist,property isNonFiscalDoc should not exist,property isIntracommunity should not exist,property suggestedFolder should not exist,property finalFolder should not exist,property metadata should not exist,property ocrConfidence should not exist,property qrPayload should not exist,property crmContactId should not exist,property dealId should not exist,property debitAccountId should not exist,property creditAccountId should not exist,property costCenter should not exist,property paymentStatus should not exist,property paymentDueDate should not exist,property uploadedById should not exist,property createdAt should not exist,property updatedAt should not exist,property uploadedBy should not exist,property folder should not exist,property party should not exist
+  - status [ref=f9e325]:
+    - generic [ref=f9e330]:
+      - text: Static route
+      - button "Hide static indicator" [ref=f9e331] [cursor=pointer]
+  - alert [ref=f9e140]

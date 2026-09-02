@@ -42,6 +42,7 @@ export interface DocumentRecord {
   iva?: number | null;
   folder?: DocumentFolder | null;
   tags?: string[];
+  rank?: number | null;
   createdAt: string;
 }
 

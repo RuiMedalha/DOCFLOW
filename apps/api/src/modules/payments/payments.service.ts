@@ -8,6 +8,7 @@ import {
 import { randomUUID } from 'crypto';
 import {
   AuditAction,
+  PaymentEventStatus,
   PaymentStatus,
   Prisma,
   RecurrenceType,
@@ -22,6 +23,7 @@ import {
   ListPayablesQueryDto,
   ListPaymentSchedulesQueryDto,
   MarkPaidPayableDto,
+  PayPaymentEventDto,
   SepaExportDto,
   SepaExportResponseDto,
   UpdatePayableDto,
@@ -60,6 +62,45 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  async calendarEvents(tenantId: string, from: string, to: string) {
+    const start = this.parseCalendarDate(from, 'from');
+    const end = this.parseCalendarDate(to, 'to');
+    end.setUTCHours(23, 59, 59, 999);
+    if (start > end) throw new BadRequestException('from must be before to');
+    const now = new Date();
+    const events = await this.prisma.paymentEvent.findMany({
+      where: { tenantId, dueDate: { gte: start, lte: end } },
+      include: { document: { select: { id: true, supplier: true } } },
+      orderBy: { dueDate: 'asc' },
+    });
+    return events.map((event) => {
+      const dueDate = new Date(event.dueDate);
+      const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / 86_400_000);
+      const status = event.status === PaymentEventStatus.PENDING && daysUntilDue < 0
+        ? PaymentEventStatus.OVERDUE : event.status;
+      return { id: event.id, documentId: event.documentId,
+        supplier: event.document.supplier ?? 'Fornecedor não identificado',
+        dueDate: dueDate.toISOString(), amount: Number(event.amount), status, daysUntilDue };
+    });
+  }
+
+  async payEvent(tenantId: string, userId: string, id: string, dto: PayPaymentEventDto) {
+    const existing = await this.prisma.paymentEvent.findFirst({ where: { id, tenantId } });
+    if (!existing) throw new NotFoundException('PaymentEvent not found');
+    if (existing.status === PaymentEventStatus.PAID) return this.sanitizePaymentEvent(existing);
+    const paidAmount = dto.amount ?? Number(existing.amount);
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const updated = await this.prisma.paymentEvent.update({ where: { id }, data: {
+      status: PaymentEventStatus.PAID, paidAmount: new Prisma.Decimal(paidAmount), paidAt,
+      paymentMethod: dto.method ?? 'transfer',
+    }});
+    await this.audit.log({ tenantId, userId, action: AuditAction.PAYMENT_CONFIRM,
+      entityType: 'payment_event', entityId: id,
+      metadata: { paidAmount, paidAt: paidAt.toISOString(), method: dto.method ?? 'transfer' },
+    });
+    return this.sanitizePaymentEvent(updated);
+  }
 
   // ════════════════════════════════════════════ PAYABLES ════════════════════
 
@@ -1172,5 +1213,26 @@ export class PaymentsService {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  private parseCalendarDate(value: string, field: string): Date {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${field} must be YYYY-MM-DD`);
+    }
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) throw new BadRequestException(`${field} is invalid`);
+    return date;
+  }
+
+  private sanitizePaymentEvent(event: {
+    id: string; documentId: string; dueDate: Date; amount: Prisma.Decimal;
+    status: PaymentEventStatus; paidAt: Date | null; paidAmount: Prisma.Decimal | null;
+    paymentMethod: string | null; notes: string | null;
+  }) {
+    return {
+      ...event,
+      amount: Number(event.amount),
+      paidAmount: event.paidAmount === null ? null : Number(event.paidAmount),
+    };
   }
 }

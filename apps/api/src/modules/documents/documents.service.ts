@@ -313,6 +313,10 @@ export class DocumentsService {
   // ─────────────────────────────────────────── listings ────────────────
 
   async findAll(tenantId: string, query: DocumentQueryDto) {
+    if (query.search?.trim()) {
+      return this.searchDocuments(tenantId, query);
+    }
+
     const where = this.buildWhere(tenantId, query);
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 20, 100);
@@ -345,6 +349,76 @@ export class DocumentsService {
         limit,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * PostgreSQL full-text search for the document list. The legacy ILIKE
+   * predicates remain in the query so partial identifiers and data created
+   * before the vector migration continue to be found.
+   */
+  private async searchDocuments(tenantId: string, query: DocumentQueryDto) {
+    const search = query.search!.trim();
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 20, 100);
+    const skip = (page - 1) * limit;
+    const contains = `%${search}%`;
+    const filters: Prisma.Sql[] = [
+      Prisma.sql`d."tenantId" = ${tenantId}`,
+      Prisma.sql`d.status <> 'ARQUIVADO'::"DocumentStatus"`,
+    ];
+
+    if (query.status) filters.push(Prisma.sql`d.status = ${query.status}::"DocumentStatus"`);
+    if (query.type) filters.push(Prisma.sql`d.type = ${query.type}::"DocumentType"`);
+    if (query.partyId) {
+      filters.push(Prisma.sql`(d."partyId" = ${query.partyId} OR d."crmContactId" = ${query.partyId})`);
+    }
+    if (query.dateFrom) filters.push(Prisma.sql`d."createdAt" >= ${new Date(query.dateFrom)}`);
+    if (query.dateTo) {
+      const end = new Date(query.dateTo);
+      end.setUTCHours(23, 59, 59, 999);
+      filters.push(Prisma.sql`d."createdAt" <= ${end}`);
+    }
+
+    const tsquery = Prisma.sql`websearch_to_tsquery('simple', ${search})`;
+    const matches = Prisma.sql`(
+      d."searchVector" @@ ${tsquery}
+      OR d."fileName" ILIKE ${contains}
+      OR d.supplier ILIKE ${contains}
+      OR d.customer ILIKE ${contains}
+      OR d."docNumber" ILIKE ${contains}
+      OR d."supplierNif" ILIKE ${contains}
+      OR d."customerNif" ILIKE ${contains}
+    )`;
+    filters.push(matches);
+
+    type SearchRow = { id: string; rank: number };
+    const baseQuery = Prisma.sql`FROM "documents" d WHERE ${Prisma.join(filters, ' AND ')}`;
+    const [rows, countRows] = await Promise.all([
+      this.prisma.$queryRaw<SearchRow[]>(Prisma.sql`
+        SELECT d.id, ts_rank(d."searchVector", ${tsquery})::float AS rank
+        ${baseQuery}
+        ORDER BY rank DESC, d."createdAt" DESC
+        OFFSET ${skip} LIMIT ${limit}
+      `),
+      this.prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS count ${baseQuery}`),
+    ]);
+
+    const ids = rows.map((row) => row.id);
+    const records = ids.length === 0 ? [] : await this.prisma.document.findMany({
+      where: { tenantId, id: { in: ids } },
+      include: {
+        uploadedBy: { select: { id: true, name: true, email: true } },
+        folder: { select: { id: true, name: true, pattern: true } },
+        party: { select: { id: true, name: true, country: true, isRecurring: true } },
+      },
+    });
+    const documentsById = new Map(records.map((record) => [record.id, record]));
+    const total = Number(countRows[0]?.count ?? 0);
+
+    return {
+      items: rows.map((row) => ({ ...this.sanitize(documentsById.get(row.id)), rank: row.rank })),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 
@@ -699,14 +773,17 @@ export class DocumentsService {
   async approve(tenantId: string, userId: string, id: string) {
     const existing = await this.prisma.document.findFirst({
       where: { id, tenantId },
-      select: { id: true, status: true },
+      select: {
+        id: true, status: true, dueDate: true, paymentDueDate: true,
+        total: true, netAmount: true,
+      },
     });
     if (!existing) throw new NotFoundException('Document not found');
 
     if (existing.status === DocumentStatus.APROVADO) {
-      throw new ConflictException(
-        'Document is already approved (re-approval is not allowed)',
-      );
+      await this.createPaymentEventIfMissing(tenantId, existing);
+      const approved = await this.prisma.document.findFirst({ where: { id, tenantId } });
+      return this.sanitize(approved);
     }
     if (
       existing.status !== DocumentStatus.NOVO &&
@@ -741,7 +818,25 @@ export class DocumentsService {
       } as Prisma.InputJsonValue,
     });
 
+    await this.createPaymentEventIfMissing(tenantId, existing);
+
     return this.sanitize(updated);
+  }
+
+  private async createPaymentEventIfMissing(
+    tenantId: string,
+    document: {
+      id: string; dueDate: Date | null; paymentDueDate: Date | null;
+      total: Prisma.Decimal | null; netAmount: Prisma.Decimal | null;
+    },
+  ) {
+    const dueDate = document.dueDate ?? document.paymentDueDate ?? new Date();
+    const amount = document.total ?? document.netAmount ?? new Prisma.Decimal(0);
+    await this.prisma.paymentEvent.upsert({
+      where: { tenantId_documentId: { tenantId, documentId: document.id } },
+      create: { tenantId, documentId: document.id, dueDate, amount },
+      update: {},
+    });
   }
 
   // ─────────────────────────────────────────── items ─────────────────────

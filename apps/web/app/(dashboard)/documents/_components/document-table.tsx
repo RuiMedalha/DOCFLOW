@@ -125,6 +125,7 @@ export function DocumentTable({
               </p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-subtle)' }}>
                 {formatSize(row.original.fileSize)}
+                {row.original.rank != null ? ` · Relevância ${row.original.rank.toFixed(3)}` : ''}
               </p>
             </div>
           </Link>

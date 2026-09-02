@@ -38,6 +38,7 @@ import {
   ListPayablesQueryDto,
   ListPaymentSchedulesQueryDto,
   MarkPaidPayableDto,
+  PayPaymentEventDto,
   SepaExportDto,
   UpdatePayableDto,
   UpdatePaymentScheduleDto,
@@ -58,6 +59,28 @@ import {
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
+
+  @Get('calendar')
+  @ApiOperation({ summary: 'List approved-document payment events by due date' })
+  calendarEvents(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    if (!from || !to) throw new BadRequestException('from and to are required (YYYY-MM-DD)');
+    return this.payments.calendarEvents(user.tenantId, from, to);
+  }
+
+  @Post('events/:id/pay')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark a payment calendar event as paid' })
+  payEvent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: PayPaymentEventDto,
+  ) {
+    return this.payments.payEvent(user.tenantId, user.id, id, dto);
+  }
 
   // ════════════════════════════════════════════ PAYABLES ════════════════════
 

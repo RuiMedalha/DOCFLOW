@@ -68,6 +68,12 @@ enum PaymentStatus {
   CANCELLED
 }
 
+enum PaymentEventStatus {
+  PENDING
+  PAID
+  OVERDUE
+}
+
 enum RecurrenceType {
   DAILY
   WEEKLY
@@ -205,6 +211,7 @@ model Tenant {
   invoices         Invoice[]
   paymentSchedules PaymentSchedule[]
   payments         Payment[]
+  paymentEvents    PaymentEvent[]
   payableItems     PayableItem[]
   matchSuggestions MatchSuggestion[]
   crmContacts      CrmContact[]
@@ -395,6 +402,7 @@ model Document {
   metadata       Json?          // raw OCR payload
   ocrConfidence  Float?
   qrPayload      String?        // raw QR-AT decoded payload
+  searchVector   Unsupported("tsvector") @default(dbgenerated("''::tsvector"))
 
   // Master data links
   partyId          String?
@@ -432,6 +440,7 @@ model Document {
   expenses         Expense[]
   invoices         Invoice[]
   paymentSchedules PaymentSchedule[]
+  paymentEvents    PaymentEvent[]
   payableItems     PayableItem[]
   journalLines     JournalLine[]
   matches          MatchSuggestion[]
@@ -850,6 +859,28 @@ model Payment {
   @@index([tenantId, status])
   @@index([tenantId, provider])
   @@map("payments")
+}
+
+model PaymentEvent {
+  id            String             @id @default(cuid())
+  tenantId      String
+  tenant        Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  documentId    String
+  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  dueDate       DateTime
+  amount        Decimal            @db.Decimal(14, 2)
+  status        PaymentEventStatus @default(PENDING)
+  paidAt        DateTime?
+  paidAmount    Decimal?           @db.Decimal(14, 2)
+  paymentMethod String?
+  notes         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@unique([tenantId, documentId])
+  @@index([tenantId, dueDate])
+  @@index([tenantId, status])
+  @@map("payment_events")
 }
 
 model PayableItem {

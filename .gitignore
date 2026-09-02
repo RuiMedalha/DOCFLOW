@@ -1,3 +1,7 @@
+# ============================================================
+# DocFlow — what to commit (everything below is EXCLUDED)
+# ============================================================
+
 # Dependencies
 node_modules/
 .pnpm-store/
@@ -18,7 +22,7 @@ apps/web/.env.local
 **/*.env
 **/*.env.local
 
-# User data — uploads and extracted test artifacts
+# User data — uploads
 apps/api/uploads/
 
 # Logs
@@ -37,3 +41,32 @@ Thumbs.db
 .cache/
 .eslintcache
 *.tsbuildinfo
+
+# ============================================================
+# Overclock runtime — never commit
+# ============================================================
+.overclock-app/
+cloudflared.exe
+nohup.out
+
+# ============================================================
+# Test artifacts and scratch — never commit
+# ============================================================
+test-upload.sh
+login.json
+token.txt
+secrets.yml
+setup.sql
+search.json
+
+# Old load-test results from earlier exploration
+e2e/
+apps/api/test-results/
+apps/api/dist/e2e/
+**/test-results/
+**/.last-run.json
+**/trace.zip
+**/*.zip
+**/*.png
+**/*.webm
+**/*.log.lcov

@@ -251,6 +251,26 @@ export class MarkPaidPayableDto {
   partialReason?: string;
 }
 
+export class PayPaymentEventDto {
+  @ApiPropertyOptional({ description: 'EUR actually paid (defaults to event amount)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount?: number;
+
+  @ApiPropertyOptional({ description: 'Payment channel, e.g. transfer, sepa, mb' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  method?: string;
+
+  @ApiPropertyOptional({ description: 'ISO-8601 payment timestamp (defaults to now)' })
+  @IsOptional()
+  @IsDateString()
+  paidAt?: string;
+}
+
 // ═════════════════════════════════════════════ schedule / calendar ═════════
 
 export class CreatePaymentScheduleDto {

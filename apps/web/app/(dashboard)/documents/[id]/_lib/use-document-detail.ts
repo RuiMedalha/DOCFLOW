@@ -250,6 +250,68 @@ export function useSendToToc() {
   });
 }
 
+// ================================================================== line items
+// Editable line-items hooks (ADMIN / OPERADOR). The backend auto-recomputes
+// the document totals on each PATCH/POST/DELETE, so we only need to invalidate
+// the bundle cache — no manual recompute on the client.
+
+export interface LineItemPatch {
+  description?: string;
+  quantity?: number;
+  unitPrice?: number;
+  discount?: number;
+  taxRate?: number;
+  total?: number;
+  code?: string;
+}
+
+export function useAddLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: LineItemPatch }) =>
+      apiFetch<LineItem>(`/documents/${id}/items`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_item, vars) => {
+      qc.invalidateQueries({ queryKey: ['document-detail', vars.id] });
+    },
+  });
+}
+
+export function useUpdateLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      itemId,
+      patch,
+    }: {
+      id: string;
+      itemId: string;
+      patch: LineItemPatch;
+    }) =>
+      apiFetch<LineItem>(`/documents/${id}/items/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: (_item, vars) => {
+      qc.invalidateQueries({ queryKey: ['document-detail', vars.id] });
+    },
+  });
+}
+
+export function useDeleteLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, itemId }: { id: string; itemId: string }) =>
+      apiFetch<void>(`/documents/${id}/items/${itemId}`, { method: 'DELETE' }),
+    onSuccess: (_void, vars) => {
+      qc.invalidateQueries({ queryKey: ['document-detail', vars.id] });
+    },
+  });
+}
+
 // =================================================================== helpers
 
 function extractQrFields(qrPayload?: string | null): string[] {

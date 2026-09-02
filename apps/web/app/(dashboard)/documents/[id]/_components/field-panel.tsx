@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Save, RefreshCw, Send, CheckCircle2, ShieldAlert, Trash2 } from 'lucide-react';
+import { Save, RefreshCw, Send, CheckCircle2, ShieldAlert, Trash2, Plus, X, Loader2 } from 'lucide-react';
 
 export interface ExtractedFields {
   supplier?: string | null;
@@ -92,6 +92,18 @@ export interface FieldPanelProps {
   /** True while the approve mutation is in flight. */
   approving?: boolean;
 
+  // ── Line-items editing (ADMIN/OPERADOR only) ─────────────────────────
+  /** Document id — used to scope the add/update/delete calls. */
+  documentId?: string;
+  /** True when the current user is allowed to edit line items. */
+  canEditLines?: boolean;
+  /** True while a POST /items is in flight (adds the spinner). */
+  addingLine?: boolean;
+  /** Id of the line item currently being PATCH-ed (disables that row's inputs). */
+  busyItemId?: string | null;
+  /** Id of the line item currently being DELETE-d (disables that row's delete button). */
+  deletingItemId?: string | null;
+
   onFieldChange: (patch: Partial<ExtractedFields>) => void;
   onAssignDebit?: (code: string) => void;
   onAssignCredit?: (code: string) => void;
@@ -99,6 +111,12 @@ export interface FieldPanelProps {
   onApprove?: () => void;
   onSave?: () => void;
   onSendToToc?: () => void;
+  /** Fired with a partial patch (e.g. { quantity: 3 }) on cell blur. */
+  onUpdateLineItem?: (itemId: string, patch: Record<string, number | string | null>) => void;
+  /** Fired by the "+ Adicionar linha" button. */
+  onAddLineItem?: () => void;
+  /** Fired by the per-row X button. */
+  onDeleteLineItem?: (itemId: string) => void;
 }
 
 function confColor(c?: number): 'green' | 'amber' | 'red' | 'neutral' {
@@ -358,106 +376,224 @@ export function FieldPanel(props: FieldPanelProps) {
       </fieldset>
 
       {/* === Line items ==================================================== */}
-      {lineItems.length > 0 && (
+      {(lineItems.length > 0 || props.canEditLines) && (
         <section className="card p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-subtle)' }}>
-            Linhas do documento ({lineItems.length})
-          </h3>
-          <div className="overflow-x-auto -mx-2 px-2">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ color: 'var(--text-subtle)' }}>
-                  <th className="text-left font-medium pb-2">Descrição</th>
-                  {hasCode && (
-                    <th className="text-left font-medium pb-2">Cód.</th>
-                  )}
-                  <th className="text-right font-medium pb-2 tabular-nums">Qtd.</th>
-                  <th className="text-right font-medium pb-2 tabular-nums">Preço un.</th>
-                  {hasDiscount && (
-                    <th className="text-right font-medium pb-2 tabular-nums">Desc.</th>
-                  )}
-                  <th className="text-right font-medium pb-2 tabular-nums">IVA</th>
-                  <th className="text-right font-medium pb-2 tabular-nums">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lineItems.map((li) => (
-                  <tr key={li.id} className="border-t border-border">
-                    <td className="py-2 pr-3" style={{ color: 'var(--text)' }}>
-                      {li.description}
-                    </td>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-subtle)' }}>
+              Linhas do documento ({lineItems.length})
+            </h3>
+            {props.canEditLines && !props.approved && props.onAddLineItem && (
+              <button
+                type="button"
+                onClick={props.onAddLineItem}
+                disabled={props.addingLine}
+                aria-busy={props.addingLine}
+                className="btn-secondary text-[11px] py-1 px-2"
+                title="Adicionar nova linha (POST /items)"
+              >
+                {props.addingLine ? (
+                  <Loader2 size={11} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Plus size={11} aria-hidden="true" />
+                )}
+                Adicionar linha
+              </button>
+            )}
+          </div>
+          {lineItems.length > 0 && (
+            <div className="overflow-x-auto -mx-2 px-2">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr style={{ color: 'var(--text-subtle)' }}>
+                    <th className="text-left font-medium pb-2">Descrição</th>
                     {hasCode && (
-                      <td className="py-2 pr-3 font-mono" style={{ color: 'var(--text-muted)' }}>
-                        {li.code ? (
-                          <span className="inline-block rounded px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--hover)' }}>
-                            {li.code}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
+                      <th className="text-left font-medium pb-2">Cód.</th>
                     )}
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                      {li.quantity.toLocaleString('pt-PT')}
-                    </td>
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                      {fmtMoney(li.unitPrice, currency)}
-                    </td>
+                    <th className="text-right font-medium pb-2 tabular-nums">Qtd.</th>
+                    <th className="text-right font-medium pb-2 tabular-nums">Preço un.</th>
                     {hasDiscount && (
-                      <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                        {Number.isFinite(li.discount as number) ? fmtMoney(li.discount as number, currency) : '—'}
-                      </td>
+                      <th className="text-right font-medium pb-2 tabular-nums">Desc.</th>
                     )}
-                    <td className="py-2 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                      {li.taxRate != null ? `${li.taxRate}%` : '—'}
-                    </td>
-                    <td className="py-2 text-right tabular-nums font-semibold" style={{ color: 'var(--text)' }}>
-                      {fmtMoney(li.total, currency)}
-                    </td>
+                    <th className="text-right font-medium pb-2 tabular-nums">IVA</th>
+                    <th className="text-right font-medium pb-2 tabular-nums">Total</th>
+                    {props.canEditLines && !props.approved && (
+                      <th className="w-6" aria-label="Ações" />
+                    )}
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr
-                  className="border-t-2"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  <td
-                    colSpan={hasCode ? 2 : 1}
-                    className="pt-2.5 pr-3 text-xs font-semibold uppercase tracking-wider"
-                    style={{ color: 'var(--text-subtle)' }}
+                </thead>
+                <tbody>
+                  {lineItems.map((li) => {
+                    const editable = Boolean(
+                      props.canEditLines &&
+                      !props.approved &&
+                      props.onUpdateLineItem,
+                    );
+                    const rowBusy = props.busyItemId === li.id;
+                    return (
+                      <tr key={li.id} className="border-t border-border">
+                        <td className="py-1.5 pr-3" style={{ color: 'var(--text)' }}>
+                          {editable && props.onUpdateLineItem ? (
+                            <input
+                              type="text"
+                              className="input input-xs w-full"
+                              value={li.description}
+                              disabled={rowBusy}
+                              onChange={() => {/* keep controlled via onBlur only */}}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v && v !== li.description) {
+                                  props.onUpdateLineItem!(li.id, { description: v });
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span>{li.description}</span>
+                          )}
+                        </td>
+                        {hasCode && (
+                          <td className="py-1.5 pr-3 font-mono" style={{ color: 'var(--text-muted)' }}>
+                            {li.code ? (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--hover)' }}>
+                                {li.code}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        )}
+                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                          {editable ? (
+                            <NumberCell
+                              value={li.quantity}
+                              step="any"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { quantity: v })}
+                            />
+                          ) : (
+                            li.quantity.toLocaleString('pt-PT')
+                          )}
+                        </td>
+                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                          {editable ? (
+                            <NumberCell
+                              value={li.unitPrice}
+                              step="0.01"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { unitPrice: v })}
+                            />
+                          ) : (
+                            fmtMoney(li.unitPrice, currency)
+                          )}
+                        </td>
+                        {hasDiscount && (
+                          <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                            {editable ? (
+                              <NumberCell
+                                value={li.discount as number}
+                                step="0.01"
+                                disabled={rowBusy}
+                                onCommit={(v) => props.onUpdateLineItem!(li.id, { discount: v })}
+                              />
+                            ) : (
+                              Number.isFinite(li.discount as number)
+                                ? fmtMoney(li.discount as number, currency)
+                                : '—'
+                            )}
+                          </td>
+                        )}
+                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                          {editable ? (
+                            <NumberCell
+                              value={li.taxRate as number}
+                              step="0.1"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { taxRate: v })}
+                            />
+                          ) : (
+                            li.taxRate != null ? `${li.taxRate}%` : '—'
+                          )}
+                        </td>
+                        <td className="py-1.5 text-right tabular-nums font-semibold" style={{ color: 'var(--text)' }}>
+                          {editable ? (
+                            <NumberCell
+                              value={li.total}
+                              step="0.01"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { total: v })}
+                            />
+                          ) : (
+                            fmtMoney(li.total, currency)
+                          )}
+                        </td>
+                        {props.canEditLines && !props.approved && (
+                          <td className="py-1.5 pl-2">
+                            {props.onDeleteLineItem && (
+                              <button
+                                type="button"
+                                onClick={() => props.onDeleteLineItem!(li.id)}
+                                disabled={rowBusy || props.deletingItemId === li.id}
+                                aria-label={`Eliminar linha ${li.description}`}
+                                title="Eliminar linha (DELETE /items/:itemId)"
+                                className="inline-flex items-center justify-center w-6 h-6 rounded text-[var(--text-subtle)] hover:text-[var(--danger)] hover:bg-[var(--hover)] transition-colors"
+                              >
+                                {props.deletingItemId === li.id ? (
+                                  <Loader2 size={11} className="animate-spin" aria-hidden="true" />
+                                ) : (
+                                  <X size={11} aria-hidden="true" />
+                                )}
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr
+                    className="border-t-2"
+                    style={{ borderColor: 'var(--border)' }}
                   >
-                    Totais
-                  </td>
-                  <td
-                    className="pt-2.5 text-right tabular-nums text-xs"
-                    style={{ color: 'var(--text-muted)' }}
-                    aria-label="Quantidade total"
-                  >
-                    —
-                  </td>
-                  <td className="pt-2.5" aria-hidden="true" />
-                  {hasDiscount && (
+                    <td
+                      colSpan={hasCode ? 2 : 1}
+                      className="pt-2.5 pr-3 text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--text-subtle)' }}
+                    >
+                      Totais
+                    </td>
                     <td
                       className="pt-2.5 text-right tabular-nums text-xs"
                       style={{ color: 'var(--text-muted)' }}
-                      aria-label="Desconto total"
+                      aria-label="Quantidade total"
                     >
-                      {lineDiscountTotal > 0 ? `− ${fmtMoney(lineDiscountTotal, currency)}` : '—'}
+                      —
                     </td>
-                  )}
-                  <td className="pt-2.5" aria-hidden="true" />
-                  <td
-                    className="pt-2.5 text-right tabular-nums font-semibold"
-                    style={{ color: 'var(--text)' }}
-                    aria-label="Total documento"
-                  >
-                    {fmtMoney(lineSum, currency)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+                    <td className="pt-2.5" aria-hidden="true" />
+                    {hasDiscount && (
+                      <td
+                        className="pt-2.5 text-right tabular-nums text-xs"
+                        style={{ color: 'var(--text-muted)' }}
+                        aria-label="Desconto total"
+                      >
+                        {lineDiscountTotal > 0 ? `− ${fmtMoney(lineDiscountTotal, currency)}` : '—'}
+                      </td>
+                    )}
+                    <td className="pt-2.5" aria-hidden="true" />
+                    <td
+                      className="pt-2.5 text-right tabular-nums font-semibold"
+                      style={{ color: 'var(--text)' }}
+                      aria-label="Total documento"
+                    >
+                      {fmtMoney(lineSum, currency)}
+                    </td>
+                    {props.canEditLines && !props.approved && (
+                      <td aria-hidden="true" />
+                    )}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
         </section>
       )}
 
@@ -600,6 +736,61 @@ function MoneyInput({
         {ccy}
       </span>
     </div>
+  );
+}
+
+/**
+ * NumberCell — compact numeric input for the line-items table.
+ * Local state holds the in-flight text so the user can type freely;
+ * on blur we coerce to number and fire `onCommit` ONLY if it changed
+ * (avoids spurious PATCH round-trips on focus shifts).
+ */
+function NumberCell({
+  value,
+  step,
+  disabled,
+  onCommit,
+}: {
+  value: number | null | undefined;
+  step?: string;
+  disabled?: boolean;
+  onCommit: (v: number) => void;
+}) {
+  const [text, setText] = useState<string>(
+    value == null || !Number.isFinite(value) ? '' : String(value),
+  );
+  useEffect(() => {
+    setText(value == null || !Number.isFinite(value) ? '' : String(value));
+  }, [value]);
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      step={step ?? '0.01'}
+      className="input input-xs tabular-nums text-right w-full max-w-[7rem] ml-auto"
+      value={text}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        if (text === '') return;
+        const n = Number(text);
+        if (!Number.isFinite(n)) {
+          // Revert to the last good value.
+          setText(value == null || !Number.isFinite(value) ? '' : String(value));
+          return;
+        }
+        const current = value == null || !Number.isFinite(value) ? null : value;
+        if (current === n) return;
+        onCommit(n);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setText(value == null || !Number.isFinite(value) ? '' : String(value));
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+    />
   );
 }
 

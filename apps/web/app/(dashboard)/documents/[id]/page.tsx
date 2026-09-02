@@ -26,16 +26,20 @@ import { FraudWarning } from './_components/fraud-warning';
 import { QrBadge } from './_components/qr-badge';
 import { toastBus } from '../../../_components/ui';
 import {
+  useAddLineItem,
   useApproveDocument,
   useAssignAccounting,
+  useDeleteLineItem,
   useDocumentBundle,
   useDownloadUrl,
   useReExtract,
   useSaveFields,
   useSendToToc,
+  useUpdateLineItem,
   type DocumentDetail,
 } from './_lib/use-document-detail';
 import type { ExtractedFields } from './_components/field-panel';
+import { useUser } from '@/_lib/use-dashboard-queries';
 
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -49,6 +53,21 @@ export default function DocumentDetailPage() {
   const approve = useApproveDocument();
   const assignAcc = useAssignAccounting();
   const sendToToc = useSendToToc();
+  const addLine = useAddLineItem();
+  const updateLine = useUpdateLineItem();
+  const deleteLine = useDeleteLineItem();
+
+  // Role gating for line-item editing. Backend enforces the same gate
+  // (Role.ADMIN / Role.OPERADOR) — we mirror it here so the UI doesn't
+  // expose controls that would 403 on submit.
+  const user = useUser();
+  const canEditLines =
+    user?.role === 'ADMIN' || user?.role === 'OPERADOR';
+
+  // Track which row is mid-PATCH so the FieldPanel can disable that row's
+  // inputs until the refetch lands.
+  const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
 
   // Local optimistic field state — flushed to the server via Save.
   const doc = bundle.data?.document;
@@ -188,6 +207,56 @@ export default function DocumentDetailPage() {
     await sendToToc.mutateAsync(id);
   }, [id, sendToToc]);
 
+  const onAddLineItem = useCallback(async () => {
+    if (!id) return;
+    try {
+      await addLine.mutateAsync({
+        id,
+        body: { description: 'Novo item', quantity: 1, unitPrice: 0, taxRate: 23 },
+      });
+      qc.invalidateQueries({ queryKey: ['document-detail', id] });
+      toastBus.success('Linha adicionada.');
+    } catch (err: any) {
+      const raw = typeof err?.message === 'string' ? err.message : '';
+      toastBus.error(raw || 'Falha ao adicionar linha.');
+    }
+  }, [id, addLine, qc]);
+
+  const onUpdateLineItem = useCallback(
+    async (itemId: string, patch: Record<string, number | string | null>) => {
+      if (!id) return;
+      setBusyItemId(itemId);
+      try {
+        await updateLine.mutateAsync({ id, itemId, patch });
+        qc.invalidateQueries({ queryKey: ['document-detail', id] });
+      } catch (err: any) {
+        const raw = typeof err?.message === 'string' ? err.message : '';
+        toastBus.error(raw || 'Falha ao atualizar linha.');
+      } finally {
+        setBusyItemId(null);
+      }
+    },
+    [id, updateLine, qc],
+  );
+
+  const onDeleteLineItem = useCallback(
+    async (itemId: string) => {
+      if (!id) return;
+      setDeletingItemId(itemId);
+      try {
+        await deleteLine.mutateAsync({ id, itemId });
+        qc.invalidateQueries({ queryKey: ['document-detail', id] });
+        toastBus.success('Linha removida.');
+      } catch (err: any) {
+        const raw = typeof err?.message === 'string' ? err.message : '';
+        toastBus.error(raw || 'Falha ao remover linha.');
+      } finally {
+        setDeletingItemId(null);
+      }
+    },
+    [id, deleteLine, qc],
+  );
+
   if (bundle.isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -295,6 +364,11 @@ export default function DocumentDetailPage() {
             reExtracting={reExtract.isPending}
             sendingToToc={sendToToc.isPending}
             approving={approve.isPending}
+            documentId={id}
+            canEditLines={canEditLines}
+            addingLine={addLine.isPending}
+            busyItemId={busyItemId}
+            deletingItemId={deletingItemId}
             onFieldChange={onFieldChange}
             onAssignDebit={onAssignDebit}
             onAssignCredit={onAssignCredit}
@@ -302,6 +376,9 @@ export default function DocumentDetailPage() {
             onApprove={onApprove}
             onSave={onSave}
             onSendToToc={onSendToToc}
+            onAddLineItem={onAddLineItem}
+            onUpdateLineItem={onUpdateLineItem}
+            onDeleteLineItem={onDeleteLineItem}
           />
         </section>
       </div>

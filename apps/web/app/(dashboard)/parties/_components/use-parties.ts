@@ -132,7 +132,8 @@ export function useIbanHistory(id: string | null) {
       if (!id) return [];
       const res = await authedFetch(`${API_BASE}/parties/${id}/iban-history`);
       if (!res.ok) return [] as IbanHistoryEntry[];
-      return unwrap<IbanHistoryEntry[]>(res);
+      const body = unwrap<{ items?: IbanHistoryEntry[] } | IbanHistoryEntry[]>(res) as any;
+      return Array.isArray(body) ? body : (body.items ?? []);
     },
     enabled: !!id,
   });
@@ -233,12 +234,13 @@ export function useAccounts(page = 1, limit = 100, search = '') {
 }
 
 export function useSeedAccounts() {
-  return useQuery<Account[]>({
+  return useQuery<{ items: Account[]; meta: { total: number; page: number; limit: number } } | Account[]>({
     queryKey: partyKeys.seedAccounts(),
     queryFn: async () => {
       const res = await authedFetch(`${API_BASE}/accounts/seed`);
       if (!res.ok) return [] as Account[];
-      return unwrap<Account[]>(res);
+      const body = unwrap<{ items?: Account[] } | Account[]>(res) as any;
+      return Array.isArray(body) ? body : (body.items ?? []);
     },
     staleTime: 5 * 60_000,
   });

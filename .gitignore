@@ -70,3 +70,4 @@ apps/api/dist/e2e/
 **/*.png
 **/*.webm
 **/*.log.lcov
+.playwright-mcp/

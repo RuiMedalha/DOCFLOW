@@ -4,13 +4,16 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Save, Loader2 } from 'lucide-react';
 import { useCreateParty, useUpdateParty, useSeedAccounts } from './use-parties';
-import type { PartyInput } from '../_lib/types';
+import type { PartyInput, Account } from '../_lib/types';
 
 export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?: string }) {
   const router = useRouter();
   const create = useCreateParty();
   const update = useUpdateParty();
-  const { data: seedAccounts } = useSeedAccounts();
+  const seedAccountsData = useSeedAccounts().data;
+  const seedAccounts: Account[] = Array.isArray(seedAccountsData)
+    ? seedAccountsData
+    : (seedAccountsData && (seedAccountsData as any).items) || [];
   const [form, setForm] = useState<PartyInput>(initial ?? {
     type: 'FORNECEDOR',
     name: '',

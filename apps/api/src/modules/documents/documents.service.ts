@@ -1473,4 +1473,79 @@ export class DocumentsService {
     const secondLast = segments[segments.length - 2];
     return /^\d{2}$/.test(last) && /^\d{4}$/.test(secondLast);
   }
+
+  // ──────────────────────────────────────────── line-item CRUD ──────────
+
+  async addItem(
+    tenantId: string,
+    id: string,
+    body: { description: string; quantity?: number; unitPrice?: number; discount?: number; taxRate?: number; code?: string },
+  ) {
+    const doc = await this.prisma.document.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!doc) throw new NotFoundException('Document not found');
+    const quantity = body.quantity ?? 1;
+    const unitPrice = body.unitPrice ?? 0;
+    const discount = body.discount ?? 0;
+    const taxRate = body.taxRate ?? 23;
+    const lineTotal = this.computeLineTotal({ quantity, unitPrice, discount });
+    const item = await this.prisma.documentItem.create({
+      data: { documentId: id, code: body.code ?? null, description: body.description, quantity, unitPrice, discount, taxRate, total: lineTotal },
+    });
+    await this.recomputeDocTotals(id);
+    return item;
+  }
+
+  async updateItem(
+    tenantId: string,
+    id: string,
+    itemId: string,
+    body: { description?: string; quantity?: number; unitPrice?: number; discount?: number; taxRate?: number },
+  ) {
+    const doc = await this.prisma.document.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!doc) throw new NotFoundException('Document not found');
+    const item = await this.prisma.documentItem.findFirst({ where: { id: itemId, documentId: id } });
+    if (!item) throw new NotFoundException('Line item not found');
+    const quantity = body.quantity ?? Number(item.quantity);
+    const unitPrice = body.unitPrice ?? Number(item.unitPrice);
+    const discount = body.discount ?? Number(item.discount);
+    const taxRate = body.taxRate ?? Number(item.taxRate);
+    const lineTotal = this.computeLineTotal({ quantity, unitPrice, discount });
+    const updated = await this.prisma.documentItem.update({
+      where: { id: itemId },
+      data: {
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        quantity, unitPrice, discount, taxRate, total: lineTotal,
+      },
+    });
+    await this.recomputeDocTotals(id);
+    return updated;
+  }
+
+  async removeItem(tenantId: string, id: string, itemId: string) {
+    const doc = await this.prisma.document.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!doc) throw new NotFoundException('Document not found');
+    const item = await this.prisma.documentItem.findFirst({ where: { id: itemId, documentId: id } });
+    if (!item) throw new NotFoundException('Line item not found');
+    await this.prisma.documentItem.delete({ where: { id: itemId } });
+    await this.recomputeDocTotals(id);
+  }
+
+  private computeLineTotal(args: { quantity: number | string; unitPrice: number | string; discount: number | string }): number {
+    const q = Number(args.quantity) || 0;
+    const p = Number(args.unitPrice) || 0;
+    const d = Number(args.discount) || 0;
+    const gross = q * p - d;
+    return Math.max(0, Math.round(gross * 100) / 100);
+  }
+
+  private async recomputeDocTotals(documentId: string): Promise<void> {
+    const items = await this.prisma.documentItem.findMany({ where: { documentId } });
+    const net = items.reduce((acc, it) => acc + Number(it.total || 0), 0);
+    const tax = items.reduce((acc, it) => acc + (Number(it.total || 0) * Number(it.taxRate || 0)) / 100, 0);
+    const total = Math.round((net + tax) * 100) / 100;
+    await this.prisma.document.update({
+      where: { id: documentId },
+      data: { netAmount: net, taxAmount: Math.round(tax * 100) / 100, total },
+    });
+  }
 }

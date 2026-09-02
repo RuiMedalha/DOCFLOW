@@ -188,6 +188,41 @@ export class DocumentsController {
     return this.documents.listItems(user.tenantId, id);
   }
 
+  @Post(':id/items')
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({ summary: 'Add a new line item to a document' })
+  addItem(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: { description: string; quantity?: number; unitPrice?: number; discount?: number; taxRate?: number; code?: string },
+  ) {
+    return this.documents.addItem(user.tenantId, id, body);
+  }
+
+  @Patch(':id/items/:itemId')
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({ summary: 'Update a line item (qty / price / discount / taxRate) and recompute totals' })
+  updateItem(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: { description?: string; quantity?: number; unitPrice?: number; discount?: number; taxRate?: number },
+  ) {
+    return this.documents.updateItem(user.tenantId, id, itemId, body);
+  }
+
+  @Delete(':id/items/:itemId')
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove a line item' })
+  removeItem(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.documents.removeItem(user.tenantId, id, itemId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get document detail (without file bytes)' })
   @ApiResponse({ status: 404, description: 'Document not found' })

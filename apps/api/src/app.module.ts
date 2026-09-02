@@ -27,6 +27,7 @@ import {
 // Feature modules
 import { AuthModule } from './modules/auth/auth.module';
 import { DocumentsModule } from './modules/documents/documents.module';
+import { CategoriesModule } from './modules/documents/categories.module';
 import { AiModule } from './modules/ai/ai.module';
 import { InboundModule } from './modules/inbound/inbound.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -114,6 +115,7 @@ import { HealthModule } from './modules/health/health.module';
     // Features
     AuthModule,
     DocumentsModule,
+    CategoriesModule,
     AiModule,
     InboundModule,
     ExtractionModule,

@@ -8,7 +8,7 @@ const FILE = process.argv[2] ?? path.resolve(
   'uploads/cmtf1scz20000g5s0n621bzef/2026/09/1788222405691-e3772ef040d5bf8c.jpg',
 );
 
-const KEY = 'sk-or-v1-***REDACTED***';
+const KEY = 'sk-or-v1-***REDACTED***'; // rotated; original revoked at OpenRouter
 const MODEL = process.argv[3] ?? 'google/gemini-2.5-pro';
 
 const buf = await fs.readFile(FILE);

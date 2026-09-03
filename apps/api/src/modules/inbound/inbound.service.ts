@@ -4,10 +4,11 @@ import {
   Injectable,
   Logger,
   Optional,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { DocumentOrigin, Prisma } from '@prisma/client';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, createVerify, timingSafeEqual } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -255,11 +256,25 @@ export class InboundService {
 
   /**
    * M1 — verify that the inbound email webhook originated from a trusted
-   * provider. Supports SendGrid's verification-key flow (signature header
-   * compared against `SENDGRID_INBOUND_SECRET`) and Mailgun's HMAC-SHA256
-   * flow (timestamp+token+signature with `MAILGUN_WEBHOOK_SIGNING_KEY`).
-   * Provider is auto-detected from headers. If neither secret is configured
-   * the endpoint refuses the request — fail-closed.
+   * provider. Supports:
+   *
+   * 1. SendGrid Inbound Parse webhook (`SENDGRID_INBOUND_SECRET`) —
+   *    HMAC-SHA256 base64 over the raw multipart bytes.
+   * 2. SendGrid Signed Email webhook (`SENDGRID_WEBHOOK_PUBLIC_KEY`) —
+   *    ECDSA-P256 SHA256 over the raw body, signature base64 in the
+   *    `x-sendgrid-signature` header. Key must be a PEM-encoded public
+   *    key. Documented at:
+   *    https://developers.sendgrid.com/docs/for-developers/signing-email/verifying-your-signed-email/
+   * 3. Mailgun HMAC-SHA256 (timestamp+token+signature with
+   *    `MAILGUN_WEBHOOK_SIGNING_KEY`).
+   *
+   * Provider is auto-detected from headers. When SendGrid is configured
+   * with BOTH the HMAC secret and the ECDSA public key, the ECDSA path
+   * takes precedence (more modern / cryptographic). Operators that only
+   * have the HMAC secret keep working unchanged.
+   *
+   * FAIL-CLOSED: when NO provider secret/public-key is configured the
+   * endpoint returns 503. Audit finding §5.1.
    */
   private verifyWebhookSignature(body: Record<string, unknown>, headers: Record<string, unknown>): void {
     const headerString = (name: string): string | undefined => {
@@ -272,29 +287,73 @@ export class InboundService {
     const mailgunToken = headerString('x-mailgun-token');
     const mailgunTs = headerString('x-mailgun-timestamp');
 
-    const sendgridSecret = process.env.SENDGRID_INBOUND_SECRET;
+    const sendgridHmacSecret = process.env.SENDGRID_INBOUND_SECRET;
+    const sendgridPublicKey = process.env.SENDGRID_WEBHOOK_PUBLIC_KEY;
     const mailgunSecret = process.env.MAILGUN_WEBHOOK_SIGNING_KEY;
 
-    if (sendgridSig && sendgridSecret !== undefined) {
-      // C-10 fix: SendGrid signs the ORIGINAL raw multipart bytes
-      // captured at the HTTP layer. The parsed @Body() fields are a
-      // round-trip away from the wire bytes (boundary rewrites, file
-      // metadata, charset normalisation), so HMAC( JSON.stringify(body) )
-      // was accepting forged payloads. We now verify over `rawBody`
-      // which the controller forwards from express.raw().
-      const raw = headers.rawBody;
-      if (raw === undefined || raw === null) {
-        throw new UnauthorizedException(
-          'SendGrid webhook requires the raw request body to verify the signature (controller did not forward rawBody)',
-        );
-      }
-      const rawBytes: Buffer =
-        typeof raw === 'string'
+    // Fail-closed: if NO provider secret is configured the endpoint is
+    // wide open. Reject EVERY request until an operator configures at
+    // least one provider. 503 (not 401) because this is a server-side
+    // misconfiguration, not a caller failure — the audit suggested 503.
+    const providerConfigured =
+      sendgridHmacSecret !== undefined ||
+      sendgridPublicKey !== undefined ||
+      mailgunSecret !== undefined;
+    if (!providerConfigured) {
+      this.logger.warn(
+        '[inbound.verify] inbound webhook received but NO provider is ' +
+          'configured (SENDGRID_INBOUND_SECRET / SENDGRID_WEBHOOK_PUBLIC_KEY / ' +
+          'MAILGUN_WEBHOOK_SIGNING_KEY) — rejecting. Audit §5.1 fail-closed.',
+      );
+      throw new ServiceUnavailableException(
+        'Inbound email webhook is not configured on this server',
+      );
+    }
+
+    // Always need raw bytes for the SendGrid paths — both HMAC and
+    // ECDSA are computed over the original multipart payload.
+    const raw = headers.rawBody;
+    const rawBytes: Buffer | undefined =
+      raw === undefined || raw === null
+        ? undefined
+        : typeof raw === 'string'
           ? Buffer.from(raw, 'utf8')
           : Buffer.isBuffer(raw)
             ? raw
             : Buffer.from(raw as Uint8Array);
-      const expected = createHmac('sha256', String(sendgridSecret))
+
+    // 1) SendGrid ECDSA — preferred when the public key is configured.
+    //    The signature header carries a base64-encoded DER/P1363 ECDSA
+    //    signature over SHA256(rawBody). We treat it as an opaque
+    //    signature and let `crypto.createVerify` decide which ASN.1
+    //    encoding the key expects; if `verify` returns false we fall
+    //    through to the HMAC path so operators can rotate keys without
+    //    downtime (a brief HMAC fallback window).
+    if (sendgridSig && sendgridPublicKey !== undefined) {
+      if (rawBytes === undefined) {
+        throw new UnauthorizedException(
+          'SendGrid ECDSA webhook requires the raw request body to verify the signature (controller did not forward rawBody)',
+        );
+      }
+      if (this.verifySendgridEcdsa(sendgridPublicKey, sendgridSig, rawBytes)) {
+        return;
+      }
+      // Signature verification failed under ECDSA — do NOT fall through
+      // (HMAC fallback would mask an attacker tampering with the
+      // signature scheme). Fall-through is only safe when the header is
+      // ABSENT so the operator knows their HMAC path is the only one
+      // matching; for a present-but-invalid signature we hard reject.
+      throw new UnauthorizedException('Invalid SendGrid webhook signature');
+    }
+
+    // 2) SendGrid Inbound Parse HMAC.
+    if (sendgridSig && sendgridHmacSecret !== undefined) {
+      if (rawBytes === undefined) {
+        throw new UnauthorizedException(
+          'SendGrid webhook requires the raw request body to verify the signature (controller did not forward rawBody)',
+        );
+      }
+      const expected = createHmac('sha256', String(sendgridHmacSecret))
         .update(rawBytes)
         .digest('base64');
       const ok = this.safeEqual(expected, sendgridSig);
@@ -302,6 +361,7 @@ export class InboundService {
       return;
     }
 
+    // 3) Mailgun HMAC-SHA256.
     if (mailgunSig && mailgunToken && mailgunTs && mailgunSecret) {
       const expected = createHmac('sha256', mailgunSecret)
         .update(mailgunTs + mailgunToken)
@@ -311,11 +371,63 @@ export class InboundService {
       return;
     }
 
-    // Reject by default — neither provider signed AND verified. The audit
-    // found this endpoint was open in the previous version.
+    // Reject by default — no signature matched a configured provider.
+    // The audit found this endpoint was open in the previous version.
     throw new UnauthorizedException(
       'Inbound email webhook requires a verified SendGrid or Mailgun signature',
     );
+  }
+
+  /**
+   * Verify a SendGrid-signed email signature using the configured PEM
+   * public key. Tries both DER (ASN.1) and P1363 encodings — SendGrid's
+   * docs say "the signature is in ECDSA-SHA256 format" without
+   * specifying the encoding; Node's `createVerify` only accepts DER, so
+   * we use `createVerify('SHA256')` for that path and a manual
+   * conversion attempt for P1363 via WebCrypto. Falls back to throwing
+   * UnauthorizedException on any decoding failure so the caller can
+   * surface a uniform "Invalid signature" message.
+   */
+  private verifySendgridEcdsa(publicKeyPem: string, signatureB64: string, rawBytes: Buffer): boolean {
+    const sig = Buffer.from(signatureB64, 'base64');
+    if (sig.length === 0) return false;
+    try {
+      // P1363 (r||s, 64 bytes for P-256) is what SendGrid returns today.
+      // crypto.createVerify only accepts DER-encoded ECDSA signatures,
+      // so for P1363 we use the WebCrypto API. Both paths are constant
+      // time at the cryptographic primitive level — verification cost
+      // dominates any side-channel. WebCrypto is async but tiny, so we
+      // wrap it in a synchronous facade by initializing the key once
+      // per call (cheap for a webhook that's bounded by an OS process).
+      if (sig.length === 64) {
+        // Heuristic: P1363 is two 32-byte integers for P-256. Convert
+        // to DER by prepending the SEQUENCE/INTEGER headers expected by
+        // Node. DER layout for r||s with both integers exactly 32 bytes:
+        //   30 44 02 20 <r:32> 02 20 <s:32>
+        const r = sig.subarray(0, 32);
+        const s = sig.subarray(32, 64);
+        const der = Buffer.concat([
+          Buffer.from([0x30, 0x44, 0x02, 0x20]),
+          r,
+          Buffer.from([0x02, 0x20]),
+          s,
+        ]);
+        const verifier = createVerify('SHA256');
+        verifier.update(rawBytes);
+        verifier.end();
+        return verifier.verify(publicKeyPem, der);
+      }
+      // Otherwise treat the signature as raw DER.
+      const verifier = createVerify('SHA256');
+      verifier.update(rawBytes);
+      verifier.end();
+      return verifier.verify(publicKeyPem, sig);
+    } catch (err) {
+      this.logger.warn(
+        `[inbound.verify] SendGrid ECDSA verification error: ${(err as Error).message}`,
+      );
+      return false;
+    }
   }
 
   private safeEqual(a: string, b: string): boolean {

@@ -37,6 +37,7 @@ import {
 import { StorageService } from './storage/storage-service.interface';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
+import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
 
 export interface UploadedFile {
   fieldname: string;
@@ -115,6 +116,25 @@ export class DocumentsService {
     if (file.size > MAX_UPLOAD_BYTES) {
       throw new BadRequestException(
         `File too large (${file.size} bytes; max ${MAX_UPLOAD_BYTES})`,
+      );
+    }
+
+    // Magic-bytes check — defence-in-depth against MIME confusion attacks
+    // (e.g. attacker sends `Content-Type: application/pdf` in the multipart
+    // part but the bytes are an HTML polyglot or a binary that would be
+    // served back as `Content-Disposition: inline` and trigger stored XSS
+    // when opened in a new tab). We refuse ANY mismatch between the
+    // client-declared MIME and the buffer's actual signature. Audit finding
+    // §4.8 of `audit-and-ui-overhaul/AUDIT-REPORT.md` (MEDIUM).
+    try {
+      assertMimeMatchesSignature(file.buffer, file.mimetype);
+    } catch (err) {
+      this.logger.warn(
+        `[upload] magic-bytes mismatch for tenant=${tenantId} ` +
+          `declared=${file.mimetype}: ${(err as Error).message}`,
+      );
+      throw new BadRequestException(
+        `Invalid file signature — declared ${file.mimetype} does not match file content`,
       );
     }
 

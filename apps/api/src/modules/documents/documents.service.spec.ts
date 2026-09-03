@@ -67,7 +67,16 @@ function buildImageToPdfStub() {
 }
 
 function makePdfBuffer(payload = 'hello docflow'): Buffer {
-  return Buffer.from(payload);
+  // Magic-bytes fix (AUDIT §4.8): prepend the PDF `%PDF-` signature so the
+  // buffer survives the new MIME-confusion check in `upload()`. The trailing
+  // payload is whatever the test asserts about.
+  return Buffer.concat([Buffer.from('%PDF-1.4\n', 'utf8'), Buffer.from(payload, 'utf8')]);
+}
+
+function makeJpegBuffer(payload = 'jpeg-bytes'): Buffer {
+  // Magic-bytes fix: prepend the JPEG SOI + APP0 signature so the buffer
+  // survives `assertMimeMatchesSignature` in `upload()`.
+  return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(payload, 'utf8')]);
 }
 
 // ──────────────────────────────────────────────── tests
@@ -244,7 +253,7 @@ describe('DocumentsService', () => {
 
   // ──────────────────────────────────────────────── image → PDF derivative
   describe('upload() — image → PDF derivative', () => {
-    const makeJpeg = (payload = 'jpeg-bytes') => Buffer.from(payload);
+    const makeJpeg = (payload = 'jpeg-bytes') => makeJpegBuffer(payload);
 
     beforeEach(() => {
       // Default imageToPdf stub: yes it supports jpeg, returns a
@@ -301,7 +310,7 @@ describe('DocumentsService', () => {
         encoding: '7bit',
         mimetype: 'application/pdf',
         size: 4,
-        buffer: Buffer.from('pdf!'),
+        buffer: makePdfBuffer('pdf!'),
       };
       prisma.document.findFirst.mockResolvedValue(null);
       rules.suggest.mockResolvedValue('/Inbox/2026/08/OUTRO');
@@ -707,7 +716,7 @@ describe('DocumentsService', () => {
       encoding: '7bit',
       mimetype: 'image/jpeg',
       size: 11,
-      buffer: Buffer.from('jpeg-bytes'),
+      buffer: makeJpegBuffer('jpeg-bytes'),
     };
 
     beforeEach(() => {

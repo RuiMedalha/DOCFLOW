@@ -18,6 +18,7 @@ import type { Request } from 'express';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { TenantRequestContext } from '../../common/context/tenant-context';
+import { assertCronSecret } from '../../common/auth/cron-secret';
 import { ImapConfigDto } from './dto/imap-config.dto';
 import { InboundService } from './inbound.service';
 
@@ -41,7 +42,10 @@ export class InboundController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Cron-only sync of every configured IMAP mailbox' })
   syncAll(@Headers('x-cron-secret') secret: string | undefined) {
-    if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+    // Constant-time compare to avoid leaking the secret byte-by-byte via
+    // timing. The previous `!==` short-circuited on the first differing
+    // byte. Audit finding §5.2 of AUDIT-REPORT.md (MEDIUM).
+    if (!assertCronSecret(secret, process.env.CRON_SECRET)) {
       throw new UnauthorizedException('Invalid cron secret');
     }
     return this.inboundService.syncAll();

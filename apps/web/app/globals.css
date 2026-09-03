@@ -142,6 +142,62 @@
   color-scheme: light;
 }
 
+/* ================================================================
+   DocFlow — Editorial Skin (Blueprint Edition)
+   ================================================================
+   Ativado por [data-skin='editorial'] no <body> ou num wrapper.
+   Aplicado de momento apenas em /documents/[id].
+   NÃO remove nem substitui nenhum token do sistema base —
+   apenas adiciona um sistema paralelo com paleta cream + navy + gold,
+   tipografia editorial (Editorial New + Inter Tight + JetBrains Mono)
+   e geometria deliberadamente comprometida.
+   ================================================================ */
+
+:root,
+[data-skin='editorial'] {
+  /* Canvas — cream dominante (papel de escritório) */
+  --ed-canvas:    #fbf9f4;
+  --ed-canvas-2:  #f6f2e8;
+  --ed-panel:    #ffffff;
+
+  /* Ink — navy (tinta de carimbo) */
+  --ed-ink:          #14213d;
+  --ed-ink-soft:     #5c6478;
+  --ed-ink-faint:    #8a93a6;
+  --ed-rule:         rgba(20, 33, 61, 0.12);
+  --ed-rule-strong:  rgba(20, 33, 61, 0.28);
+
+  /* Accent — gold (selo de cartório) */
+  --ed-accent-gold:        #cba65a;
+  --ed-accent-gold-dim:    rgba(203, 166, 90, 0.16);
+  --ed-accent-gold-strong: #a8893f;
+
+  /* Status — 4 tons distintos, AA sobre cream */
+  --ed-status-ok:          #4f7942;
+  --ed-status-ok-dim:      rgba(79, 121, 66, 0.14);
+  --ed-status-warn:        #b8860b;
+  --ed-status-warn-dim:    rgba(184, 134, 11, 0.14);
+  --ed-status-alert:       #8b2e2a;
+  --ed-status-alert-dim:   rgba(139, 46, 42, 0.12);
+  --ed-status-neutral:     #5c6478;
+  --ed-status-neutral-dim: rgba(92, 100, 120, 0.10);
+
+  /* Geometry — committee editorial */
+  --ed-radius-hairline: 0;
+  --ed-radius-chip:     4px;
+  --ed-radius-card:     12px;
+  --ed-radius-pill:     999px;
+
+  /* Shadows — só flutuantes */
+  --ed-shadow-popover: 0 1px 0 var(--ed-rule), 0 8px 24px -8px rgba(20, 33, 61, 0.10);
+  --ed-shadow-hover:   0 1px 0 var(--ed-rule), 0 12px 28px -10px rgba(20, 33, 61, 0.18);
+
+  /* Motion — 2 timings apenas */
+  --ed-ease:        cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ed-motion:      240ms;
+  --ed-motion-slow: 380ms;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -503,6 +559,25 @@ body {
 @keyframes orbDrift {
   0%, 100% { transform: translate(0, 0); }
   50% { transform: translate(40px, -20px); }
+}
+
+/* Editorial skin keyframes — APENAS 2 */
+@keyframes edFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes edPulseGold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(203, 166, 90, 0.35); }
+  50%      { box-shadow: 0 0 0 8px rgba(203, 166, 90, 0); }
+}
+
+.animate-ed-fade {
+  animation: edFadeIn var(--ed-motion) var(--ed-ease) both;
+}
+
+.animate-ed-pulse-gold {
+  animation: edPulseGold 2.4s var(--ed-ease) infinite;
 }
 
 .animate-in {

@@ -8,11 +8,14 @@ import { PartyForm } from '../_components/party-form';
 import { PartyIbanPanel } from '../_components/party-detail';
 import { PartyRecentDocuments } from './_components/party-recent-documents';
 import { useParty } from '../_components/use-parties';
+import { useUser } from '@/_lib/use-dashboard-queries';
 import type { PartyInput } from '../_lib/types';
 
 export default function PartyDetailPage() {
   const params = useParams<{ id: string }>();
   const { data: party, isLoading } = useParty(params.id);
+  const user = useUser();
+  const isAdmin = user?.role === 'ADMIN';
 
   if (isLoading) {
     return (
@@ -40,11 +43,14 @@ export default function PartyDetailPage() {
     country: party.country ?? 'Portugal',
     defaultDebitAccountId: party.defaultDebitAccount?.id,
     defaultCreditAccountId: party.defaultCreditAccount?.id,
+    isRecurring: party.isRecurring === true,
+    isRecurringManualOverride: party.isRecurringManualOverride === true,
   };
 
-  // The "isRecurring" flag is read-only — derived server-side from
-  // the document count. Surface as a coloured pill on the header so
-  // reviewers can spot recurring suppliers at a glance.
+  // The "isRecurring" flag is read-only by default — derived server-side
+  // from the document count. When the ADMIN has set the manual override,
+  // we surface it as an amber pill instead of the regular emerald one.
+  const hasOverride = party.isRecurringManualOverride === true;
   const isRecurring = party.isRecurring === true;
   const showRecentDocs = party.type === 'FORNECEDOR';
 
@@ -58,22 +64,30 @@ export default function PartyDetailPage() {
         subtitle={`NIF ${party.nif ?? '—'} · ${party.type}`}
         actions={
           <span
-            className={isRecurring ? 'badge-emerald' : 'badge-neutral'}
+            className={
+              hasOverride
+                ? 'badge-amber'
+                : isRecurring
+                ? 'badge-emerald'
+                : 'badge-neutral'
+            }
             title={
-              isRecurring
+              hasOverride
+                ? 'Override ADMIN — isRecurring travado, auto-flip pausado'
+                : isRecurring
                 ? 'Fornecedor recorrente — ≥3 faturas associadas'
                 : 'Fornecedor ocasional'
             }
           >
             <Repeat size={10} className="mr-0.5" aria-hidden="true" />
-            {isRecurring ? 'Recorrente' : 'Ocasional'}
+            {hasOverride ? 'Override ADMIN' : isRecurring ? 'Recorrente' : 'Ocasional'}
           </span>
         }
       />
 
       <div className="grid lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 space-y-5">
-          <PartyForm initial={initial} partyId={params.id} />
+          <PartyForm initial={initial} partyId={params.id} isAdmin={isAdmin} />
         </div>
         <div>
           <PartyIbanPanel partyId={params.id} />

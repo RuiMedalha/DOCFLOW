@@ -162,6 +162,21 @@ export class UpdatePartyDto extends PartialType(CreatePartyDto) {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Marks this party as a recurring supplier (auto-set by extraction).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isRecurring?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'ADMIN-only. When true, freezes isRecurring so the auto-flip in supplier-resolver pauses.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isRecurringManualOverride?: boolean;
 }
 
 /** Query string for GET /parties. */

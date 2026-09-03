@@ -33,6 +33,12 @@ export interface Party {
     * is always derived from the document count.
     */
   isRecurring?: boolean | null;
+  /**
+   * ADMIN-only flag that freezes `isRecurring` so the auto-flip in
+   * supplier-resolver pauses. Set via PATCH /parties/:id; rendered as
+   * an amber "Override ADMIN" badge in the list and header.
+   */
+  isRecurringManualOverride?: boolean | null;
   defaultDebitAccount?: { id: string; code: string; name: string } | null;
   defaultCreditAccount?: { id: string; code: string; name: string } | null;
   createdAt: string;
@@ -149,4 +155,6 @@ export interface PartyInput {
   country?: string;
   defaultDebitAccountId?: string;
   defaultCreditAccountId?: string;
+  isRecurring?: boolean;
+  isRecurringManualOverride?: boolean;
 }

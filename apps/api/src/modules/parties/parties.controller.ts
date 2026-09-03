@@ -22,6 +22,8 @@ import {
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/guards/rbac.guard';
 import { PartiesService } from './parties.service';
 import { DocumentsService } from '../documents/documents.service';
 import {
@@ -195,6 +197,7 @@ export class PartiesController {
   }
 
   @Patch('parties/:id')
+  @Roles(Role.ADMIN)
   @ApiOperation({
     summary: 'Update a party',
     description:
@@ -202,12 +205,16 @@ export class PartiesController {
   })
   @ApiResponse({ status: 404, description: 'Party not found' })
   @ApiResponse({ status: 400, description: 'Invalid NIF / IBAN' })
+  @ApiResponse({
+    status: 403,
+    description: 'Only ADMIN may set isRecurring / isRecurringManualOverride',
+  })
   update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdatePartyDto,
   ) {
-    return this.parties.update(user.tenantId, user.id, id, dto);
+    return this.parties.update(user.tenantId, user.id, id, dto, user.role);
   }
 
   @Delete('parties/:id')

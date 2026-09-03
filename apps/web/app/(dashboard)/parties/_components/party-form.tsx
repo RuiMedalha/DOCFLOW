@@ -6,7 +6,7 @@ import { Save, Loader2 } from 'lucide-react';
 import { useCreateParty, useUpdateParty, useSeedAccounts } from './use-parties';
 import type { PartyInput, Account } from '../_lib/types';
 
-export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?: string }) {
+export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput; partyId?: string; isAdmin?: boolean }) {
   const router = useRouter();
   const create = useCreateParty();
   const update = useUpdateParty();
@@ -27,6 +27,8 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
     city: '',
     postalCode: '',
     country: 'Portugal',
+    isRecurring: false,
+    isRecurringManualOverride: false,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +50,9 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
         country: form.country?.trim() || undefined,
         defaultDebitAccountId: form.defaultDebitAccountId,
         defaultCreditAccountId: form.defaultCreditAccountId,
+        // ADMIN-only fields: server rejects (403) if non-ADMIN tries to send these.
+        isRecurring: isAdmin ? form.isRecurring : undefined,
+        isRecurringManualOverride: isAdmin ? form.isRecurringManualOverride : undefined,
       };
       const res = partyId
         ? await update.mutateAsync({ id: partyId, ...cleaned })
@@ -114,6 +119,49 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
           </select>
         </Field>
       </div>
+
+      {isAdmin === true && (
+        <div className="sm:col-span-2 mt-4 pt-4 border-t space-y-2" style={{ borderColor: 'var(--border)' }}>
+          <div className="text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            Flags de recorrência (ADMIN)
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.isRecurring === true}
+              disabled={!isAdmin}
+              onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Recorrente</span>
+              <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                Marca esta entidade como fornecedor recorrente. A flag é normalmente
+                atualizada pelo auto-flip quando ≥3 faturas estão associadas.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.isRecurringManualOverride === true}
+              disabled={!isAdmin}
+              onChange={(e) =>
+                setForm({ ...form, isRecurringManualOverride: e.target.checked })
+              }
+            />
+            <span>
+              <span className="font-medium">Override ADMIN</span>
+              <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                Quando ativo, pausa o auto-flip em supplier-resolver — o valor de
+                <code className="mx-1 px-1 rounded" style={{ background: 'var(--surface-2)' }}>isRecurring</code>
+                permanece travado até ser desligado.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md p-3 text-xs" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.30)', color: 'var(--danger-fg)' }}>

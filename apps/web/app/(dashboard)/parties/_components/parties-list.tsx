@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Search, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Search, Plus, ShieldCheck, ShieldAlert, Repeat } from 'lucide-react';
 import { useParties, useDeleteParty } from './use-parties';
 import type { PartyFilters } from '../_lib/types';
 
@@ -75,6 +75,15 @@ export function PartiesList() {
                       {p.name}
                     </Link>
                     {!p.isActive && <span className="ml-2 text-[10px] uppercase tracking-wide text-red-500">inativo</span>}
+                    {p.isRecurring && (
+                      <span
+                        className="ml-2 badge-emerald text-[10px] inline-flex items-center"
+                        title="Fornecedor recorrente — ≥3 faturas associadas"
+                      >
+                        <Repeat size={9} className="mr-0.5" aria-hidden="true" />
+                        Recorrente
+                      </span>
+                    )}
                   </td>
                   <td><span className="badge text-[10px]">{p.type}</span></td>
                   <td className="font-mono text-xs">{p.nif ?? '—'}</td>

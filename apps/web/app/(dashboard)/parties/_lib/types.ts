@@ -26,6 +26,13 @@ export interface Party {
   ibanLastCheckedAt?: string | null;
   ibanRiskScore?: number | null;
   isActive: boolean;
+  /**
+    * Backend flips this true when the supplier has >=3 linked documents
+    * (SupplierResolver.refreshRecurringFlag). The party page surfaces
+    * it as a "Recorrente / Ocasional" badge — no UI override, the value
+    * is always derived from the document count.
+    */
+  isRecurring?: boolean | null;
   defaultDebitAccount?: { id: string; code: string; name: string } | null;
   defaultCreditAccount?: { id: string; code: string; name: string } | null;
   createdAt: string;
@@ -91,6 +98,40 @@ export interface IbanBlacklistEntry {
   reason: string;
   source: string;
   createdAt: string;
+}
+
+/**
+ * Document projected onto the party-detail page (the "Faturas recentes"
+ * section). Mirrors a subset of the Document DTO so we don't have to
+ * fetch the full inbox item. Status enum matches DocumentStatus on the
+ * backend; the UI maps it to a coloured badge.
+ */
+export interface PartyDocument {
+  id: string;
+  docNumber?: string | null;
+  supplier?: string | null;
+  customer?: string | null;
+  supplierNif?: string | null;
+  customerNif?: string | null;
+  docDate?: string | null;
+  total?: number | null;
+  netAmount?: number | null;
+  taxAmount?: number | null;
+  currency?: string | null;
+  status:
+    | 'NOVO'
+    | 'EM_REVISAO'
+    | 'APROVADO'
+    | 'REJEITADO'
+    | 'CONCILIADO'
+    | 'PAGO'
+    | 'ARQUIVADO';
+  type?: string | null;
+  fileName?: string | null;
+  partyId?: string | null;
+  folder?: { id: string; name: string; pattern: string } | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface PartyInput {

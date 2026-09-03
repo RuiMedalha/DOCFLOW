@@ -134,11 +134,21 @@ export function useDocumentBundle(id: string): UseQueryResult<DocumentDetailBund
           apiFetch<AccountingAccount[]>(`/accounting/accounts`).catch(() => [] as AccountingAccount[]),
         ]);
         // Normalise the date strings so <input type="date"> displays them.
+        // Also pull `metadata.filing.expenseCategory` up to a top-level
+        // `expenseCategory` field so the field-panel can read it directly
+        // (the backend stores it inside `metadata.filing` rather than on
+        // the Document row).
+        const filing = (document as any)?.metadata?.filing;
+        const filingCategory =
+          filing && typeof filing === 'object' && typeof filing.expenseCategory === 'string'
+            ? filing.expenseCategory
+            : null;
         const normalised: DocumentDetail = {
           ...document,
           docDate: toDateInputValue(document.docDate) ?? null,
           dueDate: toDateInputValue(document.dueDate) ?? null,
           ocrConfidence: expandConfidence(document.ocrConfidence),
+          expenseCategory: filingCategory,
         };
         const qrDecodedFields = extractQrFields(normalised.qrPayload);
         return {
@@ -368,6 +378,7 @@ function buildMockBundle(id: string): DocumentDetailBundle {
     hasParty: true,
     debitAccount: '62',
     creditAccount: '22',
+    expenseCategory: 'Refeições',
   };
 
   const items: LineItem[] = [

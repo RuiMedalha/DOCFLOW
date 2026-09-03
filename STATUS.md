@@ -30,7 +30,7 @@ Estado real do projeto, sem promessas vazias.
 | Endpoint | Status |
 |----------|--------|
 | `GET /documents` (lista + paginação + full-text) | ✅ |
-| `GET /documents/:id` (detalhe + line items + categorias) | ✅ |
+| `GET /documents/:id` (detalhe + line items + categorias) | ✅ (mas categorias **não renderizadas** no FieldPanel) |
 | `POST /documents/upload` (multipart, foto/PDF) | ✅ |
 | `POST /documents/:id/approve` (com RBAC + audit) | ✅ testado |
 | `PATCH /documents/:id/items/:itemId` (edição de linhas) | ✅ testado |
@@ -64,6 +64,9 @@ Estado real do projeto, sem promessas vazias.
 | Faturas recorrentes vão para `/Fornecedores/{Name}/` | ⚠️ regra existe, sem UI explícita para gerir `isRecurring` |
 | Auto-criação de fornecedor sem aprovação | ⚠️ só com confiança ≥ 0.8 + NIF válido |
 | Fluxo de aprovação UI | ⚠️ backend OK, falta UI confirmar |
+| **Categorias: wire no Document** | ✅ `expenseCategoryId`+`ivaDeductibilityPct` no Document; wire no folder-rules engine; teste valida o fluxo |
+| **Categorias: mostrar no detalhe do doc** | ❌ field-panel.tsx **não renderiza** a categoria (zero matches em `field-panel.tsx` para `expenseCategory`/`category`/`ivaDeductibility`) |
+| **Aplicação automática da categoria** | ⚠️ logic no extraction.service.ts:736-765 chama `rulesEngine.suggest(...)` quando `fields.suggestedCategory` existe e source=ai/at_qr+ai. Test (753-758) cobre. **Não vejo wiring explícito no approve flow (POST /:id/approve) que persista `expenseCategoryId`** — pode estar a persistir folder mas não a categoria.
 
 ## O que NÃO foi decidido
 
@@ -102,8 +105,24 @@ Estado real do projeto, sem promessas vazias.
 
 | Branch | Estado |
 |--------|--------|
-| **`main` local** | ⚠️ desatualizado — só tem o `base` commit (`849c30b`) |
-| **`features/calendar-categorias-edicao` local + remote** | ✅ pushed com 8 commits (último `4af3038`) |
+| **`main` local + remote** | ✅ pushed com 9 commits (último `8ed2d9e` — STATUS.md) |
+| **`features/calendar-categorias-edicao` local + remote** | ✅ synced com main (9 commits) |
+
+## Tunnel ativo no fim da sessão
+
+| URL | Estado |
+|-----|--------|
+| `https://prisoner-visiting-identical-costume.trycloudflare.com` | ✅ ativo (Cloudflare quick tunnel, PID 5569). Serve o nosso app: `<title>DocFlow — Document Intelligence</title>` confirmado. Login + API a 200 via tunnel. |
+| `https://due-garage-suffered-william.trycloudflare.com` (anterior) | ❌ morto |
+| `https://t9llf2eoye1r0x9xtg8tpr92.167.86.111.8.sslip.io` | ❌ outro projeto — NÃO usar |
+
+Se o tunnel novo morrer, reiniciar com:
+```
+./cloudflared.exe tunnel --url http://localhost:3000
+```
+E adicionar o URL novo em `apps/api/.env` (`CORS_ORIGINS=...`).
+
+## Erros conhecidos</old_string>
 
 ## Erros conhecidos
 
@@ -137,7 +156,23 @@ node dist/src/main.js
 cd apps/web
 $env:NEXT_PUBLIC_API_URL="http://localhost:4000/api/v1"
 npx next dev -p 3000 -H 0.0.0.0
-# → http://localhost:3000
+# → http://localhost:3000 (tunnel: https://prisoner-visiting-identical-costume.trycloudflare.com)
 ```
 
 Login: `admin@demo.pt` / `Admin123!` / `demo`
+
+### `apps/api/.env` (estado no fim da sessão — para referência)
+
+```env
+GEMINI_API_KEY=AQ.Ab8RN***        # Gemini direto (last-resort fallback — quota pode estar esgotada)
+GEMINI_VISION_MODEL=gemini-3.6-flash
+OPENROUTER_API_KEY=sk-or-v1***    # OpenRouter (fallback — funciona mas às vezes trunca)
+OPENROUTER_VISION_MODEL=google/gemini-2.5-flash
+MINIMAX_API_KEY=sk-cp-2a***      # Opus 5 (PRIMARY — confirmado ao vivo, confidence 0.92)
+MINIMAX_URL=https://api.minimax.io/v1/chat/completions
+MINIMAX_VISION_MODEL=MiniMax-M3
+
+DATABASE_URL=postgresql://docflow:docflow@localhost:5432/docflow_dev?schema=public
+NODE_ENV=development
+CORS_ORIGINS="http://localhost:3000,http://192.168.1.190:3000,https://prisoner-visiting-identical-costume.trycloudflare.com"
+```

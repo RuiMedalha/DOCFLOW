@@ -15,7 +15,7 @@
 
 import Link from 'next/link';
 import { Loader2, FileText, ChevronRight } from 'lucide-react';
-import { usePartyDocuments } from '../../_components/use-party-documents';
+import { usePartyDocuments } from '../../_hooks/use-party-documents';
 import type { PartyDocument as PartyDocumentType } from '../../_lib/types';
 
 const STATUS_TONE: Record<PartyDocumentType['status'], string> = {

@@ -63,6 +63,10 @@ search.json
 e2e/
 apps/api/test-results/
 apps/api/dist/e2e/
+
+# Deploy worker noise (tunnel stderr from cloudflared runs)
+tunnel-*.err
+tunnel-*.log
 **/test-results/
 **/.last-run.json
 **/trace.zip

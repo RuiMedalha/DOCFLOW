@@ -584,6 +584,9 @@ model Party {
   // occasional ones file under a general/category path. Set by the
   // auto-resolve supplier step on every Document extraction.
   isRecurring      Boolean   @default(false)
+  // When true, suppresses the auto-flip on isRecurring in supplier-resolver.
+  // Only ADMIN may set/unset this flag via PATCH /parties/:id.
+  isRecurringManualOverride Boolean @default(false)
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt

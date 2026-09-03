@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -245,6 +246,7 @@ export class PartiesService {
     userId: string,
     id: string,
     dto: UpdatePartyDto,
+    userRole?: string,
   ) {
     const existing = await this.prisma.party.findFirst({
       where: { id, tenantId },
@@ -258,6 +260,16 @@ export class PartiesService {
       },
     });
     if (!existing) throw new NotFoundException('Party not found');
+
+    // Defense-in-depth RBAC: even though the route is gated by @Roles(Role.ADMIN),
+    // a direct service caller (queue, cron, test) could still try to flip
+    // isRecurring. Reject early here too.
+    if (
+      (dto.isRecurring !== undefined || dto.isRecurringManualOverride !== undefined) &&
+      userRole !== 'ADMIN'
+    ) {
+      throw new ForbiddenException('Only ADMIN may override isRecurring');
+    }
 
     const newNif = dto.nif !== undefined ? this.coerceNif(dto.nif) : undefined;
     if (newNif !== undefined && newNif !== null && newNif !== existing.nif) {
@@ -334,6 +346,9 @@ export class PartiesService {
       data.externalIds = (dto.externalIds ?? null) as Prisma.InputJsonValue;
     }
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.isRecurring !== undefined) data.isRecurring = dto.isRecurring;
+    if (dto.isRecurringManualOverride !== undefined)
+      data.isRecurringManualOverride = dto.isRecurringManualOverride;
 
     // H-05 fix: when the IBAN changes, BOTH the party row update AND the
     // IbanHistory row write must be in a single transaction — the audit

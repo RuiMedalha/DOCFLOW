@@ -268,6 +268,16 @@ export class SupplierResolver {
     pendingDocuments = 0,
   ): Promise<boolean> {
     try {
+      // Respect ADMIN manual override: if the party is locked, do NOT flip
+      // isRecurring automatically — return the locked value as-is.
+      const party = await this.prisma.party.findFirst({
+        where: { id: partyId },
+        select: { isRecurringManualOverride: true, isRecurring: true },
+      });
+      if (party?.isRecurringManualOverride === true) {
+        return party.isRecurring;
+      }
+
       const docCount = await this.prisma.document.count({
         where: { tenantId, partyId },
       });

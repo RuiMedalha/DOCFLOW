@@ -75,7 +75,16 @@ export function PartiesList() {
                       {p.name}
                     </Link>
                     {!p.isActive && <span className="ml-2 text-[10px] uppercase tracking-wide text-red-500">inativo</span>}
-                    {p.isRecurring && (
+                    {p.isRecurringManualOverride && (
+                      <span
+                        className="ml-2 badge-amber text-[10px] inline-flex items-center"
+                        title="Override ADMIN — isRecurring travado, auto-flip pausado"
+                      >
+                        <Repeat size={9} className="mr-0.5" aria-hidden="true" />
+                        Override ADMIN
+                      </span>
+                    )}
+                    {p.isRecurring && !p.isRecurringManualOverride && (
                       <span
                         className="ml-2 badge-emerald text-[10px] inline-flex items-center"
                         title="Fornecedor recorrente — ≥3 faturas associadas"

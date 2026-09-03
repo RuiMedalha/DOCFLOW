@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Save, RefreshCw, Send, CheckCircle2, ShieldAlert, Trash2, Plus, X, Loader2 } from 'lucide-react';
+import { useCategories } from '../../../categories/use-categories';
 
 export interface ExtractedFields {
   supplier?: string | null;
@@ -30,6 +31,13 @@ export interface ExtractedFields {
   total?: number | null;
   iban?: string | null;
   currency?: string | null;
+  /**
+   * Resolved expense category (one of EXPENSE_CATEGORIES — PT bucket slug
+   * like 'Refeições', 'Combustível', …). Persisted server-side in
+   * `metadata.filing.expenseCategory` via PATCH /documents/:id. Surfaced
+   * by useDocumentBundle from `document.metadata.filing.expenseCategory`.
+   */
+  expenseCategory?: string | null;
 }
 
 export interface FieldConfidence {
@@ -159,6 +167,13 @@ const fmtDate = (v?: string | null) => {
 
 export function FieldPanel(props: FieldPanelProps) {
   const { fields, confidence, lineItems = [], currency = 'EUR', accounts = [] } = props;
+  const { categories } = useCategories();
+  // Resolve the selected category record so the header badge can show the
+  // descriptive name + IVA deductibility percent (rather than the raw slug).
+  const selectedCategory = useMemo(
+    () => categories.find((c) => c.name === fields.expenseCategory) ?? null,
+    [categories, fields.expenseCategory],
+  );
 
   // Render-time date would mismatch between server and client; capture after mount.
   const [todayLabel, setTodayLabel] = useState<string>('');
@@ -191,10 +206,32 @@ export function FieldPanel(props: FieldPanelProps) {
     <div className="space-y-4">
       {/* === Header / actions ============================================== */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
             Campos extraídos
           </h2>
+          {fields.expenseCategory && selectedCategory && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{
+                background: selectedCategory.color ?? 'var(--hover)',
+                color: 'var(--text)',
+                opacity: 0.85,
+              }}
+              title={
+                selectedCategory.defaultIvaDeductibilityPct != null
+                  ? `Dedução IVA ${selectedCategory.defaultIvaDeductibilityPct}%`
+                  : `Categoria: ${selectedCategory.name}`
+              }
+            >
+              {selectedCategory.name}
+              {selectedCategory.defaultIvaDeductibilityPct != null && (
+                <span className="tabular-nums" style={{ color: 'var(--text-subtle)' }}>
+                  {' '}— dedução {selectedCategory.defaultIvaDeductibilityPct}%
+                </span>
+              )}
+            </span>
+          )}
           {props.approved && (
             <span className="badge-emerald">
               <CheckCircle2 size={10} className="mr-0.5" aria-hidden="true" />
@@ -319,6 +356,32 @@ export function FieldPanel(props: FieldPanelProps) {
             onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
             placeholder="PT50 0035 0651 0000 0000 0712"
           />
+        </Field>
+      </fieldset>
+
+      {/* === Categoria ==================================================== */}
+      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
+        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
+          Categoria
+        </legend>
+        <Field label="Categoria da despesa">
+          <select
+            className="input"
+            value={fields.expenseCategory ?? ''}
+            onChange={(e) =>
+              props.onFieldChange({ expenseCategory: e.target.value || null })
+            }
+          >
+            <option value="">— Selecionar —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.name}>
+                {c.name}
+                {c.defaultIvaDeductibilityPct != null
+                  ? ` — dedução ${c.defaultIvaDeductibilityPct}%`
+                  : ''}
+              </option>
+            ))}
+          </select>
         </Field>
       </fieldset>
 

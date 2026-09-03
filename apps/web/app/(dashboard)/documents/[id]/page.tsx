@@ -100,6 +100,7 @@ export default function DocumentDetailPage() {
         total: doc?.total,
         iban: doc?.iban,
         currency: doc?.currency,
+        expenseCategory: doc?.expenseCategory,
       };
       return { ...base, ...patch };
     });

@@ -30,6 +30,11 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { StorageService } from "../documents/storage/storage-service.interface";
 import { VisionService } from "../ai/vision.service";
 import { FolderRulesEngine } from "../documents/folder-rules/folder-rules.engine";
+import {
+  ExpenseCategory,
+  mapToExpenseCategory,
+  VAT_DEDUCTIBILITY_HINTS,
+} from "../documents/folder-rules/folder-rules.types";
 import { DocumentsService } from "../documents/documents.service";
 import { SupplierResolver } from "./supplier-resolver";
 import {
@@ -729,7 +734,31 @@ export class ExtractionService implements OnModuleDestroy {
     // matches a category-aware rule, the new folder wins; otherwise we
     // keep the upload-time suggestion untouched (rules remain the
     // fallback for documents the AI couldn't categorise).
+    //
+    // In the same branch we also resolve the AI's free-text
+    // `suggestedCategory` onto a PT bucket (one of EXPENSE_CATEGORIES)
+    // and stash it on `metadata.filing.expenseCategory` with source
+    // 'ai'. The PATCH /documents/:id path remains the canonical way
+    // for the user to override the AI pick (source='user'); see
+    // DocumentsService.update.
     let aiFiledFolder: string | undefined;
+    let aiFiledExpenseCategory: ExpenseCategory | null = null;
+    if (
+      fields.suggestedCategory &&
+      (fields.source === "ai" || fields.source === "at_qr+ai")
+    ) {
+      // Resolve the AI suggestion onto one of the EXPENSE_CATEGORIES
+      // slugs. mapToExpenseCategory returns null when nothing matches,
+      // in which case we leave the filing untouched — the user can
+      // still pick a category manually via PATCH.
+      aiFiledExpenseCategory = mapToExpenseCategory(fields.suggestedCategory);
+      if (aiFiledExpenseCategory) {
+        this.logger.log(
+          `[processDocumentAsync] AI-resolved expenseCategory for document=${documentId}: ` +
+            `${fields.suggestedCategory} → ${aiFiledExpenseCategory}`,
+        );
+      }
+    }
     if (
       fields.suggestedCategory &&
       (fields.source === "ai" || fields.source === "at_qr+ai") &&
@@ -830,6 +859,7 @@ export class ExtractionService implements OnModuleDestroy {
           undefined,
           loaded,
           { supplierReview: supplierReviewFlag, supplierReason: supplierResolveReason },
+          aiFiledExpenseCategory,
         ),
         ocrConfidence: fields.confidence,
         status: finalStatus,
@@ -3401,6 +3431,7 @@ export class ExtractionService implements OnModuleDestroy {
     qrValidation?: { ok: boolean; errors: string[]; warnings: string[] },
     loaded?: LoadedText,
     supplierResolve?: { supplierReview: boolean; supplierReason?: string },
+    aiExpenseCategory?: ExpenseCategory | null,
   ): Prisma.InputJsonValue {
     // ── Per-rate VAT breakdown ───────────────────────────────────
     // Source priority:
@@ -3440,6 +3471,36 @@ export class ExtractionService implements OnModuleDestroy {
         ? (existing as Record<string, unknown>)
         : {}
     ) as Record<string, unknown>;
+
+    // ── Auto-persist expenseCategory into metadata.filing ───────────
+    // When the folder-rules branch above resolved an AI-driven
+    // expenseCategory (one of EXPENSE_CATEGORIES), we mirror it into
+    // `metadata.filing` so the document-detail page can show it on
+    // first load — no manual Save required. We respect any existing
+    // user-set filing.expenseCategory (a manual override on PATCH
+    // carries source='user') so this branch NEVER clobbers a manual
+    // pick — only fills it in when the row was empty.
+    let filing: Record<string, unknown> | undefined;
+    if (aiExpenseCategory) {
+      const existingFiling =
+        base.filing && typeof base.filing === "object" && !Array.isArray(base.filing)
+          ? (base.filing as Record<string, unknown>)
+          : {};
+      const alreadySetByUser =
+        typeof existingFiling.expenseCategory === "string" &&
+        existingFiling.source === "user";
+      if (!alreadySetByUser) {
+        filing = {
+          ...existingFiling,
+          expenseCategory: aiExpenseCategory,
+          vatDeductibilityHint: VAT_DEDUCTIBILITY_HINTS[aiExpenseCategory].reason,
+          source: "ai",
+        };
+      } else {
+        filing = existingFiling;
+      }
+    }
+
     // Cap the persisted text to a few KB so a 1MB PDF doesn't blow up
     // metadata. We keep the first N chars + a length marker so the
     // operator can see what the extractor actually saw.
@@ -3574,6 +3635,7 @@ export class ExtractionService implements OnModuleDestroy {
         supplierReview: supplierResolve?.supplierReview ?? false,
         supplierReason: supplierResolve?.supplierReason ?? null,
       },
+      ...(filing ? { filing } : {}),
     } as unknown as Prisma.InputJsonValue;
   }
 

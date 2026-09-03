@@ -428,6 +428,71 @@ export class DocumentsService {
   }
 
   /**
+   * Documents linked to a given party (supplier/customer) — powers the
+   * "Faturas recentes" section on `/parties/:id`. Same shape as
+   * `findAll` so the UI can reuse its list component. We DO NOT use
+   * the Prisma relation (`Party.documents`) on purpose: that would
+   * bypass pagination/limit and explode for recurring suppliers with
+   * 500+ docs. The party-scoped query is fed through `buildWhere` so
+   * status/date filters stay consistent with the inbox.
+   */
+  async findByParty(
+    tenantId: string,
+    partyId: string,
+    limit = 10,
+    dateFrom?: string,
+    dateTo?: string,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const [items, total] = await Promise.all([
+      this.prisma.document.findMany({
+        where: {
+          tenantId,
+          status: { not: DocumentStatus.ARQUIVADO },
+          OR: [{ partyId }, { crmContactId: partyId }],
+          ...(dateFrom || dateTo
+            ? {
+                createdAt: {
+                  ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+                  ...(dateTo
+                    ? (() => {
+                        const end = new Date(dateTo);
+                        end.setUTCHours(23, 59, 59, 999);
+                        return { lte: end };
+                      })()
+                    : {}),
+                },
+              }
+            : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: safeLimit,
+        include: {
+          uploadedBy: { select: { id: true, name: true, email: true } },
+          folder: { select: { id: true, name: true, pattern: true } },
+          party: { select: { id: true, name: true, country: true, isRecurring: true } },
+        },
+      }),
+      this.prisma.document.count({
+        where: {
+          tenantId,
+          status: { not: DocumentStatus.ARQUIVADO },
+          OR: [{ partyId }, { crmContactId: partyId }],
+        },
+      }),
+    ]);
+    return {
+      items: items.map((d) => this.sanitize(d)),
+      meta: {
+        total,
+        page: 1,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  /**
    * Folders scoped to the current tenant — powers the inbox sidebar /
    * bulk-move target. Sorted by name asc, empty list when no folders
    * exist (the UI degrades to showing only the inbox tab).

@@ -257,6 +257,8 @@ export class PartiesService {
         nif: true,
         type: true,
         isActive: true,
+        isRecurring: true,
+        isRecurringManualOverride: true,
       },
     });
     if (!existing) throw new NotFoundException('Party not found');
@@ -393,6 +395,36 @@ export class PartiesService {
         newIban: ibanChanged ? (sanitizedIban as string) : null,
       },
     });
+
+    // Security fix (audit §4): the EDIT row above only carried IBAN metadata.
+    // When an ADMIN toggles isRecurring or isRecurringManualOverride there was
+    // no audit trail at all. Emit a dedicated 'party.update.recurring' row
+    // PER changed field so accountability is preserved (who flipped it, when,
+    // old vs new value). We re-use AuditAction.EDIT to stay within the
+    // existing enum and filter by `metadata.field` for downstream queries.
+    const recurringFields: Array<'isRecurring' | 'isRecurringManualOverride'> = [
+      'isRecurring',
+      'isRecurringManualOverride',
+    ];
+    for (const field of recurringFields) {
+      const next = dto[field];
+      if (next === undefined) continue;
+      const prev = existing[field];
+      if (prev === next) continue;
+      await this.audit.log({
+        tenantId,
+        userId,
+        action: AuditAction.EDIT,
+        entityType: 'party',
+        entityId: id,
+        metadata: {
+          subAction: 'party.update.recurring',
+          field,
+          oldValue: prev,
+          newValue: next,
+        },
+      });
+    }
 
     return this.findOne(tenantId, id);
   }

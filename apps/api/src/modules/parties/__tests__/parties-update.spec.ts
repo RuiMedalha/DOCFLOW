@@ -6,9 +6,17 @@ import { PartiesService } from '../parties.service';
  * @Roles(Role.ADMIN), but a direct service caller (queue, cron, test) could
  * still try to flip isRecurring. Verify that the service rejects non-ADMIN
  * callers and accepts ADMIN callers.
+ *
+ * Audit §4: ADMIN toggles of isRecurring / isRecurringManualOverride must
+ * leave a per-field audit row tagged `subAction: 'party.update.recurring'`
+ * carrying the field name and old/new values. These tests pin that contract
+ * too.
  */
 
-const buildPrisma = () =>
+const buildPrisma = (opts?: {
+  isRecurring?: boolean;
+  isRecurringManualOverride?: boolean;
+}) =>
   ({
     party: {
       findFirst: jest.fn().mockResolvedValue({
@@ -18,6 +26,8 @@ const buildPrisma = () =>
         nif: '123456789',
         type: 'FORNECEDOR',
         isActive: true,
+        isRecurring: opts?.isRecurring ?? false,
+        isRecurringManualOverride: opts?.isRecurringManualOverride ?? false,
       }),
       update: jest.fn().mockResolvedValue({
         id: 'party-1',
@@ -80,7 +90,10 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
   });
 
   it('allows ADMIN to change both fields', async () => {
-    const prisma = buildPrisma();
+    const prisma = buildPrisma({
+      isRecurring: false,
+      isRecurringManualOverride: false,
+    });
     const svc = new PartiesService(prisma, buildAudit());
     patchFindOne(svc, {
       id: 'party-1',
@@ -110,7 +123,10 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
   });
 
   it('allows ADMIN to change isRecurring without overriding', async () => {
-    const prisma = buildPrisma();
+    const prisma = buildPrisma({
+      isRecurring: false,
+      isRecurringManualOverride: false,
+    });
     const svc = new PartiesService(prisma, buildAudit());
     patchFindOne(svc, { id: 'party-1' });
 
@@ -127,5 +143,138 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
         data: expect.objectContaining({ isRecurringManualOverride: true }),
       }),
     );
+  });
+});
+
+describe('PartiesService.update — audit log entries for recurring toggles', () => {
+  it('writes a recurring audit row when ADMIN flips isRecurringManualOverride', async () => {
+    const prisma = buildPrisma({
+      isRecurring: false,
+      isRecurringManualOverride: false,
+    });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit);
+    patchFindOne(svc, { id: 'party-1', isRecurringManualOverride: true });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { isRecurringManualOverride: true } as any,
+      'ADMIN',
+    );
+
+    // We expect: (1) the generic EDIT row from the IBAN-aware code path,
+    // (2) the dedicated recurring row tagged with subAction + field.
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const recurring = calls.find(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.recurring',
+    );
+    expect(recurring).toBeDefined();
+    const [entry] = recurring;
+    expect(entry.tenantId).toBe('tenant-1');
+    expect(entry.userId).toBe('admin-1');
+    expect(entry.action).toBe('EDIT');
+    expect(entry.entityType).toBe('party');
+    expect(entry.entityId).toBe('party-1');
+    expect(entry.metadata).toEqual({
+      subAction: 'party.update.recurring',
+      field: 'isRecurringManualOverride',
+      oldValue: false,
+      newValue: true,
+    });
+  });
+
+  it('writes a recurring audit row when ADMIN flips isRecurring', async () => {
+    const prisma = buildPrisma({
+      isRecurring: false,
+      isRecurringManualOverride: false,
+    });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit);
+    patchFindOne(svc, { id: 'party-1', isRecurring: true });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { isRecurring: true } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const recurring = calls.find(
+      ([entry]: any) =>
+        entry?.metadata?.subAction === 'party.update.recurring' &&
+        entry?.metadata?.field === 'isRecurring',
+    );
+    expect(recurring).toBeDefined();
+    const [entry] = recurring;
+    expect(entry.tenantId).toBe('tenant-1');
+    expect(entry.userId).toBe('admin-1');
+    expect(entry.metadata).toEqual({
+      subAction: 'party.update.recurring',
+      field: 'isRecurring',
+      oldValue: false,
+      newValue: true,
+    });
+  });
+
+  it('writes ONE recurring row per actually-changed field (not for no-ops)', async () => {
+    const prisma = buildPrisma({
+      isRecurring: true, // already true — DTO sets true → no-op
+      isRecurringManualOverride: false,
+    });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit);
+    patchFindOne(svc, { id: 'party-1' });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      // isRecurring:true is a no-op (already true); isRecurringManualOverride
+      // toggles false → true and MUST be audited.
+      { isRecurring: true, isRecurringManualOverride: true } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const recurring = calls.filter(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.recurring',
+    );
+    // Exactly one row for the override change — no row for the no-op
+    // isRecurring change.
+    expect(recurring).toHaveLength(1);
+    expect(recurring[0][0].metadata.field).toBe('isRecurringManualOverride');
+    expect(recurring[0][0].metadata.oldValue).toBe(false);
+    expect(recurring[0][0].metadata.newValue).toBe(true);
+  });
+
+  it('does NOT write a recurring audit row when ADMIN omits both fields', async () => {
+    const prisma = buildPrisma();
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit);
+    patchFindOne(svc, { id: 'party-1' });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { name: 'Renamed' } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const recurring = calls.filter(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.recurring',
+    );
+    expect(recurring).toHaveLength(0);
+    // The generic EDIT row IS still emitted (IBAN bookkeeping) — confirm
+    // it ran at least once with action EDIT.
+    const genericEdit = calls.find(
+      ([entry]: any) => entry?.action === 'EDIT' && entry?.entityType === 'party',
+    );
+    expect(genericEdit).toBeDefined();
   });
 });

@@ -268,26 +268,36 @@ export class SupplierResolver {
     pendingDocuments = 0,
   ): Promise<boolean> {
     try {
-      // Respect ADMIN manual override: if the party is locked, do NOT flip
-      // isRecurring automatically — return the locked value as-is.
-      const party = await this.prisma.party.findFirst({
-        where: { id: partyId },
-        select: { isRecurringManualOverride: true, isRecurring: true },
-      });
-      if (party?.isRecurringManualOverride === true) {
-        return party.isRecurring;
-      }
-
       const docCount = await this.prisma.document.count({
         where: { tenantId, partyId },
       });
       const shouldRecur =
         docCount + pendingDocuments >= SupplierResolver.RECURRING_THRESHOLD;
+
+      // Security fix (audit §3 TOCTOU): do NOT read-then-write — use a
+      // conditional updateMany keyed on `isRecurringManualOverride: false`.
+      // The DB applies the where clause + write atomically, so an ADMIN
+      // flipping the override on between our SELECT and UPDATE is
+      // respected: count=0 means "override just got enabled (or party
+      // gone) — do nothing". updateMany returns the count of rows that
+      // matched AND were written (==1 in the success case, 0 otherwise).
       if (shouldRecur) {
-        await this.prisma.party.update({
-          where: { id: partyId },
+        await this.prisma.party.updateMany({
+          where: { id: partyId, isRecurringManualOverride: false },
           data: { isRecurring: true },
         });
+      }
+
+      // Read the post-image purely to return the CURRENT value to the
+      // caller — never to decide anything. If the override was just
+      // enabled, isRecurringManualOverride will be true and isRecurring
+      // stays whatever the ADMIN decided; we surface that as the result.
+      const party = await this.prisma.party.findFirst({
+        where: { id: partyId },
+        select: { isRecurring: true, isRecurringManualOverride: true },
+      });
+      if (party?.isRecurringManualOverride === true) {
+        return party.isRecurring;
       }
       return shouldRecur;
     } catch (err) {

@@ -198,6 +198,24 @@
   --ed-motion-slow: 380ms;
 }
 
+/* Editorial skin — body override
+   Sobrescreve o `body { background: var(--bg); color: var(--text); }` base
+   (que resolve para slate-950 no dark mode) e força a paleta cream + navy.
+   Seletor + !important garante vitória sobre a regra genérica do body,
+   mesmo quando [data-theme='dark'] está em :root.
+   ================================================================ */
+[data-skin='editorial'] body {
+  background: var(--ed-canvas) !important;
+  color: var(--ed-ink) !important;
+  font-family: var(--font-inter-tight), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+[data-skin='editorial'] html {
+  background: var(--ed-canvas);
+  color: var(--ed-ink);
+  font-family: var(--font-inter-tight), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
 * { box-sizing: border-box; }
 
 html, body {

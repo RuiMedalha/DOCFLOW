@@ -38,10 +38,18 @@ export class PartyTimelineService {
   /**
    * GET /parties/:partyId/timeline?cursor=&limit=20
    *
-   * Pulls `limit` rows from each of the 4 sources independently
+   * Pulls ALL matching rows from each of the 4 sources independently
    * (Promise.all for parallel execution), normalises, merges, sorts,
    * then slices the merged result down to `limit` and computes the
    * composite cursor from the last kept item.
+   *
+   * Note: each source query is intentionally NOT capped with the page
+   * limit. Capping per source would produce unbalanced pages — e.g. if
+   * one source has 100 events and the others have 5, capping per source
+   * to 20 would let the dominant source monopolise the page. Fetching
+   * all matching rows + slicing after merge gives a balanced view across
+   * sources. A defensive per-source cap of 200 keeps the worst case
+   * bounded for very busy tenants.
    */
   async list(
     tenantId: string,
@@ -52,25 +60,25 @@ export class PartyTimelineService {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const parsedCursor = cursor ? this.decodeCursor(cursor) : null;
 
-    // Each "where" applies the cursor as a timestamp filter. We use the
-    // source's native timestamp column so the cursor is meaningful
-    // ("strictly older than what I've already seen"). Same-timestamp
-    // tie-breaker is resolved by the composite cursor post-sort below.
-    const whereWith = (
-      tsField: 'createdAt' | 'dueDate' | 'approvedAt',
-    ) => {
-      const w: Record<string, unknown> = {
-        tenantId,
+    // Build a where-clause with the composite cursor applied. We use
+    // the source's native timestamp column plus the id column for the
+    // tie-breaker: rows strictly older than the cursor's timestamp,
+    // OR at the same timestamp but with id lexicographically < cursor's id.
+    // Without the OR branch, two events sharing the same millisecond
+    // would both be returned on every page or skipped entirely.
+    const cursorWhere = (tsField: 'createdAt' | 'dueDate' | 'approvedAt') => {
+      if (!parsedCursor) return undefined;
+      return {
+        OR: [
+          { [tsField]: { lt: parsedCursor.at } },
+          {
+            AND: [
+              { [tsField]: parsedCursor.at },
+              { id: { lt: parsedCursor.id } },
+            ],
+          },
+        ],
       };
-      if (tsField === 'createdAt' || tsField === 'dueDate') {
-        w['document'] = { partyId, tenantId };
-      }
-      if (parsedCursor) {
-        // Strict less-than on the timestamp column. Same-ts tie-break
-        // is handled at the merge step by sorting by id desc.
-        w[tsField] = { lt: parsedCursor.at };
-      }
-      return w;
     };
 
     const [audits, payments, ibans, approvedDocs] = await Promise.all([
@@ -79,17 +87,19 @@ export class PartyTimelineService {
           tenantId,
           entityType: 'party',
           entityId: partyId,
-          ...(parsedCursor
-            ? { createdAt: { lt: parsedCursor.at } }
-            : {}),
+          ...(cursorWhere('createdAt') ?? {}),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: safeLimit,
+        take: 200,
       }),
       this.prisma.paymentEvent.findMany({
-        where: whereWith('dueDate'),
+        where: {
+          tenantId,
+          document: { partyId, tenantId },
+          ...(cursorWhere('dueDate') ?? {}),
+        },
         orderBy: [{ dueDate: 'desc' }, { id: 'desc' }],
-        take: safeLimit,
+        take: 200,
         include: {
           document: {
             select: { id: true, docNumber: true, fileKey: true },
@@ -100,24 +110,20 @@ export class PartyTimelineService {
         where: {
           tenantId,
           partyId,
-          ...(parsedCursor
-            ? { createdAt: { lt: parsedCursor.at } }
-            : {}),
+          ...(cursorWhere('createdAt') ?? {}),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: safeLimit,
+        take: 200,
       }),
       this.prisma.document.findMany({
         where: {
           tenantId,
           partyId,
           status: 'APROVADO',
-          ...(parsedCursor
-            ? { approvedAt: { lt: parsedCursor.at } }
-            : {}),
+          ...(cursorWhere('approvedAt') ?? {}),
         },
         orderBy: [{ approvedAt: 'desc' }, { id: 'desc' }],
-        take: safeLimit,
+        take: 200,
         select: {
           id: true,
           fileName: true,
@@ -179,8 +185,15 @@ export class PartyTimelineService {
     // gets a balanced view across all sources — slice-before-merge would
     // over-weight the first source.
     const page = events.slice(0, safeLimit);
+    // If we returned a full page, the caller's NEXT request may find
+    // more events. Strict `> safeLimit` would silently drop the "is
+    // the last page?" hint when the remaining count happens to equal
+    // exactly safeLimit — so use `>=` here and let the next request
+    // (with no remaining rows) signal a true end via empty page +
+    // null cursor. The tiny redundancy of one extra round-trip is
+    // worth the correctness.
     const nextCursor =
-      events.length > safeLimit
+      events.length >= safeLimit
         ? this.encodeCursor(page[page.length - 1].at, page[page.length - 1].id)
         : null;
 

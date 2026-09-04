@@ -296,3 +296,143 @@ describe('PartiesService.update — audit log entries for recurring toggles', ()
     expect(genericEdit).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sprint E fix-up (audit §9 LOW-5 / MEDIUM-5): per-field audit row for
+// partyCategoryId changes. Same per-field pattern as the recurring
+// toggle — `subAction: 'party.update.partyCategory'`, field + old/new
+// values. Without these rows a compliance review can't answer "who
+// moved party X from category A to category B".
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartiesService.update — audit log entries for partyCategoryId', () => {
+  const buildPrismaWithCategory = (opts: {
+    partyCategoryId?: string | null;
+  }) =>
+    ({
+      party: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'party-1',
+          name: 'Acme',
+          iban: null,
+          nif: '123456789',
+          type: 'FORNECEDOR',
+          isActive: true,
+          isRecurring: false,
+          isRecurringManualOverride: false,
+          partyCategoryId: opts.partyCategoryId ?? null,
+        }),
+        update: jest.fn().mockResolvedValue({
+          id: 'party-1',
+          name: 'Acme',
+          partyCategoryId: opts.partyCategoryId ?? null,
+        }),
+      },
+      ibanBlacklist: { findFirst: jest.fn().mockResolvedValue(null) },
+      ibanHistory: { create: jest.fn().mockResolvedValue(null) },
+      auditLog: { create: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn((arr) => Promise.all(arr)),
+    }) as any;
+
+  it('writes a party.update.partyCategory row when the category changes (null → id)', async () => {
+    const prisma = buildPrismaWithCategory({ partyCategoryId: null });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
+    patchFindOne(svc, { id: 'party-1', partyCategoryId: 'cat-new' });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { partyCategoryId: 'cat-new' } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const category = calls.find(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.partyCategory',
+    );
+    expect(category).toBeDefined();
+    const [entry] = category;
+    expect(entry.tenantId).toBe('tenant-1');
+    expect(entry.userId).toBe('admin-1');
+    expect(entry.action).toBe('EDIT');
+    expect(entry.entityType).toBe('party');
+    expect(entry.entityId).toBe('party-1');
+    expect(entry.metadata).toEqual({
+      subAction: 'party.update.partyCategory',
+      field: 'partyCategoryId',
+      oldValue: null,
+      newValue: 'cat-new',
+    });
+  });
+
+  it('writes a party.update.partyCategory row when the category is cleared (id → null)', async () => {
+    const prisma = buildPrismaWithCategory({ partyCategoryId: 'cat-old' });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
+    patchFindOne(svc, { id: 'party-1', partyCategoryId: null });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { partyCategoryId: null } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const category = calls.find(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.partyCategory',
+    );
+    expect(category).toBeDefined();
+    expect(category[0].metadata).toEqual({
+      subAction: 'party.update.partyCategory',
+      field: 'partyCategoryId',
+      oldValue: 'cat-old',
+      newValue: null,
+    });
+  });
+
+  it('does NOT write a party.update.partyCategory row when the category is unchanged', async () => {
+    const prisma = buildPrismaWithCategory({ partyCategoryId: 'cat-same' });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
+    patchFindOne(svc, { id: 'party-1', partyCategoryId: 'cat-same' });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { partyCategoryId: 'cat-same' } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const category = calls.filter(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.partyCategory',
+    );
+    expect(category).toHaveLength(0);
+  });
+
+  it('does NOT write a party.update.partyCategory row when partyCategoryId is omitted from the DTO', async () => {
+    const prisma = buildPrismaWithCategory({ partyCategoryId: 'cat-existing' });
+    const audit = buildAudit();
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
+    patchFindOne(svc, { id: 'party-1' });
+
+    await svc.update(
+      'tenant-1',
+      'admin-1',
+      'party-1',
+      { name: 'Renamed' } as any,
+      'ADMIN',
+    );
+
+    const calls = (audit.log as jest.Mock).mock.calls;
+    const category = calls.filter(
+      ([entry]: any) => entry?.metadata?.subAction === 'party.update.partyCategory',
+    );
+    expect(category).toHaveLength(0);
+  });
+});

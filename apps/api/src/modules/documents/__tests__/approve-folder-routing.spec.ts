@@ -26,7 +26,21 @@ const USER_ID = 'user-1';
 const DOC_ID = 'cm-approve-relocate';
 
 function buildPrismaStub() {
-  return {
+  // $transaction mock — the Sprint E fix-up moved the relocate read+update
+  // inside a transaction with a pg_advisory_xact_lock. We simulate the
+  // advisory lock as a no-op and forward the inner work function with a
+  // tx-like object that exposes the same document delegate. Because the
+  // production Prisma extension wraps everything in a single client, the
+  // production code calls `tx.document.findFirst` / `tx.document.update`
+  // on the transaction handle — and our stub routes those to the SAME
+  // jest.fn() instances declared above, so call counts and assertions
+  // keep working without any test rewrite.
+  //
+  // Typed as `any` because $transaction is added imperatively below —
+  // the literal type narrows would otherwise hide it from tsc and the
+  // service would error out at the call site (the production code only
+  // needs the duck-typed shape).
+  const stub: any = {
     document: {
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -34,7 +48,18 @@ function buildPrismaStub() {
     paymentEvent: {
       upsert: jest.fn(),
     },
+    $executeRaw: jest.fn(async () => undefined),
   };
+  stub.$transaction = jest.fn(async (work: any) => {
+    if (typeof work !== 'function') return work;
+    // `tx` exposes the same delegates the production code expects. The
+    // inner code calls `tx.document.findFirst/update` and `tx.$executeRaw`.
+    return work({
+      document: stub.document,
+      $executeRaw: stub.$executeRaw,
+    });
+  });
+  return stub;
 }
 
 function buildAuditStub() {
@@ -333,5 +358,133 @@ describe('DocumentsService.approve() — Sprint E folder routing', () => {
     expect(storage.move).toHaveBeenCalledTimes(1);
     const [, to] = (storage.move as jest.Mock).mock.calls[0];
     expect(to).toMatch(/^fornecedores\/grupo-misto\//);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Sprint E fix-up (audit §5 MEDIUM-3): the relocate path now lives
+  // inside prisma.$transaction with a pg_advisory_xact_lock keyed off
+  // the document id. Verify:
+  //   1. $transaction is invoked on every approve that reaches the
+  //      relocate branch.
+  //   2. The advisory lock SQL (`SELECT pg_advisory_xact_lock(...)`)
+  //      is sent BEFORE the document read.
+  //   3. Two sequential approves against the SAME document row are
+  //      idempotent: the second call short-circuits at the `_inbox/`
+  //      guard because the first transaction already moved fileKey.
+  // ───────────────────────────────────────────────────────────────────────
+  it('wraps the relocate in $transaction and runs the advisory lock SQL first', async () => {
+    const prisma = buildPrismaStub();
+    const audit = buildAuditStub();
+    const storage = buildStorageStub();
+
+    prisma.document.findFirst
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        status: DocumentStatus.NOVO,
+        dueDate: null,
+        paymentDueDate: null,
+        total: null,
+        netAmount: null,
+      })
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        fileKey: '<tenant>/_inbox/2026-09-04/orig.pdf',
+        pdfKey: null,
+        docDate: new Date(Date.UTC(2026, 8, 4)),
+        docNumber: 'FT 4',
+        partyId: 'party-1',
+        party: {
+          id: 'party-1',
+          name: 'EDP',
+          slug: 'edp',
+          type: 'FORNECEDOR',
+          partyCategory: null,
+        },
+      });
+
+    prisma.document.update.mockResolvedValue({ id: DOC_ID, status: DocumentStatus.APROVADO });
+
+    const svc = makeSvc(prisma, audit, storage);
+    await svc.approve(TENANT_ID, USER_ID, DOC_ID);
+
+    // The transaction wrapper is invoked.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('second concurrent approve is idempotent: storage.move fires once total', async () => {
+    const prisma = buildPrismaStub();
+    const audit = buildAuditStub();
+    const storage = buildStorageStub();
+
+    // Approve #1: read row with _inbox/ fileKey → move bytes → update.
+    // Approve #2: same read pattern but the second `findFirst` (inside
+    // the second approve's relocate) returns the POST-update row whose
+    // fileKey NO LONGER includes `/_inbox/`. The guard short-circuits.
+    prisma.document.findFirst
+      // approve() #1 — existing row read
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        status: DocumentStatus.NOVO,
+        dueDate: null,
+        paymentDueDate: null,
+        total: null,
+        netAmount: null,
+      })
+      // relocateAfterApprove() #1 — pre-move row
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        fileKey: '<tenant>/_inbox/2026-09-04/orig.pdf',
+        pdfKey: null,
+        docDate: new Date(Date.UTC(2026, 8, 4)),
+        docNumber: 'FT 5',
+        partyId: 'party-1',
+        party: {
+          id: 'party-1',
+          name: 'EDP',
+          slug: 'edp',
+          type: 'FORNECEDOR',
+          partyCategory: null,
+        },
+      })
+      // approve() #2 — existing row read (already APPROVED, idempotent)
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        status: DocumentStatus.APROVADO,
+        dueDate: null,
+        paymentDueDate: null,
+        total: null,
+        netAmount: null,
+      })
+      // relocateAfterApprove() #2 — post-move row (already routed)
+      .mockResolvedValueOnce({
+        id: DOC_ID,
+        fileKey: 'fornecedores/edp/2026-09/already-routed.pdf',
+        pdfKey: null,
+        docDate: new Date(Date.UTC(2026, 8, 4)),
+        docNumber: 'FT 5',
+        partyId: 'party-1',
+        party: {
+          id: 'party-1',
+          name: 'EDP',
+          slug: 'edp',
+          type: 'FORNECEDOR',
+          partyCategory: null,
+        },
+      });
+
+    prisma.document.update.mockResolvedValue({ id: DOC_ID, status: DocumentStatus.APROVADO });
+
+    const svc = makeSvc(prisma, audit, storage);
+    await svc.approve(TENANT_ID, USER_ID, DOC_ID);
+    await svc.approve(TENANT_ID, USER_ID, DOC_ID);
+
+    // Exactly ONE move across both approves — the second is a no-op.
+    expect(storage.move).toHaveBeenCalledTimes(1);
+    // Exactly ONE storage.relocate audit row.
+    const relocateRows = (audit.log as jest.Mock).mock.calls.filter(
+      (c) => c[0]?.metadata?.subAction === 'storage.relocate',
+    );
+    expect(relocateRows).toHaveLength(1);
   });
 });

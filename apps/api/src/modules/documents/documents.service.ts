@@ -943,61 +943,114 @@ export class DocumentsService {
    * previews stay co-located. DB rows + audit log are written AFTER the
    * byte move succeeds — a partial filesystem write is recoverable by
    * re-approving; a partial DB write would orphan the file.
+   *
+   * TOCTOU hardening (audit §5 MEDIUM-3): the previous flow read
+   * `fileKey`, decided to move, then moved bytes, then updated the DB.
+   * Two concurrent approves on the same doc could both pass the
+   * `includes('/_inbox/')` check and race the byte move — on POSIX
+   * `rename` is atomic, on Windows the destination could be silently
+   * overwritten with a fresh atime/mtime. We now take a Postgres
+   * advisory transaction lock keyed off the document id so the read +
+   * update are serialized. The second caller blocks on the lock until
+   * the first transaction commits; by then the row's `fileKey` no longer
+   * carries `/_inbox/` and the second caller short-circuits at the guard
+   * (idempotent skip). The filesystem move itself happens AFTER the
+   * transaction releases the lock — the second caller's read sees the
+   * post-update `fileKey` and won't attempt a second move.
    */
   private async relocateAfterApprove(
     tenantId: string,
     documentId: string,
     userId: string,
   ): Promise<void> {
-    const doc = await this.prisma.document.findFirst({
-      where: { id: documentId, tenantId },
-      select: {
-        id: true,
-        fileKey: true,
-        pdfKey: true,
-        docDate: true,
-        docNumber: true,
-        partyId: true,
-        party: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            type: true,
-            partyCategory: { select: { slug: true } },
+    // Derive a stable 63-bit signed bigint from the document id. SHA-256
+    // truncated to 8 bytes (bit 63 zeroed to keep it positive — Postgres
+    // advisory locks are bigint).
+    const lockKey = this.docLockKey(documentId);
+
+    // Serialise the DB-side read + update for this document. The tx body
+    // is short (one read, one update, one audit row) so the lock hold
+    // time stays well below 100 ms in the happy path.
+    const plan = await this.prisma.$transaction(async (tx) => {
+      // `pg_advisory_xact_lock` auto-releases at COMMIT/ROLLBACK — no
+      // risk of leaking the lock on exception. Concurrent callers block
+      // here until the winner commits, then re-read the fresh row.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+      const doc = await tx.document.findFirst({
+        where: { id: documentId, tenantId },
+        select: {
+          id: true,
+          fileKey: true,
+          pdfKey: true,
+          docDate: true,
+          docNumber: true,
+          partyId: true,
+          party: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true,
+              partyCategory: { select: { slug: true } },
+            },
           },
         },
-      },
+      });
+
+      if (!doc) return null; // approve() already 404s; nothing to relocate.
+      if (!doc.party) return null; // No party linked — leave in _inbox/.
+      if (!doc.fileKey) return null;
+      // Already routed by a concurrent caller — idempotent skip.
+      if (!doc.fileKey.includes('/_inbox/')) return null;
+
+      const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
+      const extension = this.extractExtension(doc.fileKey) || 'pdf';
+      const newPath = buildDocumentPath({
+        partyType: doc.party.type,
+        partySlug,
+        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+        documentDate: doc.docDate ?? new Date(),
+        documentNumber: doc.docNumber ?? 'unnumbered',
+        fileId: doc.id,
+        extension,
+      });
+
+      // Destination equals source — defensive no-op (slug already encodes
+      // the bucket but `_inbox/` was missing). Don't move, don't audit.
+      if (newPath === doc.fileKey) return null;
+
+      await tx.document.update({
+        where: { id: documentId },
+        data: { fileKey: newPath, pdfKey: null }, // pdfKey set after move below
+      });
+
+      return {
+        from: doc.fileKey,
+        to: newPath,
+        pdfFrom: doc.pdfKey ?? null,
+        partyType: doc.party.type,
+        partySlug,
+        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+      };
     });
 
-    if (!doc) return; // approve() already 404s; nothing to relocate.
-    if (!doc.party) return; // No party linked — leave in _inbox/ for manual classification.
-    if (!doc.fileKey) return;
-    if (!doc.fileKey.includes('/_inbox/')) return; // Already routed, idempotent skip.
+    if (!plan) return;
 
-    const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
-    const extension = this.extractExtension(doc.fileKey) || 'pdf';
-    const newPath = buildDocumentPath({
-      partyType: doc.party.type,
-      partySlug,
-      partyCategorySlug: doc.party.partyCategory?.slug ?? null,
-      documentDate: doc.docDate ?? new Date(),
-      documentNumber: doc.docNumber ?? 'unnumbered',
-      fileId: doc.id,
-      extension,
-    });
-
-    // No-op when the destination would equal the source (e.g. the party
-    // slug already encoded the bucket but `_inbox/` was missing — defensive).
-    if (newPath === doc.fileKey) return;
-
-    await this.storage.move(doc.fileKey, newPath);
+    // The filesystem move happens AFTER the DB transaction so the byte
+    // move is the only step outside the lock. We do it here (not inside
+    // the tx) because Prisma transactions don't cover filesystem I/O —
+    // holding the advisory lock across the bytes move would be wasteful
+    // and the row's `fileKey` is already pointing at the new path, so a
+    // second concurrent caller reads the post-update value and short-
+    // circuits at the `_inbox/` guard above (lock-free fast path).
+    await this.storage.move(plan.from, plan.to);
 
     let newPdfKey: string | null = null;
-    if (doc.pdfKey) {
-      newPdfKey = newPath.replace(/\.[^.]+$/, '.pdf');
+    if (plan.pdfFrom) {
+      newPdfKey = plan.to.replace(/\.[^.]+$/, '.pdf');
       try {
-        await this.storage.move(doc.pdfKey, newPdfKey);
+        await this.storage.move(plan.pdfFrom, newPdfKey);
       } catch (err) {
         // PDF sibling failed (rare) — don't roll back the main move; the
         // UI's PDF preview will be missing but the original is intact.
@@ -1008,10 +1061,18 @@ export class DocumentsService {
       }
     }
 
-    await this.prisma.document.update({
-      where: { id: documentId },
-      data: { fileKey: newPath, pdfKey: newPdfKey },
-    });
+    // Persist the final pdfKey AFTER the byte move. We update outside the
+    // tx because the value depends on I/O that we don't want to hold the
+    // advisory lock across. A concurrent approve that reaches this point
+    // would re-read, see `fileKey` already updated, and skip via the
+    // guard. The pdfKey update is idempotent (same destination → same
+    // value on retries).
+    if (newPdfKey !== null) {
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { pdfKey: newPdfKey },
+      });
+    }
 
     await this.audit.log({
       tenantId,
@@ -1021,15 +1082,31 @@ export class DocumentsService {
       entityId: documentId,
       metadata: {
         subAction: 'storage.relocate',
-        from: doc.fileKey,
-        to: newPath,
-        pdfFrom: doc.pdfKey ?? null,
+        from: plan.from,
+        to: plan.to,
+        pdfFrom: plan.pdfFrom,
         pdfTo: newPdfKey,
-        partyType: doc.party.type,
-        partySlug,
-        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+        partyType: plan.partyType,
+        partySlug: plan.partySlug,
+        partyCategorySlug: plan.partyCategorySlug,
       } as Prisma.InputJsonValue,
     });
+  }
+
+  /**
+   * Deterministic 63-bit positive bigint derived from a SHA-256 of the
+   * document id. Used as the key for `pg_advisory_xact_lock` so concurrent
+   * approves on the same document serialize on the same lock. The hash
+   * is truncated to 8 bytes and bit 63 is cleared (Postgres bigint is
+   * signed; an advisory lock key outside the int64 range errors).
+   */
+  private docLockKey(documentId: string): bigint {
+    const h = crypto.createHash('sha256').update(documentId).digest();
+    // Read the first 8 bytes as a big-endian unsigned int, then clear
+    // the sign bit and convert to BigInt. Range: 0 .. 2^63-1.
+    const view = new DataView(h.buffer, h.byteOffset, h.byteLength);
+    const unsigned = view.getBigUint64(0, false);
+    return unsigned & 0x7fffffffffffffffn;
   }
 
   // ─────────────────────────────────────────── items ─────────────────────

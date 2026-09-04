@@ -283,6 +283,11 @@ export class PartiesService {
         isActive: true,
         isRecurring: true,
         isRecurringManualOverride: true,
+        // Sprint E fix-up (audit §9 LOW-5 / MEDIUM-5): the recurring-toggle
+        // pattern emits a per-field audit row; the same per-field audit
+        // discipline must apply to `partyCategoryId` so a compliance
+        // review can answer "who moved party X from category A to B".
+        partyCategoryId: true,
       },
     });
     if (!existing) throw new NotFoundException('Party not found');
@@ -473,6 +478,37 @@ export class PartiesService {
           newValue: next,
         },
       });
+    }
+
+    // Sprint E fix-up (audit §9 LOW-5 / MEDIUM-5): per-field audit row
+    // for `partyCategoryId`. The general EDIT row above only carries
+    // IBAN metadata; without this row a compliance review can't answer
+    // "who moved party X from category A to category B". Same per-field
+    // pattern as the recurring toggle — `subAction: 'party.update.partyCategory'`,
+    // `field: 'partyCategoryId'`, oldValue/newValue carry the IDs (or null
+    // when the category was cleared by passing `null` in the DTO).
+    //
+    // The "changed" check uses strict `!==` so undefined-vs-null is a real
+    // change (user is clearing a previously-set category), but undefined
+    // alone means "field was not in the PATCH" — skip those.
+    if (dto.partyCategoryId !== undefined) {
+      const prevCategory = existing.partyCategoryId ?? null;
+      const nextCategory = dto.partyCategoryId ?? null;
+      if (prevCategory !== nextCategory) {
+        await this.audit.log({
+          tenantId,
+          userId,
+          action: AuditAction.EDIT,
+          entityType: 'party',
+          entityId: id,
+          metadata: {
+            subAction: 'party.update.partyCategory',
+            field: 'partyCategoryId',
+            oldValue: prevCategory,
+            newValue: nextCategory,
+          },
+        });
+      }
     }
 
     return this.findOne(tenantId, id);

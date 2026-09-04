@@ -612,7 +612,13 @@ model Party {
   @@index([tenantId, iban])
   @@index([tenantId, type])
   @@index([tenantId, ibanFlagged])
-  @@index([tenantId, slug])
+  // Sprint E fix-up (audit §8 LOW-4): per-tenant unique on slug. Closes
+  // the race window between `generateUniqueSlug`'s findFirst and create —
+  // two concurrent creates with the same name both `findFirst` returns
+  // null and both attempt to insert the same `("tenantId", "slug")`
+  // pair, with the second hitting the unique violation deterministically.
+  // Replaces the previous plain @@index which only guarded the read.
+  @@unique([tenantId, slug])
   @@index([tenantId, partyCategoryId])
   @@map("parties")
 }

@@ -52,6 +52,7 @@ export interface Party {
   ibanFlaggedReason?: string | null;
   ibanLastCheckedAt?: string | null;
   ibanRiskScore?: number | null;
+  ibanMasked?: string | null;
   isActive: boolean;
   /**
     * Backend flips this true when the supplier has >=3 linked documents
@@ -186,4 +187,116 @@ export interface PartyInput {
   partyCategoryId?: string;
   isRecurring?: boolean;
   isRecurringManualOverride?: boolean;
+}
+
+// =============================================================================
+// Sprint G — Party 360° file add-ons (contacts, addresses, payments, timeline)
+// =============================================================================
+
+/**
+ * Named contact on a Party. Independent of the legacy `Party.email` /
+ * `Party.phone` / `Party.mobile` flatten columns — admin populates the
+ * new list manually via UI (no automatic data migration in Sprint G.1).
+ */
+export interface PartyContact {
+  id: string;
+  partyId: string;
+  name: string;
+  role?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PartyAddressType =
+  | 'BILLING'
+  | 'CORRESPONDENCE'
+  | 'OPERATIONAL'
+  | 'OTHER';
+
+export interface PartyAddress {
+  id: string;
+  partyId: string;
+  type: PartyAddressType;
+  line1: string;
+  line2?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  country: string;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Single payment event tied to a party's documents. */
+export interface PartyPaymentEvent {
+  id: string;
+  documentId: string;
+  document: { id: string; docNumber: string | null; fileKey: string } | null;
+  dueDate: string;
+  amount: string | null;
+  status: 'PENDING' | 'PAID' | 'OVERDUE';
+  paidAt: string | null;
+  paidAmount: string | null;
+  paymentMethod?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Discriminated union of timeline events. */
+export type TimelineEventType =
+  | 'audit'
+  | 'payment'
+  | 'iban_change'
+  | 'document_approved';
+
+export type TimelineEvent =
+  | {
+      id: string;
+      type: 'audit';
+      at: string;
+      action: string;
+      userId: string | null;
+      metadata: unknown;
+    }
+  | {
+      id: string;
+      type: 'payment';
+      at: string;
+      amount: string | null;
+      status: string;
+      documentId: string;
+      document: { id: string; docNumber: string | null; fileKey: string } | null;
+    }
+  | {
+      id: string;
+      type: 'iban_change';
+      at: string;
+      oldIban: string | null;
+      newIban: string;
+      verified: boolean;
+      changedById: string | null;
+    }
+  | {
+      id: string;
+      type: 'document_approved';
+      at: string;
+      documentId: string;
+      fileName: string;
+      docNumber: string | null;
+      approvedById: string | null;
+    };
+
+export interface TimelineListResponse {
+  items: TimelineEvent[];
+  nextCursor: string | null;
+}
+
+/** Attach to Party payload for the 360° file. */
+export interface PartyExtras {
+  contacts?: PartyContact[];
+  addresses?: PartyAddress[];
 }

@@ -149,7 +149,9 @@ describe('DocumentsService', () => {
       expect(prisma.document.create).toHaveBeenCalledTimes(1);
       const createArgs = prisma.document.create.mock.calls[0][0];
       expect(createArgs.data.fileHash).toBe(expectedHash);
-      expect(createArgs.data.fileKey).toMatch(/^tenant-test-1\/\d{4}\/\d{2}\//);
+      // Sprint E fix-up: every upload lands under `_inbox/` so the
+      // approve → relocate flow can move it to the party/category folder.
+      expect(createArgs.data.fileKey).toMatch(/^_inbox\/tenant-test-1\/\d{4}\/\d{2}\//);
       expect(createArgs.data.fileKey.endsWith('.pdf')).toBe(true);
       expect(createArgs.data.status).toBe(DocumentStatus.NOVO);
       expect(createArgs.data.suggestedFolder).toBe('/2026/08/fatura_recebida/_');

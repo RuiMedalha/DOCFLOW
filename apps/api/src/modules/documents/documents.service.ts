@@ -161,8 +161,10 @@ export class DocumentsService {
       });
     }
 
-    // Key shape: <tenantId>/<yyyy>/<mm>/<random>.<ext>
-    // Year/month groups keep directory listings manageable even at scale.
+    // Key shape: _inbox/<tenantId>/<yyyy>/<mm>/<random>.<ext>
+    // Every upload lands in `_inbox/`; `relocateAfterApprove()` moves the
+    // bytes into the deterministic party/category folder once the row is
+    // approved. Year/month groups keep the inbox listings manageable at scale.
     const now = new Date();
     const fileKey = this.buildStorageKey(tenantId, file.originalname, now);
 
@@ -1002,7 +1004,13 @@ export class DocumentsService {
       if (!doc.party) return null; // No party linked — leave in _inbox/.
       if (!doc.fileKey) return null;
       // Already routed by a concurrent caller — idempotent skip.
-      if (!doc.fileKey.includes('/_inbox/')) return null;
+      // Matches BOTH shapes: `_inbox/<tenant>/...` (Sprint E upload-time
+      // shape) AND `<tenant>/_inbox/...` (legacy test fixture shape from
+      // the original Sprint E branch). The path-builder never emits a
+      // destination containing `_inbox/` so once fileKey has been
+      // refreshed to the deterministic party folder this guard correctly
+      // short-circuits.
+      if (!this.isInboxKey(doc.fileKey)) return null;
 
       const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
       const extension = this.extractExtension(doc.fileKey) || 'pdf';
@@ -1530,14 +1538,39 @@ export class DocumentsService {
   }
 
   /**
+   * True when `fileKey` still sits in the `_inbox/` staging area — i.e. the
+   * bytes haven't been routed to a party/category folder yet. Both shapes
+   * are accepted so the guard stays correct across the Sprint E migration
+   * (new uploads use `_inbox/<tenant>/...`; pre-fix fixtures in older
+   * tests used `<tenant>/_inbox/...`).
+   */
+  private isInboxKey(fileKey: string): boolean {
+    return fileKey.startsWith('_inbox/') || fileKey.includes('/_inbox/');
+  }
+
+  /**
    * Build the on-disk storage key. Extracted so upload + tests share the
    * shape and the random suffix doesn't drift across paths.
+   *
+   * Sprint E (fix-up 2026-09-04): every new upload lands in `_inbox/`
+   * so that `relocateAfterApprove()` (which keys off `fileKey.includes('/_inbox/')`)
+   * can move the bytes into the deterministic party/category folder
+   * after the operator approves the row. Without the `_inbox/` prefix the
+   * guard fired on every approve and the file was never routed — folder
+   * routing was dead in production. See commit message for context.
+   *
+   * Key shape: `_inbox/<tenantId>/<yyyy>/<mm>/<ts>-<rand>.<ext>`
+   *   - `_inbox/` is a single POSIX segment, not absolute; `LocalFilesystemStorage.resolveSafe()`
+   *     normalises and joins it under `UPLOADS_DIR` the same way the old
+   *     tenant-prefixed path did.
+   *   - The `_<tenantId>/<yyyy>/<mm>/` sub-tree under `_inbox/` keeps the
+   *     inbox listings manageable per-tenant and per-month at scale.
    */
   private buildStorageKey(tenantId: string, fileName: string, now: Date): string {
     const yyyy = String(now.getUTCFullYear());
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const ext = this.extractExtension(fileName);
-    return `${tenantId}/${yyyy}/${mm}/${Date.now()}-${crypto
+    return `_inbox/${tenantId}/${yyyy}/${mm}/${Date.now()}-${crypto
       .randomBytes(8)
       .toString('hex')}${ext}`;
   }
@@ -1546,8 +1579,8 @@ export class DocumentsService {
    * Derive the PDF sibling key from an image key by stripping the
    * extension (`.jpg` / `.png` / `.jpeg`) and appending `.pdf`.
    * Examples:
-   *   <tenant>/2026/08/1234-abcd.jpg → <tenant>/2026/08/1234-abcd.pdf
-   *   <tenant>/2026/08/1234-abcd.png → <tenant>/2026/08/1234-abcd.pdf
+   *   _inbox/<tenant>/2026/08/1234-abcd.jpg → _inbox/<tenant>/2026/08/1234-abcd.pdf
+   *   _inbox/<tenant>/2026/08/1234-abcd.png → _inbox/<tenant>/2026/08/1234-abcd.pdf
    * Keeps the random suffix identical so the two files are obviously
    * the same document on disk.
    */

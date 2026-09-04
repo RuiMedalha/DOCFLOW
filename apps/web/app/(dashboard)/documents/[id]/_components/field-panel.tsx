@@ -3,20 +3,33 @@
 /**
  * FieldPanel — editable extracted-fields panel for DocFlow documents.
  *
- * - Renders each OCR field with a confidence badge (green / amber / red).
- * - Editing any field triggers `onChange`; the parent owns persistence.
- * - Confidence is shown with a coloured dot + percent label so the
- *   reviewer can spot low-confidence values at a glance.
- * - The accounting section (debit/credit account) and the IBAN
- *   anti-fraud banner slot in via props so the parent can wire data
- *   sources.
+ * Editorial / Contábil · Blueprint Edition (commit 2026-09-04).
+ *
+ * Layout restructure: 8 fieldsets empilhados → 3 GRUPOS HORIZONTAIS
+ *   · "Identidade" (Fornecedor, NIF, Nº doc, ATCUD) — 2-col grid
+ *   · "Calendário & Validação" (Data doc, Vencimento, IBAN) — 2-col grid
+ *   · "Montantes" (Base, IVA, Total) — 3-col grid + reconciliation como
+ *     diagrama de equação [Base] + [IVA] = [Total] em mono tabular com
+ *     gold underline no Total.
+ *
+ * Separadores entre grupos: hairline 1px navy 0.12 opacity.
+ * Headers de grupo em Fraunces 14px uppercase tracking-wide ink-faint.
+ * Field primitive: label Inter Tight 11px uppercase tracking-wider
+ *   ink-faint, input com border-bottom navy 0.12, focus border-bottom
+ *   navy + accent-gold underline 2px. Conf badge: dot + percent mono
+ *   tabular, cor baseada em threshold.
+ *
+ * Linhas table editorial: header small caps Fraunces 11px tracking-widest,
+ *   cells JetBrains Mono 14px tabular-nums, tfoot gold com right-rule
+ *   1px gold 0.3 opacity. DELETE agora chama o pai que abre um Dialog
+ *   confirmando (risco real — ver page.tsx).
  *
  * Numbers are formatted with tabular-nums; dates use the user's locale
  * (defaults to pt-PT).
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Save, RefreshCw, Send, CheckCircle2, ShieldAlert, Trash2, Plus, X, Loader2 } from 'lucide-react';
+import { Send, CheckCircle2, Plus, X, Loader2, Trash2 } from 'lucide-react';
 import { useCategories } from '../../../categories/use-categories';
 
 export interface ExtractedFields {
@@ -99,6 +112,8 @@ export interface FieldPanelProps {
   sendingToToc?: boolean;
   /** True while the approve mutation is in flight. */
   approving?: boolean;
+  /** True while the user has unsaved field edits (drives Save enable/disable). */
+  draftActive?: boolean;
 
   // ── Line-items editing (ADMIN/OPERADOR only) ─────────────────────────
   /** Document id — used to scope the add/update/delete calls. */
@@ -123,34 +138,39 @@ export interface FieldPanelProps {
   onUpdateLineItem?: (itemId: string, patch: Record<string, number | string | null>) => void;
   /** Fired by the "+ Adicionar linha" button. */
   onAddLineItem?: () => void;
-  /** Fired by the per-row X button. */
-  onDeleteLineItem?: (itemId: string) => void;
+  /**
+   * Fired by the per-row X button. The parent owns the actual DELETE
+   * lifecycle and shows a native ConfirmDialog — risk-on-button-click
+   * is too easy to misfire, so the dialog mirrors the rest of the app.
+   */
+  onDeleteLineItem?: (itemId: string, description?: string) => void;
 }
 
-function confColor(c?: number): 'green' | 'amber' | 'red' | 'neutral' {
+// ── Confidence badge — editorial tones (forest / mustard / wine / muted) ──
+function confColor(c?: number): 'ok' | 'warn' | 'alert' | 'neutral' {
   if (c == null) return 'neutral';
-  if (c >= 0.85) return 'green';
-  if (c >= 0.6) return 'amber';
-  return 'red';
+  if (c >= 0.85) return 'ok';
+  if (c >= 0.6) return 'warn';
+  return 'alert';
 }
 
 function confBadge(c?: number) {
   const tone = confColor(c);
   const pct = c != null ? `${Math.round(c * 100)}%` : '—';
   const map = {
-    green: { bg: 'rgba(52, 211, 153, 0.18)', fg: 'var(--success)' },
-    amber: { bg: 'rgba(251, 191, 36, 0.18)', fg: 'var(--warning)' },
-    red: { bg: 'rgba(248, 113, 113, 0.18)', fg: 'var(--danger)' },
-    neutral: { bg: 'var(--hover)', fg: 'var(--text-subtle)' },
+    ok: { dot: 'var(--ed-status-ok)', fg: 'var(--ed-status-ok)', bg: 'var(--ed-status-ok-dim)' },
+    warn: { dot: 'var(--ed-status-warn)', fg: 'var(--ed-status-warn)', bg: 'var(--ed-status-warn-dim)' },
+    alert: { dot: 'var(--ed-status-alert)', fg: 'var(--ed-status-alert)', bg: 'var(--ed-status-alert-dim)' },
+    neutral: { dot: 'var(--ed-status-neutral)', fg: 'var(--ed-status-neutral)', bg: 'var(--ed-status-neutral-dim)' },
   } as const;
-  const { bg, fg } = map[tone];
+  const { dot, fg, bg } = map[tone];
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums"
-      style={{ background: bg, color: fg }}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium tabular-nums"
+      style={{ background: bg, color: fg, borderRadius: 'var(--ed-radius-chip)' }}
       title={`Confiança OCR ${pct}`}
     >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: fg }} aria-hidden="true" />
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} aria-hidden="true" />
       {pct}
     </span>
   );
@@ -165,599 +185,88 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString('pt-PT');
 };
 
-export function FieldPanel(props: FieldPanelProps) {
-  const { fields, confidence, lineItems = [], currency = 'EUR', accounts = [] } = props;
-  const { categories } = useCategories();
-  // Resolve the selected category record so the header badge can show the
-  // descriptive name + IVA deductibility percent (rather than the raw slug).
-  const selectedCategory = useMemo(
-    () => categories.find((c) => c.name === fields.expenseCategory) ?? null,
-    [categories, fields.expenseCategory],
-  );
-
-  // Render-time date would mismatch between server and client; capture after mount.
-  const [todayLabel, setTodayLabel] = useState<string>('');
-  useEffect(() => {
-    setTodayLabel(fmtDate(new Date().toISOString()));
-  }, []);
-
-  const lineSum = useMemo(
-    () => lineItems.reduce((acc, li) => acc + (Number.isFinite(li.total) ? li.total : 0), 0),
-    [lineItems],
-  );
-
-  // Sum of per-line discounts (currency). Optional column — only counts when set.
-  const lineDiscountTotal = useMemo(
-    () =>
-      lineItems.reduce(
-        (acc, li) => acc + (Number.isFinite(li.discount as number) ? (li.discount as number) : 0),
-        0,
-      ),
-    [lineItems],
-  );
-
-  const hasDiscount = lineItems.some((li) => Number.isFinite(li.discount as number) && (li.discount as number) > 0);
-  const hasCode = lineItems.some((li) => li.code != null && String(li.code).trim() !== '');
-
-  const netVatTotal = (fields.netAmount ?? 0) + (fields.taxAmount ?? 0);
-  const totalDelta = (fields.total ?? 0) - lineSum;
-
+/* ================================================================
+   Group primitive — header Fraunces small-caps + hairline separator.
+   Used to bracket the 3 horizontal groups (Identidade, Calendário,
+   Montantes) without resorting to boxed cards.
+   ================================================================ */
+function Group({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="space-y-4">
-      {/* === Header / actions ============================================== */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
-            Campos extraídos
-          </h2>
-          {fields.expenseCategory && selectedCategory && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-              style={{
-                background: selectedCategory.color ?? 'var(--hover)',
-                color: 'var(--text)',
-                opacity: 0.85,
-              }}
-              title={
-                selectedCategory.defaultIvaDeductibilityPct != null
-                  ? `Dedução IVA ${selectedCategory.defaultIvaDeductibilityPct}%`
-                  : `Categoria: ${selectedCategory.name}`
-              }
-            >
-              {selectedCategory.name}
-              {selectedCategory.defaultIvaDeductibilityPct != null && (
-                <span className="tabular-nums" style={{ color: 'var(--text-subtle)' }}>
-                  {' '}— dedução {selectedCategory.defaultIvaDeductibilityPct}%
-                </span>
-              )}
-            </span>
-          )}
-          {props.approved && (
-            <span className="badge-emerald">
-              <CheckCircle2 size={10} className="mr-0.5" aria-hidden="true" />
-              Aprovado
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={props.onReExtract}
-            className="btn-secondary text-xs"
-            disabled={props.reExtracting}
-            aria-busy={props.reExtracting}
-          >
-            <RefreshCw size={12} className={props.reExtracting ? 'animate-spin' : ''} aria-hidden="true" />
-            Re-extrair
-          </button>
-          {!props.approved && (
-            <button
-              type="button"
-              onClick={props.onApprove}
-              className="btn-secondary text-xs"
-              disabled={props.approving}
-              aria-busy={props.approving}
-              title="Marcar este documento como aprovado (locks edits)"
-            >
-              <CheckCircle2 size={12} className={props.approving ? 'animate-spin' : ''} aria-hidden="true" />
-              {props.approving ? 'A aprovar…' : 'Aprovar'}
-            </button>
-          )}
-          <button type="button" onClick={props.onSave} className="btn-primary text-xs" disabled={props.saving}>
-            <Save size={12} aria-hidden="true" />
-            Guardar
-          </button>
-        </div>
-      </div>
-
-      {/* === Identity block ================================================ */}
-      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
-        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
-          Identidade do documento
-        </legend>
-
-        <Field label="Fornecedor" confidence={confidence.supplier}>
-          <input
-            type="text"
-            className="input"
-            value={fields.supplier ?? ''}
-            onChange={(e) => props.onFieldChange({ supplier: e.target.value })}
-            placeholder="Nome do emitente"
-          />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="NIF" confidence={confidence.supplierNif}>
-            <input
-              type="text"
-              className="input font-mono"
-              maxLength={20}
-              value={fields.supplierNif ?? ''}
-              onChange={(e) => props.onFieldChange({ supplierNif: e.target.value })}
-              placeholder="500000001"
-            />
-          </Field>
-          <Field label="Nº documento" confidence={confidence.docNumber}>
-            <input
-              type="text"
-              className="input font-mono"
-              value={fields.docNumber ?? ''}
-              onChange={(e) => props.onFieldChange({ docNumber: e.target.value })}
-              placeholder="FT 2026/1234"
-            />
-          </Field>
-        </div>
-
-        <Field label="ATCUD" confidence={confidence.atcud}>
-          <input
-            type="text"
-            className="input font-mono"
-            value={fields.atcud ?? ''}
-            onChange={(e) => props.onFieldChange({ atcud: e.target.value })}
-            placeholder="ABC1234-56789"
-          />
-        </Field>
-      </fieldset>
-
-      {/* === Dates & IBAN ================================================== */}
-      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
-        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
-          Datas e IBAN
-        </legend>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Data do doc." confidence={confidence.docDate}>
-            <input
-              type="date"
-              className="input"
-              value={fields.docDate ?? ''}
-              onChange={(e) => props.onFieldChange({ docDate: e.target.value })}
-            />
-          </Field>
-          <Field label="Vencimento" confidence={confidence.dueDate}>
-            <input
-              type="date"
-              className="input"
-              value={fields.dueDate ?? ''}
-              onChange={(e) => props.onFieldChange({ dueDate: e.target.value })}
-            />
-          </Field>
-        </div>
-
-        <Field
-          label="IBAN"
-          confidence={confidence.iban}
-          right={todayLabel}
+    <section>
+      <header
+        className="flex items-center gap-3 pb-3 mb-6 border-b"
+        style={{ borderColor: 'var(--ed-rule)' }}
+      >
+        <h3
+          className="uppercase"
+          style={{
+            fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+            fontSize: '14px',
+            letterSpacing: '0.14em',
+            color: 'var(--ed-ink-faint)',
+          }}
         >
-          <input
-            type="text"
-            className="input font-mono"
-            value={fields.iban ?? ''}
-            onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
-            placeholder="PT50 0035 0651 0000 0000 0712"
-          />
-        </Field>
-      </fieldset>
-
-      {/* === Categoria ==================================================== */}
-      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
-        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
-          Categoria
-        </legend>
-        <Field label="Categoria da despesa">
-          <select
-            className="input"
-            value={fields.expenseCategory ?? ''}
-            onChange={(e) =>
-              props.onFieldChange({ expenseCategory: e.target.value || null })
-            }
-          >
-            <option value="">— Selecionar —</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.name}>
-                {c.name}
-                {c.defaultIvaDeductibilityPct != null
-                  ? ` — dedução ${c.defaultIvaDeductibilityPct}%`
-                  : ''}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </fieldset>
-
-      {/* === Amounts ======================================================= */}
-      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
-        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
-          Montantes
-        </legend>
-
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Base" confidence={confidence.netAmount}>
-            <MoneyInput
-              value={fields.netAmount ?? null}
-              onChange={(v) => props.onFieldChange({ netAmount: v })}
-              ccy={currency}
-            />
-          </Field>
-          <Field label="IVA" confidence={confidence.taxAmount}>
-            <MoneyInput
-              value={fields.taxAmount ?? null}
-              onChange={(v) => props.onFieldChange({ taxAmount: v })}
-              ccy={currency}
-            />
-          </Field>
-          <Field label="Total" confidence={confidence.total}>
-            <MoneyInput
-              value={fields.total ?? null}
-              onChange={(v) => props.onFieldChange({ total: v })}
-              ccy={currency}
-            />
-          </Field>
-        </div>
-
-        {/* Reconciliation footer */}
-        <div
-          className="flex items-center justify-between text-xs rounded-lg px-3 py-2"
-          style={{ background: 'var(--hover)' }}
-        >
-          <span style={{ color: 'var(--text-muted)' }}>
-            Soma linhas: <span className="font-semibold tabular-nums">{fmtMoney(lineSum, currency)}</span>
-          </span>
-          <span style={{ color: 'var(--text-muted)' }}>
-            Base+IVA: <span className="font-semibold tabular-nums">{fmtMoney(netVatTotal, currency)}</span>
-          </span>
-          <span style={{ color: 'var(--text-muted)' }}>
-            Δ Total−Linhas:{' '}
-            <span
-              className="font-semibold tabular-nums"
-              style={{ color: Math.abs(totalDelta) > 0.05 ? 'var(--warning)' : 'var(--success)' }}
-            >
-              {fmtMoney(totalDelta, currency)}
-            </span>
-          </span>
-        </div>
-      </fieldset>
-
-      {/* === Line items ==================================================== */}
-      {(lineItems.length > 0 || props.canEditLines) && (
-        <section className="card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-subtle)' }}>
-              Linhas do documento ({lineItems.length})
-            </h3>
-            {props.canEditLines && !props.approved && props.onAddLineItem && (
-              <button
-                type="button"
-                onClick={props.onAddLineItem}
-                disabled={props.addingLine}
-                aria-busy={props.addingLine}
-                className="btn-secondary text-[11px] py-1 px-2"
-                title="Adicionar nova linha (POST /items)"
-              >
-                {props.addingLine ? (
-                  <Loader2 size={11} className="animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus size={11} aria-hidden="true" />
-                )}
-                Adicionar linha
-              </button>
-            )}
-          </div>
-          {lineItems.length > 0 && (
-            <div className="overflow-x-auto -mx-2 px-2">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr style={{ color: 'var(--text-subtle)' }}>
-                    <th className="text-left font-medium pb-2">Descrição</th>
-                    {hasCode && (
-                      <th className="text-left font-medium pb-2">Cód.</th>
-                    )}
-                    <th className="text-right font-medium pb-2 tabular-nums">Qtd.</th>
-                    <th className="text-right font-medium pb-2 tabular-nums">Preço un.</th>
-                    {hasDiscount && (
-                      <th className="text-right font-medium pb-2 tabular-nums">Desc.</th>
-                    )}
-                    <th className="text-right font-medium pb-2 tabular-nums">IVA</th>
-                    <th className="text-right font-medium pb-2 tabular-nums">Total</th>
-                    {props.canEditLines && !props.approved && (
-                      <th className="w-6" aria-label="Ações" />
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {lineItems.map((li) => {
-                    const editable = Boolean(
-                      props.canEditLines &&
-                      !props.approved &&
-                      props.onUpdateLineItem,
-                    );
-                    const rowBusy = props.busyItemId === li.id;
-                    return (
-                      <tr key={li.id} className="border-t border-border">
-                        <td className="py-1.5 pr-3" style={{ color: 'var(--text)' }}>
-                          {editable && props.onUpdateLineItem ? (
-                            <input
-                              type="text"
-                              className="input input-xs w-full"
-                              value={li.description}
-                              disabled={rowBusy}
-                              onChange={() => {/* keep controlled via onBlur only */}}
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v && v !== li.description) {
-                                  props.onUpdateLineItem!(li.id, { description: v });
-                                }
-                              }}
-                            />
-                          ) : (
-                            <span>{li.description}</span>
-                          )}
-                        </td>
-                        {hasCode && (
-                          <td className="py-1.5 pr-3 font-mono" style={{ color: 'var(--text-muted)' }}>
-                            {li.code ? (
-                              <span className="inline-block rounded px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--hover)' }}>
-                                {li.code}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                        )}
-                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                          {editable ? (
-                            <NumberCell
-                              value={li.quantity}
-                              step="any"
-                              disabled={rowBusy}
-                              onCommit={(v) => props.onUpdateLineItem!(li.id, { quantity: v })}
-                            />
-                          ) : (
-                            li.quantity.toLocaleString('pt-PT')
-                          )}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                          {editable ? (
-                            <NumberCell
-                              value={li.unitPrice}
-                              step="0.01"
-                              disabled={rowBusy}
-                              onCommit={(v) => props.onUpdateLineItem!(li.id, { unitPrice: v })}
-                            />
-                          ) : (
-                            fmtMoney(li.unitPrice, currency)
-                          )}
-                        </td>
-                        {hasDiscount && (
-                          <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                            {editable ? (
-                              <NumberCell
-                                value={li.discount as number}
-                                step="0.01"
-                                disabled={rowBusy}
-                                onCommit={(v) => props.onUpdateLineItem!(li.id, { discount: v })}
-                              />
-                            ) : (
-                              Number.isFinite(li.discount as number)
-                                ? fmtMoney(li.discount as number, currency)
-                                : '—'
-                            )}
-                          </td>
-                        )}
-                        <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                          {editable ? (
-                            <NumberCell
-                              value={li.taxRate as number}
-                              step="0.1"
-                              disabled={rowBusy}
-                              onCommit={(v) => props.onUpdateLineItem!(li.id, { taxRate: v })}
-                            />
-                          ) : (
-                            li.taxRate != null ? `${li.taxRate}%` : '—'
-                          )}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums font-semibold" style={{ color: 'var(--text)' }}>
-                          {editable ? (
-                            <NumberCell
-                              value={li.total}
-                              step="0.01"
-                              disabled={rowBusy}
-                              onCommit={(v) => props.onUpdateLineItem!(li.id, { total: v })}
-                            />
-                          ) : (
-                            fmtMoney(li.total, currency)
-                          )}
-                        </td>
-                        {props.canEditLines && !props.approved && (
-                          <td className="py-1.5 pl-2">
-                            {props.onDeleteLineItem && (
-                              <button
-                                type="button"
-                                onClick={() => props.onDeleteLineItem!(li.id)}
-                                disabled={rowBusy || props.deletingItemId === li.id}
-                                aria-label={`Eliminar linha ${li.description}`}
-                                title="Eliminar linha (DELETE /items/:itemId)"
-                                className="inline-flex items-center justify-center w-6 h-6 rounded text-[var(--text-subtle)] hover:text-[var(--danger)] hover:bg-[var(--hover)] transition-colors"
-                              >
-                                {props.deletingItemId === li.id ? (
-                                  <Loader2 size={11} className="animate-spin" aria-hidden="true" />
-                                ) : (
-                                  <X size={11} aria-hidden="true" />
-                                )}
-                              </button>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr
-                    className="border-t-2"
-                    style={{ borderColor: 'var(--border)' }}
-                  >
-                    <td
-                      colSpan={hasCode ? 2 : 1}
-                      className="pt-2.5 pr-3 text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: 'var(--text-subtle)' }}
-                    >
-                      Totais
-                    </td>
-                    <td
-                      className="pt-2.5 text-right tabular-nums text-xs"
-                      style={{ color: 'var(--text-muted)' }}
-                      aria-label="Quantidade total"
-                    >
-                      —
-                    </td>
-                    <td className="pt-2.5" aria-hidden="true" />
-                    {hasDiscount && (
-                      <td
-                        className="pt-2.5 text-right tabular-nums text-xs"
-                        style={{ color: 'var(--text-muted)' }}
-                        aria-label="Desconto total"
-                      >
-                        {lineDiscountTotal > 0 ? `− ${fmtMoney(lineDiscountTotal, currency)}` : '—'}
-                      </td>
-                    )}
-                    <td className="pt-2.5" aria-hidden="true" />
-                    <td
-                      className="pt-2.5 text-right tabular-nums font-semibold"
-                      style={{ color: 'var(--text)' }}
-                      aria-label="Total documento"
-                    >
-                      {fmtMoney(lineSum, currency)}
-                    </td>
-                    {props.canEditLines && !props.approved && (
-                      <td aria-hidden="true" />
-                    )}
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* === Accounting ==================================================== */}
-      <fieldset className="card p-4 space-y-3" disabled={props.approved}>
-        <legend className="text-xs font-semibold uppercase tracking-wider px-1" style={{ color: 'var(--text-subtle)' }}>
-          Contabilização
-        </legend>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Conta débito">
-            <select
-              className="input"
-              value={props.selectedDebitAccount ?? ''}
-              onChange={(e) => props.onAssignDebit?.(e.target.value)}
-            >
-              <option value="">— Selecionar —</option>
-              {accounts.map((a) => (
-                <option key={`d-${a.code}`} value={a.code}>
-                  {a.code} · {a.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Conta crédito">
-            <select
-              className="input"
-              value={props.selectedCreditAccount ?? ''}
-              onChange={(e) => props.onAssignCredit?.(e.target.value)}
-            >
-              <option value="">— Selecionar —</option>
-              {accounts.map((a) => (
-                <option key={`c-${a.code}`} value={a.code}>
-                  {a.code} · {a.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      </fieldset>
-
-      {/* === TOConline ===================================================== */}
-      <div className="flex items-center justify-between gap-2 card p-3.5">
-        <div className="min-w-0">
-          <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>
-            Enviar para TOConline
-          </p>
-          <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-            Stub — gera payload SAF-T e coloca na fila de exportação.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={props.onSendToToc}
-          className="btn-secondary text-xs"
-          disabled={props.sendingToToc || !props.approved}
-          title={!props.approved ? 'Aprovar primeiro' : 'Enviar para TOConline'}
-        >
-          {props.sendingToToc ? (
-            <>
-              <RefreshCw size={12} className="animate-spin" aria-hidden="true" />
-              A enviar…
-            </>
-          ) : (
-            <>
-              <Send size={12} aria-hidden="true" />
-              Enviar
-            </>
-          )}
-        </button>
-      </div>
-
-      {!props.approved && (
-        <p className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--warning-fg)' }}>
-          <ShieldAlert size={12} aria-hidden="true" />
-          Documento por aprovar. Verifique campos com baixa confiança antes de contabilizar.
-        </p>
-      )}
-    </div>
+          {title}
+        </h3>
+        <span
+          className="flex-1 h-px"
+          style={{ background: 'var(--ed-rule-strong)' }}
+          aria-hidden="true"
+        />
+      </header>
+      {children}
+    </section>
   );
 }
 
-// -------------------------------------------------------------- primitives
-
+/* ================================================================
+   Field primitive — editorial underline input. Border-bottom navy
+   0.12, focus border-bottom navy + accent-gold underline 2px.
+   ================================================================ */
 function Field({
   label,
   confidence,
   children,
   right,
+  hint,
 }: {
   label: string;
   confidence?: number;
   children: React.ReactNode;
   right?: React.ReactNode;
+  hint?: React.ReactNode;
 }) {
   return (
     <div className="field-group">
       <div className="flex items-center justify-between mb-1.5">
-        <label className="label mb-0">{label}</label>
+        <label
+          className="block uppercase"
+          style={{
+            fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+            fontSize: '11px',
+            fontWeight: 500,
+            letterSpacing: '0.12em',
+            color: 'var(--ed-ink-faint)',
+          }}
+        >
+          {label}
+        </label>
         <div className="flex items-center gap-1.5">
           {right && (
-            <span className="text-[10px]" style={{ color: 'var(--text-subtle)' }}>
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] uppercase tracking-wider"
+              style={{
+                color: 'var(--ed-status-warn)',
+                background: 'var(--ed-status-warn-dim)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+            >
               {right}
             </span>
           )}
@@ -765,7 +274,83 @@ function Field({
         </div>
       </div>
       {children}
+      {hint && (
+        <p
+          className="text-[10px] mt-1"
+          style={{ color: 'var(--ed-ink-faint)' }}
+        >
+          {hint}
+        </p>
+      )}
     </div>
+  );
+}
+
+/** Editorial underline input — replaces the boxed `.input`. */
+function EdInput({
+  className = '',
+  mono = false,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
+  return (
+    <input
+      {...props}
+      className={`w-full bg-transparent transition-colors ${className}`}
+      style={{
+        color: 'var(--ed-ink)',
+        fontFamily: mono ? '"JetBrains Mono", ui-monospace, monospace' : 'var(--font-inter-tight), system-ui, sans-serif',
+        fontSize: '14px',
+        border: 'none',
+        borderBottom: '1px solid var(--ed-rule)',
+        padding: '8px 0',
+        outline: 'none',
+        ...(props.style ?? {}),
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderBottom = '2px solid var(--ed-accent-gold)';
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderBottom = '1px solid var(--ed-rule)';
+        props.onBlur?.(e);
+      }}
+    />
+  );
+}
+
+function EdSelect({
+  children,
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className="w-full bg-transparent transition-colors appearance-none"
+      style={{
+        color: 'var(--ed-ink)',
+        fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+        fontSize: '14px',
+        border: 'none',
+        borderBottom: '1px solid var(--ed-rule)',
+        padding: '8px 24px 8px 0',
+        outline: 'none',
+        backgroundImage:
+          "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%238a93a6' d='M5 7L1 3h8z'/%3E%3C/svg%3E\")",
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'right 4px center',
+        ...(props.style ?? {}),
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderBottom = '2px solid var(--ed-accent-gold)';
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderBottom = '1px solid var(--ed-rule)';
+        props.onBlur?.(e);
+      }}
+    >
+      {children}
+    </select>
   );
 }
 
@@ -784,17 +369,37 @@ function MoneyInput({
         type="number"
         inputMode="decimal"
         step="0.01"
-        className="input tabular-nums pr-12"
+        className="w-full bg-transparent tabular-nums"
+        style={{
+          color: 'var(--ed-ink)',
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+          fontSize: '20px',
+          fontWeight: 500,
+          letterSpacing: '-0.01em',
+          border: 'none',
+          borderBottom: '1px solid var(--ed-rule)',
+          padding: '8px 36px 8px 0',
+          outline: 'none',
+        }}
         value={value ?? ''}
         onChange={(e) => {
           const v = e.target.value;
           onChange(v === '' ? null : Number(v));
         }}
         placeholder="0,00"
+        onFocus={(e) => {
+          e.currentTarget.style.borderBottom = '2px solid var(--ed-accent-gold)';
+        }}
+        onBlur={(e) => {
+          e.currentTarget.style.borderBottom = '1px solid var(--ed-rule)';
+        }}
       />
       <span
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none"
-        style={{ color: 'var(--text-subtle)' }}
+        className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-wider pointer-events-none"
+        style={{
+          color: 'var(--ed-ink-faint)',
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}
       >
         {ccy}
       </span>
@@ -830,11 +435,23 @@ function NumberCell({
       type="number"
       inputMode="decimal"
       step={step ?? '0.01'}
-      className="input input-xs tabular-nums text-right w-full max-w-[7rem] ml-auto"
+      className="bg-transparent tabular-nums text-right w-full max-w-[7rem] ml-auto outline-none"
+      style={{
+        color: 'var(--ed-ink)',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        fontSize: '14px',
+        border: 'none',
+        borderBottom: '1px solid transparent',
+        padding: '4px 0',
+      }}
       value={text}
       disabled={disabled}
       onChange={(e) => setText(e.target.value)}
-      onBlur={() => {
+      onFocus={(e) => {
+        e.currentTarget.style.borderBottom = '1px solid var(--ed-accent-gold)';
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderBottom = '1px solid transparent';
         if (text === '') return;
         const n = Number(text);
         if (!Number.isFinite(n)) {
@@ -854,6 +471,849 @@ function NumberCell({
         }
       }}
     />
+  );
+}
+
+/* ================================================================
+   Main panel
+   ================================================================ */
+
+export function FieldPanel(props: FieldPanelProps) {
+  const { fields, confidence, lineItems = [], currency = 'EUR', accounts = [] } = props;
+  const { categories } = useCategories();
+  // Resolve the selected category record so the header badge can show the
+  // descriptive name + IVA deductibility percent (rather than the raw slug).
+  const selectedCategory = useMemo(
+    () => categories.find((c) => c.name === fields.expenseCategory) ?? null,
+    [categories, fields.expenseCategory],
+  );
+
+  // Render-time date would mismatch between server and client; capture after mount.
+  const [todayLabel, setTodayLabel] = useState<string>('');
+  useEffect(() => {
+    setTodayLabel(fmtDate(new Date().toISOString()));
+  }, []);
+
+  const lineSum = useMemo(
+    () => lineItems.reduce((acc, li) => acc + (Number.isFinite(li.total) ? li.total : 0), 0),
+    [lineItems],
+  );
+
+  // Sum of per-line discounts (currency). Optional column — only counts when set.
+  const lineDiscountTotal = useMemo(
+    () =>
+      lineItems.reduce(
+        (acc, li) => acc + (Number.isFinite(li.discount as number) ? (li.discount as number) : 0),
+        0,
+      ),
+    [lineItems],
+  );
+
+  const hasDiscount = lineItems.some((li) => Number.isFinite(li.discount as number) && (li.discount as number) > 0);
+  const hasCode = lineItems.some((li) => li.code != null && String(li.code).trim() !== '');
+
+  const netAmount = fields.netAmount ?? 0;
+  const taxAmount = fields.taxAmount ?? 0;
+  const totalAmount = fields.total ?? 0;
+  const netVatTotal = netAmount + taxAmount;
+  const totalDelta = totalAmount - lineSum;
+  const deltaMatch = Math.abs(totalDelta) <= 0.005;
+
+  return (
+    <div className="space-y-12">
+      {/* === Category badge (só se houver) ============================== */}
+      {(fields.expenseCategory || props.approved) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {selectedCategory && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] uppercase tracking-wider"
+              style={{
+                fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                background: 'var(--ed-canvas-2)',
+                color: 'var(--ed-ink)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+              title={
+                selectedCategory.defaultIvaDeductibilityPct != null
+                  ? `Dedução IVA ${selectedCategory.defaultIvaDeductibilityPct}%`
+                  : `Categoria: ${selectedCategory.name}`
+              }
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full"
+                style={{ background: selectedCategory.color ?? 'var(--ed-accent-gold)' }}
+                aria-hidden="true"
+              />
+              {selectedCategory.name}
+              {selectedCategory.defaultIvaDeductibilityPct != null && (
+                <span className="tabular-nums" style={{ color: 'var(--ed-ink-faint)' }}>
+                  {' '}— dedução {selectedCategory.defaultIvaDeductibilityPct}%
+                </span>
+              )}
+            </span>
+          )}
+          {props.approved && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] uppercase tracking-wider"
+              style={{
+                fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                background: 'var(--ed-status-ok-dim)',
+                color: 'var(--ed-status-ok)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+            >
+              <CheckCircle2 size={11} aria-hidden="true" />
+              Aprovado
+            </span>
+          )}
+          {props.draftActive && !props.approved && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] uppercase tracking-wider"
+              style={{
+                fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                color: 'var(--ed-status-warn)',
+                background: 'var(--ed-status-warn-dim)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+              title="Tem alterações por guardar"
+            >
+              ● alterações por guardar
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================
+          GRUPO 1 — IDENTIDADE
+          ================================================================ */}
+      <Group title="Identidade">
+        <fieldset disabled={props.approved} className="space-y-6">
+          <Field label="Fornecedor" confidence={confidence.supplier}>
+            <EdInput
+              type="text"
+              value={fields.supplier ?? ''}
+              onChange={(e) => props.onFieldChange({ supplier: e.target.value })}
+              placeholder="Nome do emitente"
+            />
+          </Field>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            <Field label="NIF" confidence={confidence.supplierNif}>
+              <EdInput
+                type="text"
+                mono
+                maxLength={20}
+                value={fields.supplierNif ?? ''}
+                onChange={(e) => props.onFieldChange({ supplierNif: e.target.value })}
+                placeholder="500000001"
+              />
+            </Field>
+            <Field label="Nº documento" confidence={confidence.docNumber}>
+              <EdInput
+                type="text"
+                mono
+                value={fields.docNumber ?? ''}
+                onChange={(e) => props.onFieldChange({ docNumber: e.target.value })}
+                placeholder="FT 2026/1234"
+              />
+            </Field>
+            <Field label="ATCUD" confidence={confidence.atcud}>
+              <EdInput
+                type="text"
+                mono
+                value={fields.atcud ?? ''}
+                onChange={(e) => props.onFieldChange({ atcud: e.target.value })}
+                placeholder="ABC1234-56789"
+              />
+            </Field>
+            <Field label="Categoria da despesa">
+              <EdSelect
+                value={fields.expenseCategory ?? ''}
+                onChange={(e) =>
+                  props.onFieldChange({ expenseCategory: e.target.value || null })
+                }
+              >
+                <option value="">— Selecionar —</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.name}
+                    {c.defaultIvaDeductibilityPct != null
+                      ? ` — dedução ${c.defaultIvaDeductibilityPct}%`
+                      : ''}
+                  </option>
+                ))}
+              </EdSelect>
+            </Field>
+          </div>
+        </fieldset>
+      </Group>
+
+      {/* ================================================================
+          GRUPO 2 — CALENDÁRIO & VALIDAÇÃO
+          ================================================================ */}
+      <Group title="Calendário & Validação">
+        <fieldset disabled={props.approved} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            <Field label="Data do documento" confidence={confidence.docDate}>
+              <EdInput
+                type="date"
+                value={fields.docDate ?? ''}
+                onChange={(e) => props.onFieldChange({ docDate: e.target.value })}
+              />
+            </Field>
+            <Field label="Vencimento" confidence={confidence.dueDate}>
+              <EdInput
+                type="date"
+                value={fields.dueDate ?? ''}
+                onChange={(e) => props.onFieldChange({ dueDate: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field
+            label="IBAN"
+            confidence={confidence.iban}
+            right={todayLabel ? `hoje · ${todayLabel}` : undefined}
+            hint="IBAN destinatário — verificar com o histórico do fornecedor antes de pagar."
+          >
+            <EdInput
+              type="text"
+              mono
+              value={fields.iban ?? ''}
+              onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
+              placeholder="PT50 0035 0651 0000 0000 0712"
+            />
+          </Field>
+        </fieldset>
+      </Group>
+
+      {/* ================================================================
+          GRUPO 3 — MONTANTES (com reconciliation como equação)
+          ================================================================ */}
+      <Group title="Montantes">
+        <fieldset disabled={props.approved} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-6">
+            <Field label="Base" confidence={confidence.netAmount}>
+              <MoneyInput
+                value={fields.netAmount ?? null}
+                onChange={(v) => props.onFieldChange({ netAmount: v })}
+                ccy={currency}
+              />
+            </Field>
+            <Field label="IVA" confidence={confidence.taxAmount}>
+              <MoneyInput
+                value={fields.taxAmount ?? null}
+                onChange={(v) => props.onFieldChange({ taxAmount: v })}
+                ccy={currency}
+              />
+            </Field>
+            <Field label="Total" confidence={confidence.total}>
+              <MoneyInput
+                value={fields.total ?? null}
+                onChange={(v) => props.onFieldChange({ total: v })}
+                ccy={currency}
+              />
+            </Field>
+          </div>
+
+          {/* Reconciliation footer — diagrama de equação.
+              "Linhas: 128,06 EUR" + "IVA: 23,39 EUR" = "Total: 151,45 EUR" */}
+          <div
+            className="flex flex-wrap items-center justify-between gap-y-3 gap-x-6 px-5 py-4 mt-2"
+            style={{
+              background: 'var(--ed-canvas-2)',
+              border: '1px solid var(--ed-rule)',
+              borderRadius: 'var(--ed-radius-card)',
+            }}
+            aria-label="Reconciliação"
+          >
+            <div className="flex items-baseline gap-2 text-sm">
+              <span
+                className="uppercase tracking-wider"
+                style={{
+                  fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                  fontSize: '10px',
+                  color: 'var(--ed-ink-faint)',
+                }}
+              >
+                Soma linhas
+              </span>
+              <span
+                className="tabular-nums"
+                style={{
+                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                  color: 'var(--ed-ink-soft)',
+                }}
+              >
+                {fmtMoney(lineSum, currency)}
+              </span>
+            </div>
+            <span
+              aria-hidden="true"
+              style={{
+                color: 'var(--ed-accent-gold)',
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: '14px',
+              }}
+            >
+              +
+            </span>
+            <div className="flex items-baseline gap-2 text-sm">
+              <span
+                className="uppercase tracking-wider"
+                style={{
+                  fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                  fontSize: '10px',
+                  color: 'var(--ed-ink-faint)',
+                }}
+              >
+                IVA
+              </span>
+              <span
+                className="tabular-nums"
+                style={{
+                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                  color: 'var(--ed-ink-soft)',
+                }}
+              >
+                {fmtMoney(taxAmount, currency)}
+              </span>
+            </div>
+            <span
+              aria-hidden="true"
+              style={{
+                color: 'var(--ed-accent-gold)',
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontSize: '14px',
+              }}
+            >
+              =
+            </span>
+            <div className="flex items-baseline gap-2 text-sm ml-auto">
+              <span
+                className="uppercase tracking-wider"
+                style={{
+                  fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                  fontSize: '10px',
+                  color: 'var(--ed-ink-faint)',
+                }}
+              >
+                Total
+              </span>
+              <span
+                className="tabular-nums"
+                style={{
+                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                  fontSize: '20px',
+                  fontWeight: 600,
+                  color: 'var(--ed-ink)',
+                  borderBottom: '2px solid var(--ed-accent-gold)',
+                  paddingBottom: '2px',
+                }}
+              >
+                {fmtMoney(netVatTotal, currency)}
+              </span>
+            </div>
+          </div>
+
+          {/* Linha auxiliar — Δ entre Total declarado e soma das linhas. */}
+          <p
+            className="text-[11px] uppercase tracking-wider flex items-center gap-1.5"
+            style={{ color: 'var(--ed-ink-faint)' }}
+          >
+            Δ Total documento − soma linhas:
+            <span
+              className="tabular-nums"
+              style={{
+                color: deltaMatch ? 'var(--ed-accent-gold-strong)' : 'var(--ed-status-warn)',
+                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                fontWeight: 600,
+              }}
+            >
+              {fmtMoney(totalDelta, currency)}
+            </span>
+            {deltaMatch ? (
+              <span style={{ color: 'var(--ed-status-ok)' }}>✓ confere</span>
+            ) : (
+              <span style={{ color: 'var(--ed-status-warn)' }}>diferença</span>
+            )}
+          </p>
+        </fieldset>
+      </Group>
+
+      {/* ================================================================
+          LINHAS DO DOCUMENTO (tabela editorial)
+          ================================================================ */}
+      {(lineItems.length > 0 || props.canEditLines) && (
+        <section>
+          <Group title={`Linhas do documento (${lineItems.length})`}>
+            <div className="overflow-x-auto -mx-2 px-2">
+              <table className="w-full">
+                <thead>
+                  <tr
+                    style={{
+                      color: 'var(--ed-ink-faint)',
+                      borderBottom: '2px solid var(--ed-rule-strong)',
+                    }}
+                  >
+                    <th
+                      className="text-left font-medium pb-2 uppercase"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      Descrição
+                    </th>
+                    {hasCode && (
+                      <th
+                        className="text-left font-medium pb-2 uppercase"
+                        style={{
+                          fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                          fontSize: '11px',
+                          letterSpacing: '0.14em',
+                          color: 'var(--ed-ink-faint)',
+                        }}
+                      >
+                        Cód.
+                      </th>
+                    )}
+                    <th
+                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      Qtd.
+                    </th>
+                    <th
+                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      Preço un.
+                    </th>
+                    {hasDiscount && (
+                      <th
+                        className="text-right font-medium pb-2 uppercase tabular-nums"
+                        style={{
+                          fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                          fontSize: '11px',
+                          letterSpacing: '0.14em',
+                          color: 'var(--ed-ink-faint)',
+                        }}
+                      >
+                        Desc.
+                      </th>
+                    )}
+                    <th
+                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      IVA
+                    </th>
+                    <th
+                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      Total
+                    </th>
+                    {props.canEditLines && !props.approved && (
+                      <th className="w-8" aria-label="Ações" />
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((li) => {
+                    const editable = Boolean(
+                      props.canEditLines &&
+                        !props.approved &&
+                        props.onUpdateLineItem,
+                    );
+                    const rowBusy = props.busyItemId === li.id;
+                    return (
+                      <tr
+                        key={li.id}
+                        style={{ borderTop: '1px solid var(--ed-rule)' }}
+                      >
+                        <td
+                          className="py-2 pr-4"
+                          style={{
+                            color: 'var(--ed-ink)',
+                            fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                            fontSize: '14px',
+                          }}
+                        >
+                          {editable && props.onUpdateLineItem ? (
+                            <EdInput
+                              type="text"
+                              value={li.description}
+                              disabled={rowBusy}
+                              onChange={() => {
+                                /* keep controlled via onBlur only */
+                              }}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v && v !== li.description) {
+                                  props.onUpdateLineItem!(li.id, { description: v });
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span>{li.description}</span>
+                          )}
+                        </td>
+                        {hasCode && (
+                          <td
+                            className="py-2 pr-4"
+                            style={{
+                              color: 'var(--ed-ink-soft)',
+                              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                              fontSize: '13px',
+                            }}
+                          >
+                            {li.code ? (
+                              <span
+                                className="inline-block px-1.5 py-0.5"
+                                style={{
+                                  background: 'var(--ed-canvas-2)',
+                                  borderRadius: 'var(--ed-radius-chip)',
+                                  fontSize: '11px',
+                                }}
+                              >
+                                {li.code}
+                              </span>
+                            ) : (
+                              <span style={{ color: 'var(--ed-ink-faint)' }}>—</span>
+                            )}
+                          </td>
+                        )}
+                        <td
+                          className="py-2 text-right tabular-nums"
+                          style={{
+                            color: 'var(--ed-ink-soft)',
+                            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                            fontSize: '14px',
+                          }}
+                        >
+                          {editable ? (
+                            <NumberCell
+                              value={li.quantity}
+                              step="any"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { quantity: v })}
+                            />
+                          ) : (
+                            li.quantity.toLocaleString('pt-PT')
+                          )}
+                        </td>
+                        <td
+                          className="py-2 text-right tabular-nums"
+                          style={{
+                            color: 'var(--ed-ink-soft)',
+                            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                            fontSize: '14px',
+                          }}
+                        >
+                          {editable ? (
+                            <NumberCell
+                              value={li.unitPrice}
+                              step="0.01"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { unitPrice: v })}
+                            />
+                          ) : (
+                            fmtMoney(li.unitPrice, currency)
+                          )}
+                        </td>
+                        {hasDiscount && (
+                          <td
+                            className="py-2 text-right tabular-nums"
+                            style={{
+                              color: 'var(--ed-ink-soft)',
+                              fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                              fontSize: '14px',
+                            }}
+                          >
+                            {editable ? (
+                              <NumberCell
+                                value={li.discount as number}
+                                step="0.01"
+                                disabled={rowBusy}
+                                onCommit={(v) => props.onUpdateLineItem!(li.id, { discount: v })}
+                              />
+                            ) : (
+                              Number.isFinite(li.discount as number)
+                                ? fmtMoney(li.discount as number, currency)
+                                : '—'
+                            )}
+                          </td>
+                        )}
+                        <td
+                          className="py-2 text-right tabular-nums"
+                          style={{
+                            color: 'var(--ed-ink-soft)',
+                            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                            fontSize: '14px',
+                          }}
+                        >
+                          {editable ? (
+                            <NumberCell
+                              value={li.taxRate as number}
+                              step="0.1"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { taxRate: v })}
+                            />
+                          ) : (
+                            li.taxRate != null ? `${li.taxRate}%` : '—'
+                          )}
+                        </td>
+                        <td
+                          className="py-2 text-right tabular-nums"
+                          style={{
+                            color: 'var(--ed-ink)',
+                            fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {editable ? (
+                            <NumberCell
+                              value={li.total}
+                              step="0.01"
+                              disabled={rowBusy}
+                              onCommit={(v) => props.onUpdateLineItem!(li.id, { total: v })}
+                            />
+                          ) : (
+                            fmtMoney(li.total, currency)
+                          )}
+                        </td>
+                        {props.canEditLines && !props.approved && (
+                          <td className="py-2 pl-2">
+                            {props.onDeleteLineItem && (
+                              <button
+                                type="button"
+                                onClick={() => props.onDeleteLineItem!(li.id, li.description)}
+                                disabled={rowBusy || props.deletingItemId === li.id}
+                                aria-label={`Eliminar linha ${li.description}`}
+                                title="Eliminar linha (abre diálogo de confirmação)"
+                                className="inline-flex items-center justify-center w-7 h-7 transition-opacity hover:opacity-70"
+                                style={{
+                                  color: 'var(--ed-status-alert)',
+                                  background: 'transparent',
+                                  borderRadius: 'var(--ed-radius-chip)',
+                                }}
+                              >
+                                {props.deletingItemId === li.id ? (
+                                  <Loader2
+                                    size={12}
+                                    className="animate-spin"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <X size={14} aria-hidden="true" />
+                                )}
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid var(--ed-rule-strong)' }}>
+                    <td
+                      colSpan={hasCode ? 2 : 1}
+                      className="pt-3 pr-4 uppercase tracking-wider"
+                      style={{
+                        fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                        fontSize: '11px',
+                        letterSpacing: '0.14em',
+                        color: 'var(--ed-ink-faint)',
+                      }}
+                    >
+                      Totais
+                    </td>
+                    <td
+                      className="pt-3 text-right tabular-nums"
+                      style={{
+                        color: 'var(--ed-ink-faint)',
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        fontSize: '12px',
+                      }}
+                      aria-label="Quantidade total"
+                    >
+                      —
+                    </td>
+                    <td aria-hidden="true" />
+                    {hasDiscount && (
+                      <td
+                        className="pt-3 text-right tabular-nums"
+                        style={{
+                          color: 'var(--ed-ink-soft)',
+                          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                          fontSize: '13px',
+                        }}
+                        aria-label="Desconto total"
+                      >
+                        {lineDiscountTotal > 0
+                          ? `− ${fmtMoney(lineDiscountTotal, currency)}`
+                          : '—'}
+                      </td>
+                    )}
+                    <td aria-hidden="true" />
+                    <td
+                      className="pt-3 text-right tabular-nums"
+                      style={{
+                        color: 'var(--ed-accent-gold-strong)',
+                        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                        fontSize: '16px',
+                        fontWeight: 500,
+                        borderRight: '1px solid rgba(203, 166, 90, 0.3)',
+                      }}
+                      aria-label="Total documento"
+                    >
+                      {fmtMoney(lineSum, currency)}
+                    </td>
+                    {props.canEditLines && !props.approved && (
+                      <td aria-hidden="true" />
+                    )}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {props.canEditLines && !props.approved && props.onAddLineItem && (
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={props.onAddLineItem}
+                  disabled={props.addingLine}
+                  aria-busy={props.addingLine}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ed-ink)',
+                    border: '1px dashed var(--ed-rule-strong)',
+                    borderRadius: 'var(--ed-radius-chip)',
+                  }}
+                  title="Adicionar nova linha (POST /items)"
+                >
+                  {props.addingLine ? (
+                    <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus size={12} aria-hidden="true" />
+                  )}
+                  Adicionar linha
+                </button>
+              </div>
+            )}
+          </Group>
+        </section>
+      )}
+
+      {/* ================================================================
+          CONTABILIZAÇÃO + TOCONLINE
+          ================================================================ */}
+      <Group title="Contabilização">
+        <fieldset disabled={props.approved} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            <Field label="Conta débito">
+              <EdSelect
+                value={props.selectedDebitAccount ?? ''}
+                onChange={(e) => props.onAssignDebit?.(e.target.value)}
+              >
+                <option value="">— Selecionar —</option>
+                {accounts.map((a) => (
+                  <option key={`d-${a.code}`} value={a.code}>
+                    {a.code} · {a.label}
+                  </option>
+                ))}
+              </EdSelect>
+            </Field>
+            <Field label="Conta crédito">
+              <EdSelect
+                value={props.selectedCreditAccount ?? ''}
+                onChange={(e) => props.onAssignCredit?.(e.target.value)}
+              >
+                <option value="">— Selecionar —</option>
+                {accounts.map((a) => (
+                  <option key={`c-${a.code}`} value={a.code}>
+                    {a.code} · {a.label}
+                  </option>
+                ))}
+              </EdSelect>
+            </Field>
+          </div>
+        </fieldset>
+
+        {/* TOConline stub — botão à direita */}
+        <div className="flex items-center justify-between gap-4 mt-6 pt-6 border-t" style={{ borderColor: 'var(--ed-rule)' }}>
+          <div className="min-w-0">
+            <p
+              className="uppercase tracking-wider"
+              style={{
+                fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                fontSize: '12px',
+                color: 'var(--ed-ink)',
+              }}
+            >
+              Enviar para TOConline
+            </p>
+            <p
+              className="text-xs mt-1"
+              style={{ color: 'var(--ed-ink-faint)' }}
+            >
+              Stub — gera payload SAF-T e coloca na fila de exportação.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={props.onSendToToc}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+            disabled={props.sendingToToc || !props.approved}
+            style={{
+              background: 'transparent',
+              color: 'var(--ed-ink)',
+              border: '1px solid var(--ed-rule-strong)',
+              borderRadius: 'var(--ed-radius-chip)',
+            }}
+            title={!props.approved ? 'Aprovar primeiro' : 'Enviar para TOConline'}
+          >
+            {props.sendingToToc ? (
+              <>
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                A enviar…
+              </>
+            ) : (
+              <>
+                <Send size={12} aria-hidden="true" />
+                Enviar
+              </>
+            )}
+          </button>
+        </div>
+      </Group>
+    </div>
   );
 }
 

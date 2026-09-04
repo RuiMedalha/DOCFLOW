@@ -93,6 +93,21 @@ export function PartiesList() {
                         Recorrente
                       </span>
                     )}
+                    {p.partyCategory && (
+                      <span
+                        className="ml-2 text-[10px] inline-flex items-center px-2 py-0.5 rounded-full font-medium"
+                        style={{
+                          backgroundColor: p.partyCategory.color
+                            ? `${p.partyCategory.color}20`
+                            : 'rgba(148,163,184,0.15)',
+                          color: p.partyCategory.color ?? 'var(--text-muted)',
+                          border: `1px solid ${p.partyCategory.color ?? 'var(--border)'}`,
+                        }}
+                        title={`PartyCategory: ${p.partyCategory.name}`}
+                      >
+                        {p.partyCategory.name}
+                      </span>
+                    )}
                   </td>
                   <td><span className="badge text-[10px]">{p.type}</span></td>
                   <td className="font-mono text-xs">{p.nif ?? '—'}</td>

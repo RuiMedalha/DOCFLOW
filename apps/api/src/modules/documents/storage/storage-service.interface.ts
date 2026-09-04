@@ -50,6 +50,17 @@ export interface StorageService {
   exists(key: string): Promise<boolean>;
 
   /**
+   * Move an object from `oldKey` to `newKey` atomically. Sprint E uses this
+   * to relocate approved documents from `_inbox/` to the party/category
+   * folder without copying bytes through the controller. Implementations must:
+   *   - Refuse if `oldKey === newKey` (no-op).
+   *   - Verify size after copy-fallback (size mismatch ⇒ throw + cleanup dest).
+   *   - Be safe across volumes: prefer native `rename` when possible, fall
+   *     back to copy+verify+unlink otherwise.
+   */
+  move(oldKey: string, newKey: string): Promise<void>;
+
+  /**
    * Return a URL the client can use to fetch the file. Local driver
    * returns the controller route `/api/v1/documents/<id>/download`. S3/MinIO
    * returns a presigned URL. Returned value is opaque to callers — only

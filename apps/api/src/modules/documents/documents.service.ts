@@ -35,6 +35,8 @@ import {
   VAT_DEDUCTIBILITY_HINTS,
 } from './folder-rules/folder-rules.types';
 import { StorageService } from './storage/storage-service.interface';
+import { buildDocumentPath } from './storage/path-builder';
+import { slugify } from '../../common/storage/slug';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
@@ -905,6 +907,12 @@ export class DocumentsService {
 
     await this.createPaymentEventIfMissing(tenantId, existing);
 
+    // Sprint E: now that the row is APPROVADO, move the bytes from the
+    // `_inbox/` staging path into the deterministic party/category folder.
+    // Skip silently when the document has no linked party — operator
+    // decides manually through a separate classification flow.
+    await this.relocateAfterApprove(tenantId, id, userId);
+
     return this.sanitize(updated);
   }
 
@@ -921,6 +929,106 @@ export class DocumentsService {
       where: { tenantId_documentId: { tenantId, documentId: document.id } },
       create: { tenantId, documentId: document.id, dueDate, amount },
       update: {},
+    });
+  }
+
+  /**
+   * Sprint E — auto-routing: after a document is APPROVADO, move its bytes
+   * from the `_inbox/` staging path to the deterministic party/category
+   * folder computed by `buildDocumentPath`. Idempotent: skipping is fine
+   * when the document was already moved (no `_inbox/` segment in
+   * `fileKey`) or when it has no linked party yet.
+   *
+   * PDF sibling (`pdfKey`) is moved alongside the original so the
+   * previews stay co-located. DB rows + audit log are written AFTER the
+   * byte move succeeds — a partial filesystem write is recoverable by
+   * re-approving; a partial DB write would orphan the file.
+   */
+  private async relocateAfterApprove(
+    tenantId: string,
+    documentId: string,
+    userId: string,
+  ): Promise<void> {
+    const doc = await this.prisma.document.findFirst({
+      where: { id: documentId, tenantId },
+      select: {
+        id: true,
+        fileKey: true,
+        pdfKey: true,
+        docDate: true,
+        docNumber: true,
+        partyId: true,
+        party: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            type: true,
+            partyCategory: { select: { slug: true } },
+          },
+        },
+      },
+    });
+
+    if (!doc) return; // approve() already 404s; nothing to relocate.
+    if (!doc.party) return; // No party linked — leave in _inbox/ for manual classification.
+    if (!doc.fileKey) return;
+    if (!doc.fileKey.includes('/_inbox/')) return; // Already routed, idempotent skip.
+
+    const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
+    const extension = this.extractExtension(doc.fileKey) || 'pdf';
+    const newPath = buildDocumentPath({
+      partyType: doc.party.type,
+      partySlug,
+      partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+      documentDate: doc.docDate ?? new Date(),
+      documentNumber: doc.docNumber ?? 'unnumbered',
+      fileId: doc.id,
+      extension,
+    });
+
+    // No-op when the destination would equal the source (e.g. the party
+    // slug already encoded the bucket but `_inbox/` was missing — defensive).
+    if (newPath === doc.fileKey) return;
+
+    await this.storage.move(doc.fileKey, newPath);
+
+    let newPdfKey: string | null = null;
+    if (doc.pdfKey) {
+      newPdfKey = newPath.replace(/\.[^.]+$/, '.pdf');
+      try {
+        await this.storage.move(doc.pdfKey, newPdfKey);
+      } catch (err) {
+        // PDF sibling failed (rare) — don't roll back the main move; the
+        // UI's PDF preview will be missing but the original is intact.
+        this.logger.warn(
+          `[relocateAfterApprove] pdfKey move failed for doc=${documentId}: ${(err as Error).message}`,
+        );
+        newPdfKey = null;
+      }
+    }
+
+    await this.prisma.document.update({
+      where: { id: documentId },
+      data: { fileKey: newPath, pdfKey: newPdfKey },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: documentId,
+      metadata: {
+        subAction: 'storage.relocate',
+        from: doc.fileKey,
+        to: newPath,
+        pdfFrom: doc.pdfKey ?? null,
+        pdfTo: newPdfKey,
+        partyType: doc.party.type,
+        partySlug,
+        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+      } as Prisma.InputJsonValue,
     });
   }
 

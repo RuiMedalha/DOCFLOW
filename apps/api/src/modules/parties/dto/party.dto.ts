@@ -154,6 +154,14 @@ export class CreatePartyDto {
   })
   @IsOptional()
   externalIds?: Record<string, string | number | null>;
+
+  @ApiPropertyOptional({
+    description:
+      'Sprint E: PartyCategory.id — operator-defined bucket (Estratégico, Operacional, ...). Null clears the classification.',
+  })
+  @IsOptional()
+  @IsString()
+  partyCategoryId?: string;
 }
 
 /** PATCH /parties/:id — every field optional. */

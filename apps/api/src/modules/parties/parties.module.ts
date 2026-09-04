@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { PartiesService } from './parties.service';
 import { PartiesController } from './parties.controller';
 import { DocumentsModule } from '../documents/documents.module';
+import { PartyCategoriesModule } from '../party-categories/party-categories.module';
 
 /**
  * PartiesModule — supplier/customer master + PT chart of accounts + IBAN
@@ -20,7 +21,7 @@ import { DocumentsModule } from '../documents/documents.module';
  * supplier, Extraction when matching a NIF, etc.) can reach into it.
  */
 @Module({
-  imports: [forwardRef(() => DocumentsModule)],
+  imports: [forwardRef(() => DocumentsModule), PartyCategoriesModule],
   controllers: [PartiesController],
   providers: [PartiesService],
   exports: [PartiesService],

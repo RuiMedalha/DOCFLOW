@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ThrottleBucketGuard } from './common/throttle/throttle-bucket.guard';
@@ -6,7 +6,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { APP_GUARD, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core';
 import IORedis from 'ioredis';
-import { RedisConnection } from 'bullmq';
+import { RedisConnection, createIORedisClient } from 'bullmq';
 
 // Prisma
 import { PrismaModule } from './prisma/prisma.module';
@@ -33,6 +33,7 @@ import { InboundModule } from './modules/inbound/inbound.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { ExtractionModule } from './modules/extraction/extraction.module';
 import { PartiesModule } from './modules/parties/parties.module';
+import { PartyCategoriesModule } from './modules/party-categories/party-categories.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
 import { BankingModule } from './modules/banking/banking.module';
@@ -51,13 +52,13 @@ import { HealthModule } from './modules/health/health.module';
       envFilePath: ['.env', '../../.env'],
     }),
     ThrottlerModule.forRoot([
-      // Global fallback — applies to every route that doesn't override.
+      // Global fallback â€” applies to every route that doesn't override.
       {
         name: 'global',
         ttl: parseInt(process.env.THROTTLE_TTL || '60') * 1000,
         limit: parseInt(process.env.THROTTLE_LIMIT || '100'),
       },
-      // /auth/login  → keyed by IP (ThrottleBucketGuard).
+      // /auth/login  â†’ keyed by IP (ThrottleBucketGuard).
       // Production: 5 attempts / 15 min (brute-force defence).
       // Non-prod: relaxed to 50 so local UAT / demos are not locked out.
       {
@@ -65,13 +66,13 @@ import { HealthModule } from './modules/health/health.module';
         ttl: 15 * 60 * 1000,
         limit: process.env.NODE_ENV === 'production' ? 5 : 50,
       },
-      // /extraction  → 10 per min, keyed by tenant (ThrottleBucketGuard).
+      // /extraction  â†’ 10 per min, keyed by tenant (ThrottleBucketGuard).
       {
         name: 'extract',
         ttl: 60 * 1000,
         limit: 10,
       },
-      // /exports     → 1 per min, keyed by user (ThrottleBucketGuard).
+      // /exports     â†’ 1 per min, keyed by user (ThrottleBucketGuard).
       {
         name: 'export',
         ttl: 60 * 1000,
@@ -83,18 +84,20 @@ import { HealthModule } from './modules/health/health.module';
       useFactory: () => {
         const host = process.env.REDIS_HOST || 'localhost';
         const port = parseInt(process.env.REDIS_PORT || '6379', 10);
-        // BullMQ >=6 lazy-loads ioredis from CJS contexts; on this Windows
-        // box that fails because the dynamic import lands in an ESM-only
-        // resolution path. Pre-install a clientFactory that hands BullMQ
-        // our already-resolved ioredis instance — this is the documented
-        // escape hatch when "ioredis package" loaders misfire.
+        // BullMQ >=6 lazy-loads ioredis from CJS contexts; on this Windows box
+        // that fails because the dynamic import lands in an ESM-only resolution
+        // path. Pre-install a clientFactory that hands BullMQ our already
+        // resolved ioredis instance, wrapped with createIORedisClient so the
+        // client exposes runCommand (Lua dispatch) per the IRedisClient contract.
         RedisConnection.clientFactory = ((opts: Record<string, unknown>) => {
-          return new IORedis({
-            ...opts,
-            lazyConnect: true,
-            maxRetriesPerRequest: null,
-          });
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return createIORedisClient(
+            new IORedis({
+              ...opts,
+              lazyConnect: true,
+              maxRetriesPerRequest: null,
+            }),
+          ) as any;
         }) as any;
         return {
           connection: {
@@ -123,6 +126,7 @@ import { HealthModule } from './modules/health/health.module';
     AuditModule,
     BankingModule,
     PartiesModule,
+    PartyCategoriesModule,
     IntegrationsModule,
     CrmModule,
     PaymentsModule,
@@ -134,7 +138,7 @@ import { HealthModule } from './modules/health/health.module';
   providers: [
     // Global rate-limit guard (custom: tracks by IP/tenant/user via ThrottleBucketGuard)
     { provide: APP_GUARD, useClass: ThrottleBucketGuard },
-    // Auth stack: JWT → Tenant → RBAC. Order matters.
+    // Auth stack: JWT â†’ Tenant â†’ RBAC. Order matters.
     { provide: APP_GUARD, useClass: JwtGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: RbacGuard },

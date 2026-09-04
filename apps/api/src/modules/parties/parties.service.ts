@@ -10,6 +10,8 @@ import { AuditAction, PartyType, Prisma } from '@prisma/client';
 import { isValidIban, isValidNif, normalizeIban, normalizeNif } from '@docflow/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PartyCategoriesService } from '../party-categories/party-categories.service';
+import { slugify } from '../../common/storage/slug';
 import {
   AccountQueryDto,
   CreateAccountDto,
@@ -66,6 +68,7 @@ export class PartiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly partyCategories: PartyCategoriesService,
   ) {}
 
   // ════════════════════════════════ PARTIES — CRUD ══════════════════════════
@@ -98,6 +101,11 @@ export class PartiesService {
         orderBy: { name: 'asc' },
         skip,
         take: limit,
+        include: {
+          partyCategory: {
+            select: { id: true, slug: true, name: true, color: true, sortOrder: true },
+          },
+        },
       }),
       this.prisma.party.count({ where }),
     ]);
@@ -126,7 +134,14 @@ export class PartiesService {
   }
 
   async findOne(tenantId: string, id: string) {
-    const p = await this.prisma.party.findFirst({ where: { id, tenantId } });
+    const p = await this.prisma.party.findFirst({
+      where: { id, tenantId },
+      include: {
+        partyCategory: {
+          select: { id: true, slug: true, name: true, color: true, sortOrder: true },
+        },
+      },
+    });
     if (!p) throw new NotFoundException('Party not found');
 
     const accountIds = [p.defaultDebitAccountId, p.defaultCreditAccountId].filter(
@@ -180,11 +195,20 @@ export class PartiesService {
       defaultCreditAccountId: dto.defaultCreditAccountId,
     });
 
+    // Validate category FK if supplied.
+    if (dto.partyCategoryId) {
+      await this.partyCategories.assertCategoryInTenant(tenantId, dto.partyCategoryId);
+    }
+
     const party = await this.prisma.party.create({
       data: {
         tenantId,
         type: dto.type ?? PartyType.FORNECEDOR,
         name: dto.name,
+        slug: await this.generateUniqueSlug(tenantId, dto.name),
+        // Scalar FK to keep the create consistent with the rest of the
+        // party-create path (which uses unchecked scalars like tenantId).
+        partyCategoryId: dto.partyCategoryId ?? null,
         nif: nif ?? null,
         email: dto.email,
         phone: dto.phone,
@@ -311,6 +335,19 @@ export class PartiesService {
       defaultCreditAccountId: dto.defaultCreditAccountId,
     });
 
+    // Sprint E: validate the optional partyCategoryId FK. Passing null
+    // (undefined → null) clears the classification; passing a string
+    // requires the category to belong to this tenant.
+    if (dto.partyCategoryId !== undefined && dto.partyCategoryId !== null) {
+      await this.partyCategories.assertCategoryInTenant(tenantId, dto.partyCategoryId);
+    }
+
+    // Sprint E: when the name changes, regenerate the slug. The slug
+    // is otherwise immutable — renames do NOT move the existing folder
+    // (that would be unsafe + expensive); the slug is just a display
+    // hint in URLs.
+    const nameChanged = dto.name !== undefined && dto.name !== existing.name;
+
     const ibanChanged =
       newIban !== undefined &&
       newIban !== null &&
@@ -325,6 +362,18 @@ export class PartiesService {
     const data: Prisma.PartyUpdateInput = {};
     if (dto.type !== undefined) data.type = dto.type;
     if (dto.name !== undefined) data.name = dto.name;
+    if (nameChanged) {
+      data.slug = await this.generateUniqueSlug(tenantId, dto.name as string, id);
+    }
+    if (dto.partyCategoryId !== undefined) {
+      // The data builder above mixes scalar (tenantId) and relation
+      // (partyCategory) shapes, which forces the inferred input type to
+      // be the checked `PartyUpdateInput` (no scalar FK exposed).
+      // Cast to the unchecked variant just for this assignment — it
+      // accepts both `partyCategoryId` and the relation form.
+      (data as Prisma.PartyUncheckedUpdateInput).partyCategoryId =
+        dto.partyCategoryId ?? null;
+    }
     if (sanitizedNif !== undefined) data.nif = sanitizedNif;
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.phone !== undefined) data.phone = dto.phone;
@@ -1043,6 +1092,30 @@ export class PartiesService {
         ? accountById.get(p.defaultCreditAccountId) ?? null
         : null,
     };
+  }
+
+  /**
+   * Sprint E: slugify(name) and de-collide against existing rows in the
+   * tenant. On collision append `<base>-<first4 of id>` (from the row
+   * being created or the row being updated) so the on-disk folder name
+   * is human-readable AND stable across renames. When the base slug is
+   * unique the suffix is omitted entirely.
+   *
+   * Async because we have to read existing rows; called from both
+   * `create()` (no `excludeId`) and `update()` (with `excludeId` to
+   * ignore the row being renamed).
+   */
+  private async generateUniqueSlug(
+    tenantId: string,
+    name: string,
+    excludeId?: string,
+  ): Promise<string> {
+    const base = slugify(name) ?? 'party';
+    const where: Prisma.PartyWhereInput = { tenantId, slug: base };
+    if (excludeId) where.NOT = { id: excludeId };
+    const collision = await this.prisma.party.findFirst({ where, select: { id: true } });
+    if (!collision) return base;
+    return `${base}-${(excludeId ?? collision.id).slice(0, 4)}`;
   }
 
   /** Strip anything we don't want to leak to the client from an Account row. */

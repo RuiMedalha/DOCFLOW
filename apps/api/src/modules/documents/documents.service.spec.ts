@@ -45,6 +45,7 @@ function buildStorageStub(): StorageService {
     getBuffer: jest.fn(async (_key) => ({ buffer: Buffer.from(''), size: 0 })),
     remove: jest.fn(async () => undefined),
     exists: jest.fn(async () => true),
+    move: jest.fn(async () => undefined),
     getSignedUrl: jest.fn(async (key) => `/api/v1/documents/storage/${encodeURIComponent(key)}`),
   };
 }

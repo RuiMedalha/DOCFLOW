@@ -5,10 +5,37 @@
 export type PartyType = 'FORNECEDOR' | 'CLIENTE' | 'AMBOS';
 export type AccountType = 'ATIVO' | 'PASSIVO' | 'CAPITAL_PROPRIO' | 'RECEITA' | 'CUSTO' | 'OUTRO';
 
+/**
+ * Sprint E: operator-defined buckets that segment the master Party list.
+ * Drives the on-disk folder layout in `fornecedores/<slug>/<category>/...`.
+ * Distinct from the `Category` model which classifies a Document by
+ * expense type.
+ */
+export interface PartyCategory {
+  id: string;
+  slug: string;
+  name: string;
+  color?: string | null;
+  sortOrder?: number;
+}
+
 export interface Party {
   id: string;
   type: PartyType;
   name: string;
+  /**
+   * Sprint E: kebab-case ASCII of `name`, persisted by the backend on
+   * create / PATCH (with `<slug>-<id4>` suffix on collision). Stable
+   * across renames — used in the on-disk folder path so a party rename
+   * does NOT move existing files.
+   */
+  slug?: string | null;
+  /**
+   * Sprint E: PartyCategory.id — operator-assigned bucket (Estratégico,
+   * Operacional, Consultor / Serviços, Recorrente). Null ⇒ unclassified.
+   */
+  partyCategoryId?: string | null;
+  partyCategory?: PartyCategory | null;
   nif?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -155,6 +182,8 @@ export interface PartyInput {
   country?: string;
   defaultDebitAccountId?: string;
   defaultCreditAccountId?: string;
+  /** Sprint E: PartyCategory.id, or empty string to clear. */
+  partyCategoryId?: string;
   isRecurring?: boolean;
   isRecurringManualOverride?: boolean;
 }

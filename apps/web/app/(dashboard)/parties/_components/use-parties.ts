@@ -9,6 +9,7 @@ import type {
   IbanHistoryEntry,
   IbanRiskReport,
   Party,
+  PartyCategory,
   PartyFilters,
   PartyInput,
   PartyListResponse,
@@ -38,6 +39,7 @@ export const partyKeys = {
   blacklist: (page: number, limit: number) => ['parties', 'blacklist', page, limit] as const,
   accounts: (page: number, limit: number, search: string) => ['parties', 'accounts', page, limit, search] as const,
   seedAccounts: () => ['parties', 'accounts', 'seed'] as const,
+  partyCategories: () => ['parties', 'party-categories'] as const,
 };
 
 // ─────────────────────────────────────────── PARTIES ───────────────────────
@@ -120,6 +122,25 @@ export function useDeleteParty() {
       return unwrap<{ deleted: boolean }>(res);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: partyKeys.all }),
+  });
+}
+
+// ─────────────────────────────────────────── PARTY CATEGORIES (Sprint E) ──
+
+/**
+ * GET /party-categories — the controller seeds 4 default buckets on
+ * first call so the list is never empty for a fresh tenant.
+ */
+export function usePartyCategories() {
+  return useQuery<PartyCategory[]>({
+    queryKey: partyKeys.partyCategories(),
+    queryFn: async () => {
+      const res = await authedFetch(`${API_BASE}/party-categories`);
+      if (!res.ok) return [] as PartyCategory[];
+      const body = unwrap<PartyCategory[] | { items?: PartyCategory[] }>(res) as any;
+      return Array.isArray(body) ? body : (body.items ?? []);
+    },
+    staleTime: 5 * 60_000,
   });
 }
 

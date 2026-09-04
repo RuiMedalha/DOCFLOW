@@ -234,6 +234,7 @@ model Tenant {
   ibanBlacklist    IbanBlacklist[]
   notifications    Notification[]
   categories       Category[]
+  partyCategories  PartyCategory[]
 
   @@index([slug])
   @@index([active])
@@ -588,6 +589,16 @@ model Party {
   // Only ADMIN may set/unset this flag via PATCH /parties/:id.
   isRecurringManualOverride Boolean @default(false)
 
+  // Sprint E: URL/storage slug for the party — kebab-case ASCII of `name`.
+  // Persisted so the storage folder path stays stable across renames;
+  // regen on PATCH `name` (collision-checked with `<slug>-<id4>` suffix).
+  slug      String?
+  // Sprint E: free-text category the operator assigned (Estratégico,
+  // Operacional, Consultor, Recorrente, ...). Used by DocumentsService.approve
+  // to nest the file under `fornecedores/<slug>/<category>/<YYYY-MM>/`.
+  partyCategoryId   String?
+  partyCategory     PartyCategory? @relation(fields: [partyCategoryId], references: [id], onDelete: SetNull)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -601,7 +612,36 @@ model Party {
   @@index([tenantId, iban])
   @@index([tenantId, type])
   @@index([tenantId, ibanFlagged])
+  @@index([tenantId, slug])
+  @@index([tenantId, partyCategoryId])
   @@map("parties")
+}
+
+// =============================================================================
+// PARTY CATEGORIES (Sprint E) — operator-defined buckets for master Parties.
+// Distinct from `Category` (which is per-expense classification of a
+// Document). A PartyCategory segments the master-record list — used to
+// group fornecedores/clientes for routing + reporting.
+// =============================================================================
+
+model PartyCategory {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  slug      String
+  name      String
+  color     String?
+  sortOrder Int      @default(100)
+
+  parties   Party[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("party_categories")
 }
 
 // IBAN anti-fraud vendor history (tracks every IBAN change per party)

@@ -109,6 +109,11 @@ export class PartiesService {
       }),
       this.prisma.party.count({ where }),
     ]);
+    // Note: `findAll` deliberately does NOT eager-load contacts /
+    // addresses — the list view does not display them and the extra
+    // round-trip would balloon page weight on tenants with hundreds
+    // of parties. `findOne` (party detail) DOES load them for the
+    // 360° file.
 
     // The Party schema carries FK columns (`defaultDebitAccountId`,
     // `defaultCreditAccountId`) but no Prisma relation lines — so we
@@ -139,6 +144,16 @@ export class PartiesService {
       include: {
         partyCategory: {
           select: { id: true, slug: true, name: true, color: true, sortOrder: true },
+        },
+        // Sprint G: eager-load the 360° sub-resources so the detail page
+        // can render without a waterfall of follow-up GETs. Tenant scope
+        // is already enforced by `where: { tenantId }` above — the
+        // contacts/addresses relations are 1:N on the same tenant.
+        contacts: {
+          orderBy: [{ createdAt: 'desc' }],
+        },
+        addresses: {
+          orderBy: [{ isPrimary: 'desc' }, { type: 'asc' }, { createdAt: 'desc' }],
         },
       },
     });
@@ -1112,11 +1127,18 @@ export class PartiesService {
   /**
    * Drop internal-only columns from the Party response. `externalIds` is
    * opaque JSON to the caller — keep it but no other sensitive fields.
+   *
+   * Sprint G: the 360° sub-resources (contacts / addresses) come back
+   * from Prisma with their `tenantId` field exposed. We strip it here
+   * so the response never leaks the internal tenancy column — same
+   * discipline as `sanitizePartyContact` / `sanitizePartyAddress` in
+   * the dedicated services.
    */
   private sanitizeParty(p: any, accountById?: Map<string, { id: string; code: string; name: string }>) {
     if (!p) return p;
+    const { contacts, addresses, ...rest } = p;
     return {
-      ...p,
+      ...rest,
       iban: p.iban ?? null,
       ibanMasked: p.iban
         ? `${(p.iban as string).slice(0, 4)}••••${(p.iban as string).slice(-4)}`
@@ -1127,6 +1149,34 @@ export class PartiesService {
       defaultCreditAccount: p.defaultCreditAccountId && accountById
         ? accountById.get(p.defaultCreditAccountId) ?? null
         : null,
+      contacts: Array.isArray(contacts)
+        ? contacts.map((c: any) => ({
+            id: c.id,
+            partyId: c.partyId,
+            name: c.name,
+            role: c.role,
+            email: c.email,
+            phone: c.phone,
+            notes: c.notes,
+            createdAt: c.createdAt,
+            updatedAt: c.updatedAt,
+          }))
+        : [],
+      addresses: Array.isArray(addresses)
+        ? addresses.map((a: any) => ({
+            id: a.id,
+            partyId: a.partyId,
+            type: a.type,
+            line1: a.line1,
+            line2: a.line2,
+            postalCode: a.postalCode,
+            city: a.city,
+            country: a.country,
+            isPrimary: a.isPrimary,
+            createdAt: a.createdAt,
+            updatedAt: a.updatedAt,
+          }))
+        : [],
     };
   }
 

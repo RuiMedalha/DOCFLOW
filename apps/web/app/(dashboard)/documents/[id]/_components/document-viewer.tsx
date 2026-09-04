@@ -96,21 +96,27 @@ export function DocumentViewer({ src, fileName = 'documento', mimeType, highligh
 
   return (
     <div
-      className="flex flex-col h-full min-h-[420px] overflow-hidden"
+      className="flex flex-col overflow-hidden"
       style={{
         // Frame navy 1px + gold inset top border — "documento dentro de uma
         // capa editorial". O inset shadow desenha uma hairline gold no topo
         // sem precisar de :before pseudo-element.
+        // Aspect ratio portrait (3/4) garante letterbox em vez de caixa
+        // quadrada — antes era `min-h-[420px]` que esticava o viewer pra
+        // ficar alto e narrow na coluna 4/12.
+        aspectRatio: '3 / 4',
+        maxWidth: '100%',
         background: 'var(--ed-panel)',
         border: '1px solid var(--ed-ink)',
         borderRadius: 'var(--ed-radius-card)',
         boxShadow: 'inset 0 1px 0 var(--ed-accent-gold)',
       }}
     >
-      {/* Toolbar */}
+      {/* Toolbar — altura fixa (não esticar) */}
       <header
-        className="flex items-center gap-2 px-4 py-3 border-b"
+        className="flex items-center gap-2 px-4 py-3 border-b flex-shrink-0"
         style={{
+          height: '52px',
           background: 'var(--ed-canvas-2)',
           borderColor: 'var(--ed-rule)',
         }}
@@ -193,7 +199,7 @@ export function DocumentViewer({ src, fileName = 'documento', mimeType, highligh
 
       {/* Body — fundo --ed-panel (paper-white) em vez de rgba(0,0,0,0.18) */}
       <div
-        className="flex-1 min-h-0 flex items-center justify-center"
+        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden"
         style={{ background: 'var(--ed-panel)' }}
       >
         {state === 'loading' && (
@@ -236,8 +242,8 @@ function PdfOrImage({ blobUrl, mime }: { blobUrl: string; mime?: string }) {
       <iframe
         src={blobUrl}
         title="Pré-visualização do documento PDF"
-        className="w-full h-full min-h-[420px]"
-        style={{ border: 'none' }}
+        className="w-full h-full"
+        style={{ border: 'none', minHeight: 0 }}
       />
     );
   }

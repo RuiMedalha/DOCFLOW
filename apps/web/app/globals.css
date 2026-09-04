@@ -163,7 +163,7 @@
   /* Ink — navy (tinta de carimbo) */
   --ed-ink:          #14213d;
   --ed-ink-soft:     #5c6478;
-  --ed-ink-faint:    #8a93a6;
+  --ed-ink-faint:    #6b7280;            /* slate-500 — WCAG AA ≥4.5:1 sobre --ed-canvas */
   --ed-rule:         rgba(20, 33, 61, 0.12);
   --ed-rule-strong:  rgba(20, 33, 61, 0.28);
 

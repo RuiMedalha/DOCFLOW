@@ -113,6 +113,7 @@ export function QrBadge({ qrPayload, highlightedFields = [] }: QrBadgeProps) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span
+              className="font-medium"
               style={{
                 fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                 fontSize: '14px',
@@ -123,7 +124,7 @@ export function QrBadge({ qrPayload, highlightedFields = [] }: QrBadgeProps) {
             </span>
             {isOk ? (
               <span
-                className="inline-flex items-center gap-1 px-1.5 py-0.5"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 font-semibold"
                 style={{
                   fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
                   fontSize: '10px',
@@ -139,7 +140,7 @@ export function QrBadge({ qrPayload, highlightedFields = [] }: QrBadgeProps) {
               </span>
             ) : (
               <span
-                className="inline-flex items-center gap-1 px-1.5 py-0.5"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 font-semibold"
                 style={{
                   fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
                   fontSize: '10px',
@@ -229,7 +230,7 @@ export function QrBadge({ qrPayload, highlightedFields = [] }: QrBadgeProps) {
                     }}
                   >
                     <dt
-                      className="uppercase tracking-wider w-12 flex-shrink-0"
+                      className="uppercase tracking-wider w-12 flex-shrink-0 font-medium"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',

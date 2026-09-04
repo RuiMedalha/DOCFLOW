@@ -166,7 +166,7 @@ function confBadge(c?: number) {
   const { dot, fg, bg } = map[tone];
   return (
     <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium tabular-nums"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
       style={{ background: bg, color: fg, borderRadius: 'var(--ed-radius-chip)' }}
       title={`Confiança OCR ${pct}`}
     >
@@ -204,7 +204,7 @@ function Group({
         style={{ borderColor: 'var(--ed-rule)' }}
       >
         <h3
-          className="uppercase"
+          className="uppercase font-medium"
           style={{
             fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
             fontSize: '14px',
@@ -246,11 +246,10 @@ function Field({
     <div className="field-group">
       <div className="flex items-center justify-between mb-1.5">
         <label
-          className="block uppercase"
+          className="block uppercase font-medium"
           style={{
             fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
             fontSize: '11px',
-            fontWeight: 500,
             letterSpacing: '0.12em',
             color: 'var(--ed-ink-faint)',
           }}
@@ -856,7 +855,7 @@ export function FieldPanel(props: FieldPanelProps) {
                     }}
                   >
                     <th
-                      className="text-left font-medium pb-2 uppercase"
+                      className="text-left pb-2 uppercase font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -868,7 +867,7 @@ export function FieldPanel(props: FieldPanelProps) {
                     </th>
                     {hasCode && (
                       <th
-                        className="text-left font-medium pb-2 uppercase"
+                        className="text-left pb-2 uppercase font-semibold"
                         style={{
                           fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                           fontSize: '11px',
@@ -880,7 +879,7 @@ export function FieldPanel(props: FieldPanelProps) {
                       </th>
                     )}
                     <th
-                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      className="text-right pb-2 uppercase tabular-nums font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -891,7 +890,7 @@ export function FieldPanel(props: FieldPanelProps) {
                       Qtd.
                     </th>
                     <th
-                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      className="text-right pb-2 uppercase tabular-nums font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -903,7 +902,7 @@ export function FieldPanel(props: FieldPanelProps) {
                     </th>
                     {hasDiscount && (
                       <th
-                        className="text-right font-medium pb-2 uppercase tabular-nums"
+                        className="text-right pb-2 uppercase tabular-nums font-semibold"
                         style={{
                           fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                           fontSize: '11px',
@@ -915,7 +914,7 @@ export function FieldPanel(props: FieldPanelProps) {
                       </th>
                     )}
                     <th
-                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      className="text-right pb-2 uppercase tabular-nums font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -926,7 +925,7 @@ export function FieldPanel(props: FieldPanelProps) {
                       IVA
                     </th>
                     <th
-                      className="text-right font-medium pb-2 uppercase tabular-nums"
+                      className="text-right pb-2 uppercase tabular-nums font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -1143,7 +1142,7 @@ export function FieldPanel(props: FieldPanelProps) {
                   <tr style={{ borderTop: '2px solid var(--ed-rule-strong)' }}>
                     <td
                       colSpan={hasCode ? 2 : 1}
-                      className="pt-3 pr-4 uppercase tracking-wider"
+                      className="pt-3 pr-4 uppercase tracking-wider font-semibold"
                       style={{
                         fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                         fontSize: '11px',
@@ -1270,7 +1269,7 @@ export function FieldPanel(props: FieldPanelProps) {
         <div className="flex items-center justify-between gap-4 mt-6 pt-6 border-t" style={{ borderColor: 'var(--ed-rule)' }}>
           <div className="min-w-0">
             <p
-              className="uppercase tracking-wider"
+              className="uppercase tracking-wider font-semibold"
               style={{
                 fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                 fontSize: '12px',

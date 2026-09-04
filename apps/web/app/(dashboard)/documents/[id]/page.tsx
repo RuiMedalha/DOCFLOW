@@ -387,7 +387,7 @@ export default function DocumentDetailPage() {
       <header className="border-b" style={{ borderColor: 'var(--ed-rule)' }}>
         {/* Camada 1 — breadcrumb fino */}
         <nav
-          className="flex items-center justify-between gap-2 px-2 py-3 text-[12px] font-medium uppercase tracking-wider"
+          className="flex items-center justify-between gap-2 px-2 py-3 text-[12px] font-semibold uppercase tracking-wider"
           style={{ color: 'var(--ed-ink-faint)' }}
           aria-label="Caminho"
         >
@@ -503,7 +503,7 @@ export default function DocumentDetailPage() {
                 style={{
                   fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                   fontSize: '20px',
-                  fontWeight: 500,
+                  fontWeight: 700,
                   color:
                     hero.tone === 'ok'
                       ? 'var(--ed-status-ok)'
@@ -559,7 +559,7 @@ export default function DocumentDetailPage() {
 
           <section>
             <h3
-              className="uppercase tracking-wider mb-3"
+              className="uppercase tracking-wider mb-3 font-medium"
               style={{
                 fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                 fontSize: '14px',
@@ -574,7 +574,7 @@ export default function DocumentDetailPage() {
 
           <section>
             <h3
-              className="uppercase tracking-wider mb-3"
+              className="uppercase tracking-wider mb-3 font-medium"
               style={{
                 fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
                 fontSize: '14px',

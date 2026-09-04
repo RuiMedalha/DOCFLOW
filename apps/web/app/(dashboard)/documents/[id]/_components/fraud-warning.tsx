@@ -78,7 +78,7 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
         <Info size={16} className="mt-0.5 flex-shrink-0" aria-hidden="true" style={{ color: 'var(--ed-status-warn)' }} />
         <div>
           <p
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 font-semibold"
             style={{
               fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
               fontSize: '14px',
@@ -114,7 +114,7 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
     return (
       <div
         role="status"
-        className="inline-flex items-center gap-1.5 px-2.5 py-1"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 font-semibold"
         style={{
           fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
           fontSize: '11px',
@@ -158,7 +158,7 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
           style={{
             fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
             fontSize: '16px',
-            fontWeight: 500,
+            fontWeight: 700,
             color: 'var(--ed-status-alert)',
           }}
         >

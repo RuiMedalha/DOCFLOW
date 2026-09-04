@@ -323,9 +323,14 @@ export default function DocumentDetailPage() {
 
   if (bundle.isLoading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 size={22} className="animate-spin" aria-hidden="true" style={{ color: 'var(--accent)' }} />
-        <span className="ml-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+      <div data-skin="editorial" className="flex items-center justify-center py-24">
+        <Loader2
+          size={22}
+          className="animate-spin"
+          aria-hidden="true"
+          style={{ color: 'var(--ed-accent-gold)' }}
+        />
+        <span className="ml-2 text-sm" style={{ color: 'var(--ed-ink-soft)' }}>
           A carregar documento…
         </span>
       </div>
@@ -334,7 +339,7 @@ export default function DocumentDetailPage() {
 
   if (bundle.isError || !bundle.data || !doc) {
     return (
-      <>
+      <div data-skin="editorial">
         <button
           type="button"
           onClick={() => router.push('/documents')}
@@ -344,12 +349,17 @@ export default function DocumentDetailPage() {
           Voltar à lista
         </button>
         <div className="card p-8 text-center">
-          <AlertCircle size={32} className="mx-auto mb-2" aria-hidden="true" style={{ color: 'var(--danger)' }} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          <AlertCircle
+            size={32}
+            className="mx-auto mb-2"
+            aria-hidden="true"
+            style={{ color: 'var(--ed-status-alert)' }}
+          />
+          <p className="text-sm" style={{ color: 'var(--ed-ink-soft)' }}>
             Não foi possível carregar este documento.
           </p>
         </div>
-      </>
+      </div>
     );
   }
 
@@ -440,10 +450,11 @@ export default function DocumentDetailPage() {
           </h1>
           {doc.supplier && (
             <p
-              className="mt-3 text-base"
+              className="mt-3 text-lg"
               style={{
                 fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
-                color: 'var(--ed-ink-soft)',
+                color: 'var(--ed-ink)',
+                fontWeight: 600,
               }}
             >
               {doc.supplier}
@@ -698,9 +709,9 @@ export default function DocumentDetailPage() {
           {pendingDelete?.description && (
             <p
               className="text-sm"
-              style={{ color: 'var(--text-muted)' }}
+              style={{ color: 'var(--ed-ink-soft)' }}
             >
-              Linha: <span className="font-medium" style={{ color: 'var(--text)' }}>{pendingDelete.description}</span>
+              Linha: <span className="font-medium" style={{ color: 'var(--ed-ink)' }}>{pendingDelete.description}</span>
             </p>
           )}
           <div className="flex items-center justify-end gap-2">

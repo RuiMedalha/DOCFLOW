@@ -52,6 +52,24 @@ const buildAudit = () =>
   }) as any;
 
 /**
+ * Sprint E: the PartiesService.update path validates `partyCategoryId` via
+ * PartyCategoriesService.assertCategoryInTenant. The tests below don't
+ * touch the category path, but the constructor still requires the third
+ * arg. Stub it out — the helper resolves anything as long as the test
+ * doesn't pass a `partyCategoryId`.
+ */
+const buildPartyCategories = () =>
+  ({
+    assertCategoryInTenant: jest.fn(async (_tenantId: string, id: string) => ({
+      id,
+      slug: 'fake',
+      name: 'Fake',
+      color: null,
+      sortOrder: 100,
+    })),
+  }) as any;
+
+/**
  * The service's `update()` calls `this.findOne()` at the end to return the
  * fresh DB row. We patch the prototype so it short-circuits to the same
  * shape we passed to update() — keeps the test independent of Prisma calls.
@@ -62,7 +80,7 @@ function patchFindOne(svc: PartiesService, payload: any) {
 
 describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOverride', () => {
   it('rejects non-ADMIN trying to change isRecurring', async () => {
-    const svc = new PartiesService(buildPrisma(), buildAudit());
+    const svc = new PartiesService(buildPrisma(), buildAudit(), buildPartyCategories());
 
     await expect(
       svc.update(
@@ -76,7 +94,7 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
   });
 
   it('rejects non-ADMIN trying to change isRecurringManualOverride', async () => {
-    const svc = new PartiesService(buildPrisma(), buildAudit());
+    const svc = new PartiesService(buildPrisma(), buildAudit(), buildPartyCategories());
 
     await expect(
       svc.update(
@@ -94,7 +112,7 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
       isRecurring: false,
       isRecurringManualOverride: false,
     });
-    const svc = new PartiesService(prisma, buildAudit());
+    const svc = new PartiesService(prisma, buildAudit(), buildPartyCategories());
     patchFindOne(svc, {
       id: 'party-1',
       isRecurring: true,
@@ -127,7 +145,7 @@ describe('PartiesService.update — ADMIN-only isRecurring / isRecurringManualOv
       isRecurring: false,
       isRecurringManualOverride: false,
     });
-    const svc = new PartiesService(prisma, buildAudit());
+    const svc = new PartiesService(prisma, buildAudit(), buildPartyCategories());
     patchFindOne(svc, { id: 'party-1' });
 
     await svc.update(
@@ -153,7 +171,7 @@ describe('PartiesService.update — audit log entries for recurring toggles', ()
       isRecurringManualOverride: false,
     });
     const audit = buildAudit();
-    const svc = new PartiesService(prisma, audit);
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
     patchFindOne(svc, { id: 'party-1', isRecurringManualOverride: true });
 
     await svc.update(
@@ -191,7 +209,7 @@ describe('PartiesService.update — audit log entries for recurring toggles', ()
       isRecurringManualOverride: false,
     });
     const audit = buildAudit();
-    const svc = new PartiesService(prisma, audit);
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
     patchFindOne(svc, { id: 'party-1', isRecurring: true });
 
     await svc.update(
@@ -226,7 +244,7 @@ describe('PartiesService.update — audit log entries for recurring toggles', ()
       isRecurringManualOverride: false,
     });
     const audit = buildAudit();
-    const svc = new PartiesService(prisma, audit);
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
     patchFindOne(svc, { id: 'party-1' });
 
     await svc.update(
@@ -254,7 +272,7 @@ describe('PartiesService.update — audit log entries for recurring toggles', ()
   it('does NOT write a recurring audit row when ADMIN omits both fields', async () => {
     const prisma = buildPrisma();
     const audit = buildAudit();
-    const svc = new PartiesService(prisma, audit);
+    const svc = new PartiesService(prisma, audit, buildPartyCategories());
     patchFindOne(svc, { id: 'party-1' });
 
     await svc.update(

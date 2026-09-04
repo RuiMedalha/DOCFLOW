@@ -94,6 +94,60 @@ export class LocalFilesystemStorage implements StorageService, OnModuleInit {
     }
   }
 
+  /**
+   * Move an object between storage keys. Tries native `rename` first (atomic
+   * in POSIX/Linux and on the same Windows volume); on `EXDEV` (cross-volume)
+   * or any other failure, falls back to copy + size-verify + unlink. The
+   * destination folder is created on demand.
+   *
+   * Idempotency: `oldKey === newKey` is a no-op.
+   *
+   * Sprint E uses this from DocumentsService.approve() to relocate files
+   * out of `_inbox/` into the party/category folder without copying bytes
+   * through the controller.
+   */
+  async move(oldKey: string, newKey: string): Promise<void> {
+    if (!oldKey || !newKey) {
+      throw new Error('move() requires both oldKey and newKey');
+    }
+    if (oldKey === newKey) return;
+
+    const from = this.resolveSafe(oldKey);
+    const to = this.resolveSafe(newKey);
+
+    // Ensure destination directory exists before any rename / copy.
+    await fs.mkdir(path.dirname(to), { recursive: true });
+
+    // Prefer atomic rename when both keys live on the same filesystem.
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // EXDEV = cross-device link (rename can't span volumes). Any other
+      // error is unexpected — propagate after best-effort cleanup below.
+      if (code !== 'EXDEV') {
+        // ENOENT at source is the typical "file already gone" race — treat
+        // as idempotent and let the caller decide. Anything else is fatal.
+        if (code === 'ENOENT') return;
+        throw err;
+      }
+    }
+
+    // Cross-volume fallback: copy + verify size + unlink source. If the
+    // size check fails we DELETE the partial destination so we never leave a
+    // half-moved file behind — the caller can retry with a fresh key.
+    await fs.copyFile(from, to);
+    const [srcStat, dstStat] = await Promise.all([fs.stat(from), fs.stat(to)]);
+    if (srcStat.size !== dstStat.size) {
+      await fs.unlink(to).catch(() => undefined);
+      throw new Error(
+        `move() verification failed: size mismatch ${oldKey} (${srcStat.size}) → ${newKey} (${dstStat.size})`,
+      );
+    }
+    await fs.unlink(from);
+  }
+
   async getSignedUrl(key: string, _ttlSeconds?: number): Promise<string> {
     // Local driver cannot sign — return a controller route. Callers must
     // resolve the documentId and call /documents/:id/download instead.

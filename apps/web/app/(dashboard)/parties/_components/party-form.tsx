@@ -3,8 +3,13 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Save, Loader2 } from 'lucide-react';
-import { useCreateParty, useUpdateParty, useSeedAccounts } from './use-parties';
-import type { PartyInput, Account } from '../_lib/types';
+import {
+  useCreateParty,
+  useUpdateParty,
+  useSeedAccounts,
+  usePartyCategories,
+} from './use-parties';
+import type { PartyInput, Account, PartyCategory } from '../_lib/types';
 
 export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput; partyId?: string; isAdmin?: boolean }) {
   const router = useRouter();
@@ -14,6 +19,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
   const seedAccounts: Account[] = Array.isArray(seedAccountsData)
     ? seedAccountsData
     : (seedAccountsData && (seedAccountsData as any).items) || [];
+  const partyCategories = usePartyCategories().data ?? [];
   const [form, setForm] = useState<PartyInput>(initial ?? {
     type: 'FORNECEDOR',
     name: '',
@@ -27,6 +33,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
     city: '',
     postalCode: '',
     country: 'Portugal',
+    partyCategoryId: '',
     isRecurring: false,
     isRecurringManualOverride: false,
   });
@@ -50,6 +57,9 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         country: form.country?.trim() || undefined,
         defaultDebitAccountId: form.defaultDebitAccountId,
         defaultCreditAccountId: form.defaultCreditAccountId,
+        // Sprint E: empty string clears the category — server treats it
+        // as null in the Prisma update path.
+        partyCategoryId: form.partyCategoryId || undefined,
         // ADMIN-only fields: server rejects (403) if non-ADMIN tries to send these.
         isRecurring: isAdmin ? form.isRecurring : undefined,
         isRecurringManualOverride: isAdmin ? form.isRecurringManualOverride : undefined,
@@ -75,6 +85,18 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         </Field>
         <Field label="Nome *">
           <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label="Categoria">
+          <select
+            className="select"
+            value={form.partyCategoryId ?? ''}
+            onChange={(e) => setForm({ ...form, partyCategoryId: e.target.value })}
+          >
+            <option value="">— Sem categoria —</option>
+            {partyCategories.map((c: PartyCategory) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </Field>
         <Field label="NIF (9 dígitos)">
           <input className="input font-mono" maxLength={9} value={form.nif ?? ''} onChange={(e) => setForm({ ...form, nif: e.target.value })} />

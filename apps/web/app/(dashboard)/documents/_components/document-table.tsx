@@ -250,7 +250,7 @@ export function DocumentTable({
                               <button
                                 type="button"
                                 onClick={header.column.getToggleSortingHandler()}
-                                className="inline-flex items-center gap-1 cursor-pointer hover:text-slate-300"
+                                className="inline-flex items-center gap-1 cursor-pointer hover:opacity-70 transition-opacity"
                                 style={{ color: 'inherit' }}
                               >
                                 {flexRender(header.column.columnDef.header, header.getContext())}

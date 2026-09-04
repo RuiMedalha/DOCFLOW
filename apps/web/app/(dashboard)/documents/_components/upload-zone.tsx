@@ -237,7 +237,7 @@ function DuplicateRow({
         <button
           type="button"
           onClick={onDismiss}
-          className="p-1 rounded-md hover:bg-white/5"
+          className="p-1 rounded-md hover:bg-[var(--hover)]"
           aria-label={`Dispensar ${item.fileName}`}
         >
           <X size={14} style={{ color: 'var(--text-subtle)' }} />
@@ -316,7 +316,7 @@ function UploadRow({ item, onDismiss }: { item: UploadItem; onDismiss?: () => vo
         <button
           type="button"
           onClick={onDismiss}
-          className="p-1 rounded-md hover:bg-white/5"
+          className="p-1 rounded-md hover:bg-[var(--hover)]"
           aria-label={`Remover ${item.fileName}`}
         >
           <X size={14} style={{ color: 'var(--text-subtle)' }} />

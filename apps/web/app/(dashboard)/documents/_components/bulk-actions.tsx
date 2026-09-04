@@ -134,7 +134,7 @@ export function BulkActions({
         <button
           type="button"
           onClick={onClear}
-          className="p-1.5 rounded-md hover:bg-white/5"
+          className="p-1.5 rounded-md hover:bg-[var(--hover)]"
           aria-label="Limpar seleção"
         >
           <X size={14} style={{ color: 'var(--text-subtle)' }} />

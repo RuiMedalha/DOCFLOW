@@ -107,7 +107,7 @@ function buildPrisma(opts: {
         const row = contacts.get(`${TENANT_A}:${where.id}`);
         if (!row) throw new Error('not found');
         Object.assign(row, data);
-        row.updatedAt = new Date();
+        (row as any).updatedAt = new Date();
         return row;
       }),
       delete: jest.fn(async ({ where }: any) => {

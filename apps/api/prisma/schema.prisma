@@ -114,6 +114,13 @@ enum PartyType {
   AMBOS
 }
 
+enum PartyAddressType {
+  BILLING        // faturação
+  CORRESPONDENCE // morada postal
+  OPERATIONAL    // armazém / sede
+  OTHER
+}
+
 enum AccountType {
   ASSET
   LIABILITY
@@ -238,6 +245,8 @@ model Tenant {
   notifications    Notification[]
   categories       Category[]
   partyCategories  PartyCategory[]
+  partyContacts    PartyContact[]
+  partyAddresses   PartyAddress[]
 
   @@index([slug])
   @@index([active])
@@ -608,6 +617,8 @@ model Party {
   documents     Document[]
   payableItems  PayableItem[]
   ibanChanges   IbanHistory[]
+  contacts      PartyContact[]
+  addresses     PartyAddress[]
   contactRoles  String[]      @default([]) // legacy/projection of type
 
   @@index([tenantId, name])
@@ -685,6 +696,64 @@ model IbanBlacklist {
   @@unique([tenantId, iban])
   @@index([tenantId])
   @@map("iban_blacklist")
+}
+
+// =============================================================================
+// PARTY CONTACTS + ADDRESSES (Sprint G — 360° file)
+// One-to-many from Party. Multiple contacts (CFO, contabilista, comercial) and
+// multiple addresses (BILLING / CORRESPONDENCE / OPERATIONAL / OTHER).
+// Migration of the legacy flatten columns (email/phone/mobile/address/city/
+// postalCode/country) is out of scope for Sprint G.1 — admin populates the
+// new tables manually via UI; flatten columns stay read/write.
+// =============================================================================
+
+model PartyContact {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId   String
+  party     Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  name      String
+  role      String?  // CFO, contabilista, comercial, etc.
+  email     String?
+  phone     String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Email unique-per-(tenant, party) only when present — Postgres treats
+  // NULL as distinct so multiple null emails on the same party are allowed.
+  // Service layer normalises "" to null before insert.
+  @@unique([tenantId, partyId, email])
+  @@index([partyId])
+  @@index([tenantId, partyId])
+  @@map("party_contacts")
+}
+
+model PartyAddress {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partyId     String
+  party       Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  type        PartyAddressType
+  line1       String
+  line2       String?
+  postalCode  String?
+  city        String?
+  country     String           @default("PT")
+  isPrimary   Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // `isPrimary` is enforced per (partyId, type) in service-layer with
+  // `pg_advisory_xact_lock(hashtext('party_address_primary:' || partyId || ':' || type))`
+  // — Prisma 4 doesn't expose partial unique indexes in the DSL. The
+  // compound (partyId, type, isPrimary) index keeps "find the primary of
+  // type X" cheap.
+  @@index([partyId])
+  @@index([partyId, type, isPrimary])
+  @@map("party_addresses")
 }
 
 // =============================================================================

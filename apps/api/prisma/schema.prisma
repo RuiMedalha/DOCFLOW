@@ -36,6 +36,9 @@ enum DocumentOrigin {
   MOBILE
   WHATSAPP
   API
+  GMAIL
+  OUTLOOK
+  INBOUND_WEBHOOK
 }
 
 enum DocumentType {

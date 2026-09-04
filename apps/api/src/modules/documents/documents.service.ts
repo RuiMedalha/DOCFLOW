@@ -403,6 +403,9 @@ export class DocumentsService {
       end.setUTCHours(23, 59, 59, 999);
       filters.push(Prisma.sql`d."createdAt" <= ${end}`);
     }
+    if (query.origin && query.origin.length > 0) {
+      filters.push(Prisma.sql`d.origin = ANY(${query.origin})::"DocumentOrigin"`);
+    }
 
     const tsquery = Prisma.sql`websearch_to_tsquery('simple', ${search})`;
     const matches = Prisma.sql`(
@@ -1274,6 +1277,9 @@ export class DocumentsService {
         { supplierNif: { contains: search } },
         { customerNif: { contains: search } },
       ];
+    }
+    if (query.origin && query.origin.length > 0) {
+      where.origin = { in: query.origin };
     }
     return where;
   }

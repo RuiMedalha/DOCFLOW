@@ -21,6 +21,22 @@ export type DocumentType =
   | 'guia_transporte'
   | 'outro';
 
+/**
+ * Mirrors the backend Prisma `DocumentOrigin` enum (Sprint F extended
+ * with GMAIL / OUTLOOK / INBOUND_WEBHOOK). `EMAIL` is retained for
+ * backwards compatibility with rows ingested via the legacy IMAP path.
+ */
+export type DocumentOrigin =
+  | 'UPLOAD'
+  | 'EMAIL'
+  | 'SCANNER'
+  | 'MOBILE'
+  | 'WHATSAPP'
+  | 'API'
+  | 'GMAIL'
+  | 'OUTLOOK'
+  | 'INBOUND_WEBHOOK';
+
 export interface DocumentFolder {
   id: string;
   name: string;
@@ -34,7 +50,7 @@ export interface DocumentRecord {
   fileSize: number;
   status: DocumentStatus;
   type: DocumentType;
-  origin?: string | null;
+  origin?: DocumentOrigin | null;
   supplier?: string | null;
   nif?: string | null;
   documentDate?: string | null;
@@ -57,6 +73,7 @@ export interface DocumentFiltersState {
   type: '' | DocumentType;
   dateFrom: string;
   dateTo: string;
+  origin?: DocumentOrigin[];
 }
 
 export const DOCUMENT_STATUS_LABEL: Record<DocumentStatus, string> = {

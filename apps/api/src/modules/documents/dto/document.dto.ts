@@ -234,6 +234,40 @@ export class DocumentQueryDto {
   })
   @IsOptional()
   inbox?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by inbound channel. Accepts a single value (?origin=GMAIL), ' +
+      'repeated params (?origin=GMAIL&origin=OUTLOOK), or a CSV string ' +
+      '(?origin=GMAIL,OUTLOOK). Unknown values are rejected by validation.',
+    type: String,
+    isArray: true,
+    example: ['GMAIL', 'OUTLOOK'],
+    enum: DocumentOrigin,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    // Express may deliver repeated query params as an array OR a single
+    // string. Normalise to an array of trimmed strings so class-validator
+    // can iterate it with `each: true`. CSV strings are split here too so
+    // a single `?origin=GMAIL,OUTLOOK` is treated the same as two params.
+    if (Array.isArray(value)) {
+      return value
+        .flatMap((v) => (typeof v === 'string' ? v.split(',') : v))
+        .map((v) => (typeof v === 'string' ? v.trim() : v))
+        .filter((v) => v !== '');
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((v) => v.trim())
+        .filter((v) => v !== '');
+    }
+    return value;
+  })
+  @IsArray()
+  @IsEnum(DocumentOrigin, { each: true })
+  origin?: DocumentOrigin[];
 }
 
 /**

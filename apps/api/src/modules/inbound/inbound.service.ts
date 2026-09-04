@@ -478,7 +478,7 @@ export class InboundService {
     return tenant;
   }
 
-  private async ingestFiles(tenantId: string, files: InboundFile[], origin: DocumentOrigin, metadata: Prisma.InputJsonValue) {
+  async ingestFiles(tenantId: string, files: InboundFile[], origin: DocumentOrigin, metadata: Prisma.InputJsonValue) {
     const created = await Promise.all(
       files.map((file) =>
         this.documents.createFromInbound({ tenantId, file, origin, metadata }),

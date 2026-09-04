@@ -30,6 +30,8 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { CategoriesModule } from './modules/documents/categories.module';
 import { AiModule } from './modules/ai/ai.module';
 import { InboundModule } from './modules/inbound/inbound.module';
+import { ScannerModule } from './modules/scanner/scanner.module';
+import { EmailInboundModule } from './modules/email-inbound/email-inbound.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { ExtractionModule } from './modules/extraction/extraction.module';
 import { PartiesModule } from './modules/parties/parties.module';
@@ -121,6 +123,8 @@ import { HealthModule } from './modules/health/health.module';
     CategoriesModule,
     AiModule,
     InboundModule,
+    ScannerModule,
+    EmailInboundModule,
     ExtractionModule,
     ReconciliationModule,
     AuditModule,

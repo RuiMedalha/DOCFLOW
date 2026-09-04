@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * DocFlow — Document Inbox page.
+ * DocFlow — Document Inbox page (Sprint F tabs).
  *
- * Tabela paginada de documentos com extração IA. Inclui:
- *  - drag-and-drop upload com progresso e aviso de duplicados
- *  - filtros (pesquisa, estado, tipo, intervalo de datas)
- *  - seleção + ações em massa (mover pasta, etiquetar, eliminar)
- *  - estados vazio / loading / erro consistentes com o resto do dashboard
+ * Sprint F segments the inbox into three channels:
+ *   - PDF: drag-and-drop upload (existing) → origin=UPLOAD
+ *   - Scanner: file-watcher ingest → origin=SCANNER
+ *   - Email: IMAP / SendGrid / Gmail OAuth / Outlook OAuth →
+ *     origin=EMAIL | GMAIL | OUTLOOK | INBOUND_WEBHOOK
  *
- * O backend é contactado em http://localhost:4000/api/v1/documents (per
- * CONTRACT.md). Se o endpoint ainda não existir, o hook `useDocumentsList`
- * devolve uma lista vazia — a UI degrada com graça.
+ * The tab swap just changes the `origin` filter sent to the backend;
+ * `useDocumentsList` is reused so React Query keeps a cache per filter
+ * shape and switching tabs feels instant.
  */
 
 import { useState } from 'react';
@@ -22,12 +22,21 @@ import { UploadZone } from './_components/upload-zone';
 import { DocumentFilters } from './_components/document-filters';
 import { DocumentTable } from './_components/document-table';
 import { BulkActions } from './_components/bulk-actions';
+import { InboxTabs, type InboxTabKey } from './_components/inbox-tabs';
+import { ScannerConfig } from './_components/scanner-config';
+import { EmailConfig } from './_components/email-config';
 import {
   useDocumentsList,
 } from './_components/use-documents';
-import type { DocumentFiltersState } from './_components/types';
+import type { DocumentFiltersState, DocumentOrigin } from './_components/types';
 
 const PAGE_SIZE = 20;
+
+const TAB_ORIGINS: Record<InboxTabKey, DocumentOrigin[] | undefined> = {
+  pdf: undefined,
+  scanner: ['SCANNER'],
+  email: ['EMAIL', 'GMAIL', 'OUTLOOK', 'INBOUND_WEBHOOK'],
+};
 
 const INITIAL_FILTERS: DocumentFiltersState = {
   search: '',
@@ -38,12 +47,19 @@ const INITIAL_FILTERS: DocumentFiltersState = {
 };
 
 export default function DocumentsPage() {
+  const [tab, setTab] = useState<InboxTabKey>('pdf');
   const [filters, setFilters] = useState<DocumentFiltersState>(INITIAL_FILTERS);
   const [page, setPage] = useState(1);
   const [selection, setSelection] = useState<RowSelectionState>({});
 
+  const tabOrigins = TAB_ORIGINS[tab];
+  const mergedFilters: DocumentFiltersState = {
+    ...filters,
+    origin: tabOrigins,
+  };
+
   const { data, isLoading, isError, refetch, isFetching } = useDocumentsList(
-    filters,
+    mergedFilters,
     page,
     PAGE_SIZE,
   );
@@ -77,7 +93,15 @@ export default function DocumentsPage() {
       />
 
       <div className="space-y-5">
-        <UploadZone />
+        <InboxTabs active={tab} onChange={(next) => {
+          setTab(next);
+          setPage(1);
+          setSelection({});
+        }} />
+
+        {tab === 'pdf' && <UploadZone />}
+        {tab === 'scanner' && <ScannerConfig />}
+        {tab === 'email' && <EmailConfig />}
 
         <DocumentFilters value={filters} onChange={(next) => {
           setFilters(next);

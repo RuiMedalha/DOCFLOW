@@ -31,6 +31,11 @@ function buildQuery(
   if (filters.type) sp.set('type', filters.type);
   if (filters.dateFrom) sp.set('dateFrom', filters.dateFrom);
   if (filters.dateTo) sp.set('dateTo', filters.dateTo);
+  // Origin filter (Sprint F): the backend DTO accepts both CSV strings
+  // and repeated query params; CSV is the more compact URL shape.
+  if (filters.origin && filters.origin.length > 0) {
+    sp.set('origin', filters.origin.join(','));
+  }
   sp.set('page', String(page));
   // API DTO expects `limit`, not `pageSize` (forbidNonWhitelisted rejects it).
   sp.set('limit', String(pageSize));

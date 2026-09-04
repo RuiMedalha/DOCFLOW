@@ -97,4 +97,30 @@ describe('ScannerService.handleAdd', () => {
     expect(ingestCalls[0].files[0].mimetype).toBe('image/jpeg');
     expect(ingestCalls[0].files[0].originalname).toBe('scan123.jpg');
   });
+
+  it('moves the processed file into a .processed/ subdir after successful ingest', async () => {
+    const { service, ingestCalls } = makeFixture();
+    const fsPromises = require('node:fs').promises as any;
+    jest
+      .spyOn(fsPromises, 'readFile')
+      .mockResolvedValue(Buffer.from('%PDF-1.4 hello world'));
+    const renameMock = jest
+      .spyOn(fsPromises, 'rename')
+      .mockResolvedValue(undefined);
+    const mkdirMock = jest
+      .spyOn(fsPromises, 'mkdir')
+      .mockResolvedValue(undefined);
+
+    await (service as any).handleAdd('/tmp/scanner/tenant-a__ft12345.pdf');
+    expect(ingestCalls).toHaveLength(1);
+    // mkdir .processed/ + actual rename
+    expect(mkdirMock).toHaveBeenCalledWith(
+      expect.stringContaining('.processed'),
+      { recursive: true },
+    );
+    expect(renameMock).toHaveBeenCalledWith(
+      '/tmp/scanner/tenant-a__ft12345.pdf',
+      expect.stringContaining('.processed'),
+    );
+  });
 });

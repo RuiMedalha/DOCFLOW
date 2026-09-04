@@ -5,6 +5,7 @@ import { OAuthStateStore } from '../integrations/core/oauth-state.store';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InboundService } from '../inbound/inbound.service';
 import { decryptJson, encryptJson } from './oauth-crypto';
+import { fetchWithTimeout } from './fetch-with-timeout';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -113,7 +114,7 @@ export class GmailService {
       throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required');
     }
 
-    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+    const tokenRes = await fetchWithTimeout(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -188,7 +189,7 @@ export class GmailService {
         q: 'has:attachment is:unread',
         maxResults: '25',
       }).toString();
-      const res = await fetch(listUrl, {
+      const res = await fetchWithTimeout(listUrl.toString(), {
         headers: { authorization: `Bearer ${fresh.accessToken}` },
       });
       if (!res.ok) throw new Error(`gmail list ${res.status}`);
@@ -222,11 +223,10 @@ export class GmailService {
               };
             }),
           );
-          const valid = inboundFiles.filter((f) => ACCEPTED_EXTS.has(f.originalname.split('.').pop()?.toLowerCase() ?? ''));
-          if (valid.length > 0) {
+          if (inboundFiles.length > 0) {
             await this.inbound.ingestFiles(
               tenantId,
-              valid,
+              inboundFiles,
               DocumentOrigin.GMAIL,
               {
                 source: 'gmail-poller',
@@ -236,7 +236,7 @@ export class GmailService {
                 subject: headers['subject'] ?? null,
               } as Prisma.InputJsonValue,
             );
-            processed += valid.length;
+            processed += inboundFiles.length;
           }
         }
       } catch (err) {
@@ -267,7 +267,7 @@ export class GmailService {
     if (!clientId || !clientSecret) {
       throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required');
     }
-    const res = await fetch(GOOGLE_TOKEN_URL, {
+    const res = await fetchWithTimeout(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -293,7 +293,7 @@ export class GmailService {
   }
 
   private async fetchUserEmail(accessToken: string): Promise<string | undefined> {
-    const res = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    const res = await fetchWithTimeout('https://openidconnect.googleapis.com/v1/userinfo', {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`userinfo ${res.status}`);
@@ -302,7 +302,7 @@ export class GmailService {
   }
 
   private async fetchMessage(accessToken: string, id: string): Promise<GmailMessage> {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GMAIL_API_BASE}/users/me/messages/${id}?format=full`,
       { headers: { authorization: `Bearer ${accessToken}` } },
     );
@@ -311,7 +311,7 @@ export class GmailService {
   }
 
   private async fetchAttachment(accessToken: string, messageId: string, attachmentId: string): Promise<string> {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GMAIL_API_BASE}/users/me/messages/${messageId}/attachments/${attachmentId}`,
       { headers: { authorization: `Bearer ${accessToken}` } },
     );

@@ -17,6 +17,7 @@ import { CurrentTenant } from '../../common/decorators/current-tenant.decorator'
 import { Public } from '../../common/decorators/public.decorator';
 import type { TenantRequestContext } from '../../common/context/tenant-context';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OAuthStateStore } from '../integrations/core/oauth-state.store';
 import { decryptJson } from './oauth-crypto';
 import { GmailService } from './gmail.service';
 import { OutlookService } from './outlook.service';
@@ -35,6 +36,7 @@ export class OAuthController {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly oauthStates: OAuthStateStore,
     private readonly gmail: GmailService,
     private readonly outlook: OutlookService,
   ) {}
@@ -63,19 +65,12 @@ export class OAuthController {
     @Res() res: Response,
   ) {
     if (!code || !state) throw new BadRequestException('Missing code/state');
-    const session = await this.prisma.integration.findFirst({
-      where: {
-        tenantId: '__oauth_states__',
-        provider: `__state__:gmail:${state}`,
-      },
-      select: { credentials: true },
-    });
-    if (!session) throw new UnauthorizedException('Invalid OAuth state');
+    const session = await this.oauthStates.consume('gmail', state);
+    if (!session) {
+      throw new UnauthorizedException('Invalid or expired OAuth state');
+    }
     try {
-      const payload = JSON.parse(String(session.credentials)) as {
-        tenantId: string;
-      };
-      await this.gmail.handleCallback(code, state, payload.tenantId, 'system');
+      await this.gmail.handleCallback(code, state, session.tenantId, 'system');
     } catch (err) {
       this.logger.error(`Gmail callback failed: ${(err as Error).message}`);
       return res.redirect(
@@ -111,19 +106,12 @@ export class OAuthController {
     @Res() res: Response,
   ) {
     if (!code || !state) throw new BadRequestException('Missing code/state');
-    const session = await this.prisma.integration.findFirst({
-      where: {
-        tenantId: '__oauth_states__',
-        provider: `__state__:outlook:${state}`,
-      },
-      select: { credentials: true },
-    });
-    if (!session) throw new UnauthorizedException('Invalid OAuth state');
+    const session = await this.oauthStates.consume('outlook', state);
+    if (!session) {
+      throw new UnauthorizedException('Invalid or expired OAuth state');
+    }
     try {
-      const payload = JSON.parse(String(session.credentials)) as {
-        tenantId: string;
-      };
-      await this.outlook.handleCallback(code, state, payload.tenantId, 'system');
+      await this.outlook.handleCallback(code, state, session.tenantId, 'system');
     } catch (err) {
       this.logger.error(`Outlook callback failed: ${(err as Error).message}`);
       return res.redirect(

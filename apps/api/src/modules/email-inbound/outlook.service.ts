@@ -5,6 +5,7 @@ import { OAuthStateStore } from '../integrations/core/oauth-state.store';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InboundService } from '../inbound/inbound.service';
 import { decryptJson, encryptJson } from './oauth-crypto';
+import { fetchWithTimeout } from './fetch-with-timeout';
 
 const MS_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
 const MS_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
@@ -98,7 +99,7 @@ export class OutlookService {
     if (!clientId || !clientSecret) {
       throw new Error('MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET are required');
     }
-    const tokenRes = await fetch(MS_TOKEN_URL, {
+    const tokenRes = await fetchWithTimeout(MS_TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -167,7 +168,7 @@ export class OutlookService {
     let messages: GraphMessage[] = [];
     try {
       const url = `${GRAPH_BASE}/me/messages?$filter=isRead eq false and hasAttachments eq true&$top=25&$select=id,conversationId,from,subject,hasAttachments`;
-      const res = await fetch(url, { headers: { authorization: `Bearer ${fresh.accessToken}` } });
+      const res = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${fresh.accessToken}` } });
       if (!res.ok) throw new Error(`graph list ${res.status}`);
       const body = (await res.json()) as GraphMessageListResponse;
       messages = body.value ?? [];
@@ -177,7 +178,7 @@ export class OutlookService {
 
     for (const meta of messages) {
       try {
-        const detailRes = await fetch(
+        const detailRes = await fetchWithTimeout(
           `${GRAPH_BASE}/me/messages/${meta.id}/attachments`,
           { headers: { authorization: `Bearer ${fresh.accessToken}` } },
         );
@@ -192,7 +193,7 @@ export class OutlookService {
         if (accepted.length > 0) {
           const inboundFiles = await Promise.all(
             accepted.map(async (a) => {
-              const contentRes = await fetch(
+              const contentRes = await fetchWithTimeout(
                 `${GRAPH_BASE}/me/messages/${meta.id}/attachments/${a.id}/$value`,
                 { headers: { authorization: `Bearer ${fresh.accessToken}` } },
               );
@@ -248,7 +249,7 @@ export class OutlookService {
     if (!clientId || !clientSecret) {
       throw new Error('MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET are required');
     }
-    const res = await fetch(MS_TOKEN_URL, {
+    const res = await fetchWithTimeout(MS_TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -281,7 +282,7 @@ export class OutlookService {
   }
 
   private async fetchUserEmail(accessToken: string): Promise<string | undefined> {
-    const res = await fetch(`${GRAPH_BASE}/me`, {
+    const res = await fetchWithTimeout(`${GRAPH_BASE}/me`, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`graph me ${res.status}`);

@@ -60,6 +60,11 @@ export class ScannerService implements OnModuleDestroy {
       return { state: 'running', watchPath: this.watchPath };
     }
     await fs.mkdir(this.watchPath, { recursive: true });
+    // Pre-create the `.processed/` subdir so the first ingest doesn't
+    // race on directory creation. chokidar already ignores dotfile
+    // paths via the regex at line 73, so files moved here will not be
+    // re-fired as 'add'.
+    await fs.mkdir(path.join(this.watchPath, '.processed'), { recursive: true });
 
     const watcher = chokidar.watch(this.watchPath, {
       ignoreInitial: true,
@@ -170,6 +175,20 @@ export class ScannerService implements OnModuleDestroy {
       { source: 'file-watcher', scannedFilename: fileName },
     );
     this.logger.log(`scanner ingested ${fileName} for tenant ${tenant.id}`);
+
+    // Move the processed file to `.processed/` so subsequent restarts
+    // (or an admin touching the file) do not re-ingest it. A failure
+    // here is non-fatal — the ingest already succeeded and the next
+    // ingest would be a no-op via the fileHash dedup path.
+    const processedDir = path.join(path.dirname(filePath), '.processed');
+    try {
+      await fs.mkdir(processedDir, { recursive: true });
+      await fs.rename(filePath, path.join(processedDir, fileName));
+    } catch (err) {
+      this.logger.warn(
+        `scanner could not move ${fileName} to .processed/: ${(err as Error).message}`,
+      );
+    }
   }
 
   private mimeForExt(ext: string): string | null {

@@ -118,6 +118,42 @@ describe('GmailService.handleCallback', () => {
   });
 });
 
+describe('fetchWithTimeout', () => {
+  let originalFetch: any;
+  beforeEach(() => {
+    originalFetch = (globalThis as any).fetch;
+    process.env.INTEGRATION_ENC_KEY = 'integration-secret-key';
+  });
+  afterEach(() => {
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  it('rejects with an AbortError when the upstream hangs beyond the timeout', async () => {
+    // Simulate a hanging upstream by attaching an abort listener and
+    // rejecting manually. This exercises fetchWithTimeout's signal
+    // wiring without depending on wall-clock waits.
+    const hangingFetch = jest
+      .fn()
+      .mockImplementation((_url: any, opts: any) => {
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      });
+    (globalThis as any).fetch = hangingFetch;
+
+    // Inline-import the helper for the unit test.
+    const { fetchWithTimeout } = require('../fetch-with-timeout');
+    await expect(
+      fetchWithTimeout('http://example.test', {}, 50),
+    ).rejects.toThrow();
+    expect(hangingFetch).toHaveBeenCalled();
+  });
+});
+
 describe('GmailService.pollTenant', () => {
   let originalFetch: any;
   beforeEach(() => {

@@ -12,11 +12,17 @@ import { OutlookService } from './outlook.service';
  * Each per-tenant `lastSyncAt` is updated by the provider services, so
  * a retry of the same run won't double-process. `lastSyncStatus` in the
  * `Integration` row holds the previous successful sync marker.
+ *
+ * Concurrency: Gmail and Outlook are polled in parallel
+ * (`Promise.allSettled`) so a slow/hung provider does not starve the
+ * other. Each provider has its own in-progress flag so a re-entrant
+ * tick can't double-schedule the same workload.
  */
 @Injectable()
 export class PollerService {
   private readonly logger = new Logger(PollerService.name);
-  private running = false;
+  private gmailRunning = false;
+  private outlookRunning = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -26,34 +32,40 @@ export class PollerService {
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async pollAll() {
-    if (this.running) {
+    if (this.gmailRunning || this.outlookRunning) {
       this.logger.warn('email poller still running — skipping this tick');
       return;
     }
-    this.running = true;
+    this.gmailRunning = true;
+    this.outlookRunning = true;
     try {
-      const integrations = await this.prisma.integration.findMany({
-        where: {
-          provider: { in: ['gmail', 'outlook'] },
-          isActive: true,
-        },
-        select: { tenantId: true, provider: true },
-      });
-      for (const integration of integrations) {
-        try {
-          if (integration.provider === 'gmail') {
-            await this.gmail.pollTenant(integration.tenantId);
-          } else if (integration.provider === 'outlook') {
-            await this.outlook.pollTenant(integration.tenantId);
-          }
-        } catch (err) {
-          this.logger.error(
-            `poller failed for ${integration.provider}/${integration.tenantId}: ${(err as Error).message}`,
-          );
-        }
-      }
+      await Promise.allSettled([
+        this.pollProvider('gmail'),
+        this.pollProvider('outlook'),
+      ]);
     } finally {
-      this.running = false;
+      this.gmailRunning = false;
+      this.outlookRunning = false;
+    }
+  }
+
+  private async pollProvider(provider: 'gmail' | 'outlook'): Promise<void> {
+    const integrations = await this.prisma.integration.findMany({
+      where: { provider, isActive: true },
+      select: { tenantId: true },
+    });
+    for (const integration of integrations) {
+      try {
+        if (provider === 'gmail') {
+          await this.gmail.pollTenant(integration.tenantId);
+        } else {
+          await this.outlook.pollTenant(integration.tenantId);
+        }
+      } catch (err) {
+        this.logger.error(
+          `poller failed for ${provider}/${integration.tenantId}: ${(err as Error).message}`,
+        );
+      }
     }
   }
 }

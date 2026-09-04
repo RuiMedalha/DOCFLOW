@@ -9,6 +9,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PartyAddressType } from '@prisma/client';
+import { IsValidCountryCode } from '../../../common/validation/country-code.validator';
 
 /**
  * Body for POST /parties/:partyId/addresses — add a new address.
@@ -39,6 +40,12 @@ export class CreatePartyAddressDto {
   @ApiPropertyOptional({ example: '1050-070' })
   @IsOptional()
   @IsString()
+  // Sprint G review §8-A: this regex is intentionally permissive — it
+  // accepts any combination of digits / letters / hyphens / spaces up to
+  // 20 chars (e.g. `---` or `   ` would technically pass). A
+  // country-aware strict regex (PT `^\d{4}-\d{3}$`, ES, FR, ...) would
+  // break for cross-border addresses. Keep loose for MVP; tighten when
+  // the product wires country-aware validation.
   @Matches(/^[0-9A-Za-z\- ]{3,20}$/, {
     message: 'Código postal inválido',
   })
@@ -52,7 +59,8 @@ export class CreatePartyAddressDto {
 
   @ApiPropertyOptional({
     example: 'PT',
-    description: 'ISO 3166-1 alpha-2 country code',
+    description:
+      'ISO 3166-1 alpha-2 country code (validated against the allow-list — see IsValidCountryCode).',
     default: 'PT',
   })
   @IsOptional()
@@ -60,7 +68,12 @@ export class CreatePartyAddressDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
-  @MaxLength(2)
+  // Sprint G review §13-A fix-up: validate the country against ISO
+  // 3166-1 alpha-2. Previously a typo like "XX" would silently pass
+  // (only upper-cased + length-capped). The allow-list lives in
+  // common/validation/country-code.validator.ts and covers the EU/EFTA
+  // + common LATAM/APAC/MEA partners DocFlow deals with.
+  @IsValidCountryCode()
   country?: string;
 
   @ApiPropertyOptional({

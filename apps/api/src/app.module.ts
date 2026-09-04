@@ -80,6 +80,16 @@ import { HealthModule } from './modules/health/health.module';
         ttl: 60 * 1000,
         limit: 1,
       },
+      // /parties/:id/contacts + /parties/:id/addresses POST/PATCH/DELETE
+      // (Sprint G review §4-A fix-up). 30/min/tenant — tighter than the
+      // global 100/60s default, still leaves headroom for power users
+      // doing bulk edits, but makes a runaway script hit 429 before
+      // it can spam master-data CRUD.
+      {
+        name: 'master-write',
+        ttl: 60 * 1000,
+        limit: 30,
+      },
     ]),
     ScheduleModule.forRoot(),
     BullModule.forRootAsync({

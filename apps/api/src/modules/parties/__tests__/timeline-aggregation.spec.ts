@@ -27,6 +27,8 @@ const TENANT_B = 'tenant-B';
 const PARTY_A = 'party-A';
 
 function buildPrisma(opts: {
+  /** when provided, party.findFirst returns this party for matching tenantId */
+  party?: { id: string; tenantId: string };
   audits?: Array<{
     id: string;
     tenantId: string;
@@ -56,7 +58,18 @@ function buildPrisma(opts: {
     approvedAt: Date;
   }>;
 } = {}) {
+  // Default to PARTY_A in TENANT_A so the assertPartyInTenant guard
+  // (Sprint G review §A2) passes for the common case.
+  const partyRow = opts.party ?? { id: PARTY_A, tenantId: TENANT_A };
   return {
+    party: {
+      findFirst: jest.fn(async ({ where }: any = {}) => {
+        if (!where?.id || !where?.tenantId) return null;
+        return partyRow.id === where.id && partyRow.tenantId === where.tenantId
+          ? { id: partyRow.id }
+          : null;
+      }),
+    },
     auditLog: {
       findMany: jest.fn(async ({ where }: any = {}) => {
         return (opts.audits ?? [])

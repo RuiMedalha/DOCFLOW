@@ -32,6 +32,17 @@ function buildPrisma(opts: {
   approvedDocs: Array<{ id: string; approvedAt: Date }>;
 }) {
   return {
+    // Sprint G review §A2: assertPartyInTenant guard runs before the
+    // 4-source aggregation. The mock MUST return a party for the common
+    // case (TENANT_A + PARTY_A) so the guard doesn't fail these tests.
+    party: {
+      findFirst: jest.fn(async ({ where }: any = {}) => {
+        if (where?.id === PARTY_A && where?.tenantId === TENANT_A) {
+          return { id: PARTY_A };
+        }
+        return null;
+      }),
+    },
     auditLog: {
       findMany: jest.fn(async ({ where }: any = {}) => {
         // NB: the mock returns ALL matching rows — the service is

@@ -26,6 +26,17 @@ function buildPrisma(opts: {
 } = {}) {
   const events = new Map((opts.events ?? []).map((e) => [e.id, e]));
   return {
+    // Sprint G review §A2: assertPartyInTenant guard runs before the
+    // JOIN query. The mock returns PARTY_A in TENANT_A so the guard
+    // passes for the common test cases.
+    party: {
+      findFirst: jest.fn(async ({ where }: any = {}) => {
+        if (where?.id === PARTY_A && where?.tenantId === TENANT_A) {
+          return { id: PARTY_A };
+        }
+        return null;
+      }),
+    },
     paymentEvent: {
       findMany: jest.fn(
         async ({

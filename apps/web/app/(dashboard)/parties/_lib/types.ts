@@ -234,7 +234,13 @@ export interface PartyAddress {
 export interface PartyPaymentEvent {
   id: string;
   documentId: string;
-  document: { id: string; docNumber: string | null; fileKey: string } | null;
+  /**
+   * Sprint G review §A1 fix-up: `fileKey` intentionally OMITTED. fileKey
+   * is the on-disk storage path (`tenants/<id>/<year>/<month>/<id>.pdf`)
+   * — exposing it leaks the tenant's folder layout. UI uses `docNumber`
+   * as the human-readable label (see payments-tab.tsx).
+   */
+  document: { id: string; docNumber: string | null } | null;
   dueDate: string;
   amount: string | null;
   status: 'PENDING' | 'PAID' | 'OVERDUE';
@@ -269,7 +275,9 @@ export type TimelineEvent =
       amount: string | null;
       status: string;
       documentId: string;
-      document: { id: string; docNumber: string | null; fileKey: string } | null;
+      // Sprint G review §A1 fix-up: fileKey intentionally OMITTED — see
+      // PartyPaymentEvent above for the rationale.
+      document: { id: string; docNumber: string | null } | null;
     }
   | {
       id: string;

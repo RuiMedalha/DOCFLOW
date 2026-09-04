@@ -47,6 +47,13 @@ export class CreatePartyContactDto {
   @ApiPropertyOptional({ example: '+351 210 000 001' })
   @IsOptional()
   @IsString()
+  // Sprint G review §8-A: this regex is intentionally permissive — it
+  // accepts any combination of digits / spaces / `+` / `-` / parentheses
+  // (e.g. `++++`, `   `, `---` would technically pass). We keep it loose
+  // because phone numbers are copy-pasted from invoices / emails / vCards
+  // and a strict PT-only regex would reject valid international formats
+  // pasted by users. If a tighter rule is needed, country-aware validation
+  // can be added as a follow-up — see docs/decisions/contact-validation.md.
   @Matches(/^[+0-9 ()\-]{4,30}$/, {
     message: 'Telefone deve ter 4-30 caracteres e apenas dígitos/espaços/+/-/()',
   })

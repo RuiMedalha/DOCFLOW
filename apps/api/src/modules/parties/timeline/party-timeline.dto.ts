@@ -29,7 +29,12 @@ export interface PaymentTimelineEvent extends TimelineEventBase {
   amount: string | null;
   status: string;
   documentId: string;
-  document: { id: string; docNumber: string | null; fileKey: string } | null;
+  // Security fix-up (Sprint G review §A1): fileKey intentionally OMITTED.
+  // fileKey is the on-disk storage path (e.g. `tenants/<id>/<year>/<month>/<id>.pdf`)
+  // and exposing it leaks the tenant's folder layout. The UI only needs
+  // `docNumber` as the human-readable label — same convention as the
+  // existing DocumentsModule responses.
+  document: { id: string; docNumber: string | null } | null;
 }
 
 export interface IbanChangeTimelineEvent extends TimelineEventBase {

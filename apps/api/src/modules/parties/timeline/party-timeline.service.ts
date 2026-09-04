@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { TimelineEvent } from './party-timeline.dto';
 
@@ -57,6 +57,18 @@ export class PartyTimelineService {
     cursor?: string,
     limit = 20,
   ) {
+    // Security fix-up (Sprint G review §A2): assert party belongs to
+    // tenant BEFORE running the 4-source aggregation. Mirrors the
+    // assertPartyInTenant guard in party-contacts / party-addresses
+    // services — closes the parity gap where timeline/payments used to
+    // return 200 + empty array for a cross-tenant partyId (an
+    // information-disclosure asymmetry vs the other party endpoints).
+    const party = await this.prisma.party.findFirst({
+      where: { id: partyId, tenantId },
+      select: { id: true },
+    });
+    if (!party) throw new NotFoundException('Entidade não encontrada');
+
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const parsedCursor = cursor ? this.decodeCursor(cursor) : null;
 
@@ -100,9 +112,13 @@ export class PartyTimelineService {
         },
         orderBy: [{ dueDate: 'desc' }, { id: 'desc' }],
         take: 200,
+        // Security fix-up (Sprint G review §A1): fileKey intentionally
+        // OMITTED. fileKey is the on-disk storage path
+        // (`tenants/<id>/<year>/<month>/<id>.pdf`); exposing it leaks the
+        // tenant's folder layout. UI uses docNumber as the label.
         include: {
           document: {
-            select: { id: true, docNumber: true, fileKey: true },
+            select: { id: true, docNumber: true },
           },
         },
       }),

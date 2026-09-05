@@ -59,11 +59,22 @@ function StatusDot({ tone }: { tone: 'ok' | 'warn' | 'alert' | 'neutral' }) {
 }
 
 export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarningProps) {
+  // Normalise: backend may wrap the array in an envelope (e.g. { data: [...] }
+  // or { items: [...] }). Always coerce to an array so `.map()` and `.length`
+  // never throw on a response shape change.
+  const historyList: IbanHistoryEntry[] = Array.isArray(history)
+    ? history
+    : Array.isArray((history as any)?.items)
+    ? ((history as any).items as IbanHistoryEntry[])
+    : Array.isArray((history as any)?.data)
+    ? ((history as any).data as IbanHistoryEntry[])
+    : [];
+
   // No IBAN extracted → nothing to verify.
   if (!currentIban) return null;
 
   // No history yet (new supplier or first invoice) → advisory chip only.
-  if (history.length === 0) {
+  if (historyList.length === 0) {
     return (
       <div
         role="status"
@@ -106,7 +117,7 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
   }
 
   const current = normalise(currentIban);
-  const knownIbans = new Set(history.map((h) => normalise(h.iban)));
+  const knownIbans = new Set(historyList.map((h) => normalise(h.iban)));
   const matches = knownIbans.has(current);
 
   if (matches) {
@@ -131,7 +142,7 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
   }
 
   // Mismatch — red warning, full evidence.
-  const knownList = history
+  const knownList = historyList
     .map((h) => `${h.iban} (${h.documentCount}× desde ${h.firstSeenAt.slice(0, 10)})`)
     .join(' · ');
 

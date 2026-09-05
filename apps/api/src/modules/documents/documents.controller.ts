@@ -178,6 +178,24 @@ export class DocumentsController {
     return this.documents.approve(user.tenantId, user.id, id);
   }
 
+  @Post(':id/re-extract')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Re-run the extraction + enrichment pipeline on an existing document',
+    description:
+      'Resets the document\'s processingStatus to RECEIVED and re-publishes `document.uploaded` so the 4-stage pipeline (RECEIVED → EXTRACTING → ENRICHING → COMPLETED) re-runs end-to-end. The actual extraction work happens asynchronously — clients observe progress via the SSE channel.',
+  })
+  @ApiResponse({ status: 202, description: 'Re-extraction queued' })
+  @ApiResponse({ status: 404, description: 'Document not found' })
+  async reExtract(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ documentId: string; status: 're-extraction triggered' }> {
+    const doc = await this.documents.reExtract(user.tenantId, user.id, id);
+    return { documentId: doc.id, status: 're-extraction triggered' };
+  }
+
   @Get(':id/items')
   @ApiOperation({ summary: 'List document line items' })
   @ApiResponse({ status: 404, description: 'Document not found' })

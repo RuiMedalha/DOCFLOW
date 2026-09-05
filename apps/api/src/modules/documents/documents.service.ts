@@ -937,6 +937,105 @@ export class DocumentsService {
     return this.sanitize(updated);
   }
 
+  // ─────────────────────────────────────────── re-extract ────────────────
+
+  /**
+   * Force a re-run of the extraction + enrichment pipeline for a document
+   * that already exists. Resets `processingStatus` to RECEIVED so the
+   * pipeline idempotency guard allows the doc to be picked up again, and
+   * publishes `document.uploaded` — the same event the upload path uses.
+   * The ProcessingService.handleReceived handler is responsible for the
+   * EXTRACTING → ENRICHING → COMPLETED transition.
+   *
+   * Used by the "Re-extrair dados" UI button when the AI missed fields or
+   * produced a low-confidence payload. The endpoint is the canonical
+   * surface; the previous /extraction/documents/:id queue trigger is
+   * kept for direct QR/OCR reprompts.
+   */
+  async reExtract(tenantId: string, userId: string, id: string) {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        status: true,
+        fileKey: true,
+        mimeType: true,
+        fileName: true,
+        fileSize: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const triggerAt = new Date().toISOString();
+
+    // Reset processingStatus — the pipeline's handleReceived idempotency
+    // guard skips docs whose status !== RECEIVED. Bumping `startedAt`
+    // also gives the UI's "stuck on EXTRACTING" SSE consumer a fresh
+    // signal to refresh.
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        processingStatus: DocumentProcessingStatus.RECEIVED,
+        processingStartedAt: new Date(triggerAt),
+        processingCompletedAt: null,
+        processingError: null,
+      },
+    });
+
+    this.logger.log(
+      `[reExtract] pipeline trigger for document=${existing.id} ` +
+        `tenant=${tenantId} at=${triggerAt}`,
+    );
+
+    // Same payload shape as upload() — handling is identical from the
+    // pipeline's perspective. Publishing `document.uploaded` (not
+    // `document.received`) routes through ProcessingService.handleReceived
+    // which owns the 4-stage state machine.
+    try {
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: existing.id,
+        tenantId,
+        userId,
+        fileKey: existing.fileKey,
+        mimeType: existing.mimeType,
+        fileSize: existing.fileSize,
+        originalFilename: existing.fileName,
+        uploadedAt: triggerAt,
+      });
+      publishPromise
+        .then(() => {
+          const elapsed = Date.now() - new Date(triggerAt).getTime();
+          this.logger.log(
+            `[reExtract] pipeline trigger queued for document=${existing.id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
+          );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `[reExtract] pipeline trigger FAILED for document=${existing.id} ` +
+              `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+          );
+        });
+    } catch (err) {
+      this.logger.error(
+        `[reExtract] pipeline trigger SYNC THROW for document=${existing.id} ` +
+          `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: { subAction: 're-extraction.triggered' } as Prisma.InputJsonValue,
+    });
+
+    return existing;
+  }
+
   private async createPaymentEventIfMissing(
     tenantId: string,
     document: {

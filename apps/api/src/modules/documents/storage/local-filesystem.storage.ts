@@ -36,6 +36,16 @@ export class LocalFilesystemStorage implements StorageService, OnModuleInit {
     );
   }
 
+  /**
+   * Absolute path of the uploads root. Exposed for sibling modules that
+   * need to list the filesystem (e.g. the storage tree browser) — they
+   * MUST still apply tenant-scoping and path sanitization on top, never
+   * trust caller-supplied keys verbatim.
+   */
+  get uploadsRoot(): string {
+    return this.rootDir;
+  }
+
   async onModuleInit(): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
     this.logger.log(`LocalFilesystemStorage ready at ${this.rootDir}`);

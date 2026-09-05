@@ -47,7 +47,9 @@ export class QueueModule {
               useExisting: EventEmitterAdapter,
             },
           ],
-      exports: [QUEUE_ADAPTER, BullmqAdapter, EventEmitterAdapter, EventEmitter2],
+      exports: useBullmq
+        ? [QUEUE_ADAPTER, BullmqAdapter]
+        : [QUEUE_ADAPTER, EventEmitterAdapter, EventEmitter2],
       global: true,
     };
   }

@@ -184,13 +184,16 @@ export function useReExtract() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) =>
-      apiFetch<DocumentDetail>(`/extraction/documents/${id}`, { method: 'POST' }),
-    onSuccess: (doc, id) => {
+      apiFetch<{ documentId: string; status: 're-extraction triggered' }>(
+        `/documents/${id}/re-extract`,
+        { method: 'POST' },
+      ),
+    onSuccess: (_result, id) => {
+      // The backend re-publishes document.uploaded; SSE picks up the
+      // status transitions (RECEIVED -> EXTRACTING -> ENRICHING -> COMPLETED)
+      // automatically. We invalidate the detail cache so any non-SSE
+      // fields (status, error) refresh after the pipeline finishes.
       qc.invalidateQueries({ queryKey: ['document-detail', id] });
-      qc.setQueryData(['document-detail', id], (prev: any) => {
-        if (!prev) return prev;
-        return { ...prev, document: { ...prev.document, ...doc } };
-      });
     },
   });
 }

@@ -53,6 +53,8 @@ import { EnrichmentModule } from './modules/enrichment/enrichment.module';
 // QueueModule is global-with-factory; we MUST call .forRoot() here so
 // ProcessingService can resolve the QueueAdapter at construction time.
 import { QueueModule } from './common/queue/queue.module';
+// Sprint H+ fix-up — filesystem tree browser for the /storage UI page.
+import { StorageBrowseModule } from './modules/storage/storage.module';
 
 @Module({
   imports: [
@@ -163,6 +165,7 @@ import { QueueModule } from './common/queue/queue.module';
     ProcessingModule,
     TenantsModule,
     EnrichmentModule,
+    StorageBrowseModule,
   ],
   providers: [
     // Global rate-limit guard (custom: tracks by IP/tenant/user via ThrottleBucketGuard)

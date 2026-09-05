@@ -216,19 +216,24 @@ export default function DocumentDetailPage() {
   const onReExtract = useCallback(async () => {
     if (!id) return;
     try {
-      const result: any = await reExtract.mutateAsync(id);
+      await reExtract.mutateAsync(id);
       setDraft(null);
-      // The backend runs the extraction synchronously (no queue) and returns
-      // the updated doc. Force a refetch so any cache-only fields refresh.
-      qc.invalidateQueries({ queryKey: ['document-detail', id] });
-      const fieldsPopulated = Array.isArray(result?.fieldsPopulated) ? result.fieldsPopulated : [];
+      // Backend returns 202 immediately; the actual extraction runs
+      // async via the processing pipeline. The hook's onSuccess
+      // already invalidated the detail cache; SSE will push the
+      // processingStatus transitions (RECEIVED -> EXTRACTING ->
+      // ENRICHING -> COMPLETED) as they happen, and the field
+      // values land via the document-detail refetch the SSE consumer
+      // triggers on terminal states.
       toastBus.success(
-        fieldsPopulated.length
-          ? `Re-extração concluída — ${fieldsPopulated.length} campo(s) atualizado(s).`
-          : 'Re-extração concluída.',
+        'Re-extração iniciada — processamento vai completar em segundos.',
       );
     } catch (err: any) {
-      toastBus.error(err?.message ?? 'Falha na re-extração.');
+      const message =
+        typeof err?.message === 'string' && err.message.length > 0
+          ? err.message
+          : 'Falha na re-extração.';
+      toastBus.error(`Re-extract failed: ${message}`);
     }
   }, [id, reExtract, qc]);
 

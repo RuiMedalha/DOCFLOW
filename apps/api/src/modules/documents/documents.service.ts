@@ -557,6 +557,24 @@ export class DocumentsService {
     return this.sanitize(doc);
   }
 
+  /**
+   * GET /documents/:id/iban-history — convenience wrapper used by the document
+   * detail page. Resolves the document → linked party, then returns that
+   * party's IBAN change rows. Returns `{ items: [] }` when the document has
+   * no party yet (so the UI shows the empty state instead of a 404).
+   */
+  async listIbanHistoryForDocument(tenantId: string, documentId: string) {
+    const doc = await this.prisma.document.findFirst({
+      where: { id: documentId, tenantId },
+      select: { partyId: true },
+    });
+    if (!doc?.partyId) return { items: [] };
+    return { items: await this.prisma.ibanHistory.findMany({
+      where: { tenantId, partyId: doc.partyId },
+      orderBy: { createdAt: 'desc' },
+    }) };
+  }
+
   // ─────────────────────────────────────────── update ───────────────────
 
   async update(

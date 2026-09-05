@@ -50,6 +50,8 @@ import { ProcessingModule } from './modules/documents/processing/processing.modu
 import { TenantsModule } from './modules/tenants/tenants.module';
 // Sprint I — external-API enrichment (Sabi PT / VIES / manual).
 import { EnrichmentModule } from './modules/enrichment/enrichment.module';
+// Static chart-of-accounts stub for the document detail debit/credit dropdowns.
+import { AccountingModule } from './modules/accounting/accounting.module';
 // QueueModule is global-with-factory; we MUST call .forRoot() here so
 // ProcessingService can resolve the QueueAdapter at construction time.
 import { QueueModule } from './common/queue/queue.module';
@@ -165,6 +167,7 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
     ProcessingModule,
     TenantsModule,
     EnrichmentModule,
+    AccountingModule,
     StorageBrowseModule,
   ],
   providers: [

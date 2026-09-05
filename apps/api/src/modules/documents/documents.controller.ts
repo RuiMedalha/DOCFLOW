@@ -325,6 +325,22 @@ export class DocumentsController {
     return this.documents.getFileUrl(user.tenantId, id);
   }
 
+  // ────────────────────────────────────── iban-history ───────────────────
+
+  @Get(':id/iban-history')
+  @ApiOperation({
+    summary: 'IBAN change history for the supplier party behind this document',
+    description:
+      'Resolves the document → linked party, then returns the IBAN change rows for that party. Returns an empty list when the document is not yet linked to a party.',
+  })
+  @ApiResponse({ status: 200, description: 'IbanHistory rows for the resolved party' })
+  async ibanHistory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.documents.listIbanHistoryForDocument(user.tenantId, id);
+  }
+
   // ─────────────────────────────────────────── delete ───────────────────
 
   @Delete(':id')

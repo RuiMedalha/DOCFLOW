@@ -9,6 +9,7 @@ import {
 import {
   AuditAction,
   DocumentOrigin,
+  DocumentProcessingStatus,
   DocumentStatus,
   DocumentType,
   Prisma,
@@ -37,6 +38,11 @@ import {
 import { StorageService } from './storage/storage-service.interface';
 import { buildDocumentPath } from './storage/path-builder';
 import { slugify } from '../../common/storage/slug';
+import { docLockKey } from '../../common/locks';
+import {
+  QUEUE_ADAPTER,
+  type QueueAdapter,
+} from '../../common/queue/queue-adapter.interface';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
@@ -92,6 +98,12 @@ export class DocumentsService {
     // resolved to null.
     private readonly extraction: ExtractionService,
     private readonly imageToPdf: ImageToPdfService,
+    // Sprint H — publish `document.uploaded` to the queue so the
+    // ProcessingService pipeline picks the doc up. The QueueAdapter is
+    // supplied by QueueModule.forRoot() (eventemitter in dev, BullMQ in
+    // prod). Injecting here avoids the previous static accessor pattern
+    // (security-audit H-5) that broke cross-pod delivery.
+    @Inject(QUEUE_ADAPTER) private readonly queue: QueueAdapter,
   ) {
     if (!extraction) {
       this.logger.error(
@@ -225,6 +237,13 @@ export class DocumentsService {
           type: this.coerceType(preType),
           suggestedFolder,
           finalFolder: suggestedFolder,
+          // Sprint H — seed processingStatus so the pipeline can pick
+          // up the doc via the `document.uploaded` queue event. Without
+          // this, the ProcessingService handleReceived idempotency
+          // guard (which checks `processingStatus !== RECEIVED`) would
+          // skip the doc entirely and the pipeline would never advance.
+          processingStatus: DocumentProcessingStatus.RECEIVED,
+          processingStartedAt: new Date(),
           // Keep the human-facing filename the user uploaded as
           // `fileName` for now — extraction hasn't run, so we don't yet
           // know supplier/docNumber. After extraction populates those
@@ -264,70 +283,62 @@ export class DocumentsService {
       metadata: { fileName: file.originalname, size: file.size, mimeType: file.mimetype },
     });
 
-    // Auto-trigger extraction — fires-and-forgets so the upload
-    // response isn't blocked by OCR/QR decode. The worker (or the
-    // service's sync fallback) owns the resulting writes.
+    // Auto-trigger the processing pipeline — publishes
+    // `document.uploaded` on the queue. The ProcessingService picks the
+    // event up via `subscribeBatch` and runs handleReceived (RECEIVED
+    // → EXTRACTING → enqueue extraction → ... → COMPLETED).
+    //
+    // Why a queue publish instead of calling extraction.enqueue
+    // directly: the new pipeline is responsible for the WHOLE 4-stage
+    // flow. Bypassing it via direct extraction.enqueue would leave the
+    // SSE controller and the doc's `processingStatus` column out of
+    // sync with reality.
     //
     // HARDENED 2026-09-01: the previous fire-and-forget had two silent
-    // failure modes that left Documents stuck in NOVO:
-    //   1) If `this.extraction` was somehow null/undefined the call
-    //      threw synchronously, the .catch swallowed it, and the
-    //      document was never updated.
-    //   2) If the enqueue Promise was lost (e.g. last fire-and-forget
-    //      promise after the response already went out) the .catch never
-    //      attached and the rejection became an unhandled rejection.
-    // We now:
-    //   - Log "auto-extract trigger" BEFORE invoking enqueue so we can
-    //     see in the API log that the trigger fired.
-    //   - Wrap the synchronous part in try/catch so a TypeError on a
-    //     null extraction (defensive) becomes a logged error.
+    // failure modes that left Documents stuck in NOVO. We now:
+    //   - Log "pipeline trigger" BEFORE invoking publish so the API log
+    //     records the trigger fire.
+    //   - Wrap in try/catch so a TypeError on a null queue (defensive)
+    //     becomes a logged error.
     //   - Attach .then() AND .catch() to the Promise to log outcome
     //     regardless of which path it takes.
-    //   - Write a `metadata.extraction.trigger` audit entry even if the
-    //     enqueue fails — so the row never ends up silent.
     const triggerAt = new Date().toISOString();
     this.logger.log(
-      `[upload] auto-extract trigger for document=${doc.id} ` +
+      `[upload] pipeline trigger for document=${doc.id} ` +
         `tenant=${tenantId} at=${triggerAt}`,
     );
     try {
-      const enqueuePromise = this.extraction.enqueue({
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: doc.id,
         tenantId,
         userId,
-        documentId: doc.id,
+        fileKey: doc.fileKey,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        originalFilename: file.originalname,
+        uploadedAt: triggerAt,
       });
-      // Log the eventual outcome (success or rejection). This runs
-      // AFTER the upload response goes out — that's fine, fire-and-forget
-      // is the contract — but the operator can now ALWAYS see whether
-      // extraction started and what its final disposition was.
-      enqueuePromise
-        .then((result) => {
+      publishPromise
+        .then(() => {
           const elapsed = Date.now() - new Date(triggerAt).getTime();
           this.logger.log(
-            `[upload] auto-extract finished for document=${doc.id} ` +
-              `tenant=${tenantId} in ${elapsed}ms (ok=${result.ok}, ` +
-              `source=${result.source ?? "?"}, confidence=${result.confidence ?? "?"}, ` +
-              `reason=${(result as { reason?: string }).reason ?? "n/a"})`,
+            `[upload] pipeline trigger queued for document=${doc.id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
           );
         })
         .catch((err) => {
           this.logger.error(
-            `[upload] auto-extract FAILED for document=${doc.id} ` +
+            `[upload] pipeline trigger FAILED for document=${doc.id} ` +
               `tenant=${tenantId}. Reason: ${(err as Error).message}`,
-          );
-          this.logger.error(
-            `[upload] auto-extract stack: ${(err as Error).stack ?? "(no stack)"}`,
           );
         });
     } catch (err) {
-      // Synchronous throw — e.g. this.extraction is null in a mis-wired
+      // Synchronous throw — e.g. this.queue is null in a mis-wired
       // module setup. Log loud so the operator sees it.
       this.logger.error(
-        `[upload] auto-extract SYNC THROW for document=${doc.id} ` +
+        `[upload] pipeline trigger SYNC THROW for document=${doc.id} ` +
           `tenant=${tenantId}. Reason: ${(err as Error).message}`,
-      );
-      this.logger.error(
-        `[upload] auto-extract sync stack: ${(err as Error).stack ?? "(no stack)"}`,
       );
     }
 
@@ -808,7 +819,12 @@ export class DocumentsService {
       select: { id: true, fileName: true, mimeType: true, fileKey: true, pdfKey: true },
     });
     if (!doc) throw new NotFoundException('Document not found');
-    const url = await this.storage.getSignedUrl(doc.fileKey, 300);
+    // Sprint H security-audit M-14 — local driver returns an empty
+    // string (with a WARN log inside the driver) because no signed URL
+    // exists. We fall back to the controller's download route. S3/
+    // MinIO drivers will return a real presigned URL here.
+    const signedUrl = await this.storage.getSignedUrl(doc.fileKey, 300);
+    const url = signedUrl || `/api/v1/documents/${doc.id}/download`;
     return { url, fileName: doc.fileName, mimeType: doc.mimeType };
   }
 
@@ -971,7 +987,7 @@ export class DocumentsService {
     // Derive a stable 63-bit signed bigint from the document id. SHA-256
     // truncated to 8 bytes (bit 63 zeroed to keep it positive — Postgres
     // advisory locks are bigint).
-    const lockKey = this.docLockKey(documentId);
+    const lockKey = docLockKey(documentId);
 
     // Serialise the DB-side read + update for this document. The tx body
     // is short (one read, one update, one audit row) so the lock hold
@@ -1110,15 +1126,12 @@ export class DocumentsService {
    * approves on the same document serialize on the same lock. The hash
    * is truncated to 8 bytes and bit 63 is cleared (Postgres bigint is
    * signed; an advisory lock key outside the int64 range errors).
+   *
+   * NOTE: this method now delegates to the centralised helper in
+   * `common/locks.ts`. Previously `processing.service.ts` had its own
+   * derivation that produced DIFFERENT keys for the same docId — see
+   * security-audit finding M-3.
    */
-  private docLockKey(documentId: string): bigint {
-    const h = crypto.createHash('sha256').update(documentId).digest();
-    // Read the first 8 bytes as a big-endian unsigned int, then clear
-    // the sign bit and convert to BigInt. Range: 0 .. 2^63-1.
-    const view = new DataView(h.buffer, h.byteOffset, h.byteLength);
-    const unsigned = view.getBigUint64(0, false);
-    return unsigned & 0x7fffffffffffffffn;
-  }
 
   // ─────────────────────────────────────────── items ─────────────────────
 

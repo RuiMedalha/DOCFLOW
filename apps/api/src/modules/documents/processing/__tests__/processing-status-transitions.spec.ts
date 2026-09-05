@@ -58,6 +58,15 @@ function buildEvents() {
   return { emit: jest.fn(), drop: jest.fn() } as unknown as ProcessingEventsStore;
 }
 
+function buildQueue() {
+  return {
+    driver: 'eventemitter' as const,
+    publish: jest.fn(async () => undefined),
+    subscribe: jest.fn(),
+    subscribeBatch: jest.fn(),
+  } as unknown as import('../../../../common/queue/queue-adapter.interface').QueueAdapter;
+}
+
 function buildService(prisma: any) {
   return new ProcessingService(
     prisma as any,
@@ -65,6 +74,7 @@ function buildService(prisma: any) {
     buildEvents(),
     buildExtraction(),
     buildDocuments(),
+    buildQueue(),
   );
 }
 

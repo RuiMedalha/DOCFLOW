@@ -70,8 +70,14 @@ export interface StorageService {
 
   /**
    * Driver label for logging/metrics.
+   *
+   * `supabase` was added (security-audit M-13 / SCOUT §2.2) even
+   * though no driver implementation ships yet — the storage factory
+   * already reads `STORAGE_DRIVER` and falls back to `local` with a
+   * loud log for any other value, so listing it here is documentation
+   * of the public contract rather than a runtime change.
    */
-  readonly driver: 'local' | 's3' | 'minio';
+  readonly driver: 'local' | 's3' | 'minio' | 'supabase';
 }
 
 /** Nest DI token for the provider-agnostic storage interface. */

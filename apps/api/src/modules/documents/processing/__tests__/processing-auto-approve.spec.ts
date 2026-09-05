@@ -4,6 +4,7 @@ import { ProcessingEventsStore } from '../processing-events-store.service';
 import type { ExtractionService } from '../../../extraction/extraction.service';
 import type { AuditService } from '../../../audit/audit.service';
 import type { DocumentsService } from '../../documents.service';
+import type { QueueAdapter } from '../../../../common/queue/queue-adapter.interface';
 
 /**
  * ProcessingService — autoApprove behaviour (Sprint H).
@@ -80,12 +81,20 @@ function buildService(opts: {
     }))) as any),
   } as unknown as DocumentsService;
 
+  const queue = {
+    driver: 'eventemitter' as const,
+    publish: jest.fn(async () => undefined),
+    subscribe: jest.fn(),
+    subscribeBatch: jest.fn(),
+  } as unknown as QueueAdapter;
+
   const service = new ProcessingService(
     prisma as any,
     buildAudit(),
     buildEventsStore(),
     buildExtraction(),
     documents,
+    queue,
   );
   return { service, prisma, documents };
 }

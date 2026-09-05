@@ -8,6 +8,7 @@ import type { AuditService } from '../../audit/audit.service';
 import type { DocumentsService } from '../documents.service';
 import type { ExtractionService } from '../../extraction/extraction.service';
 import type { QueueAdapter } from '../../../common/queue/queue-adapter.interface';
+import { docLockKey } from '../../../common/locks';
 import { ProcessingEventsStore } from './processing-events-store.service';
 
 /**
@@ -23,14 +24,22 @@ import { ProcessingEventsStore } from './processing-events-store.service';
  * Every stage is idempotent: a second invocation after the doc has
  * already advanced past the stage is a no-op. We check the persisted
  * status at the start of the handler and bail if it's not the one we
- * expect. A `pg_advisory_xact_lock` per documentId (set up by the
- * caller — DocumentsService already serialises uploads) keeps the
- * read-modify-write cycle honest.
+ * expect. A `pg_advisory_xact_lock` per documentId (centralised in
+ * `common/locks.ts`) keeps the read-modify-write cycle honest.
  *
  * Failure path: any handler that throws is caught and the doc is
  * marked FAILED with the error message truncated to 500 chars. An
  * audit row with `subAction: 'processing.failed'` is written so
  * forensics can replay.
+ *
+ * Security notes (Sprint H security-audit 2026-09-05):
+ *   - Every `findFirst` is gated by `tenantId` (BOLA fix H-6).
+ *   - Every transaction acquires `pg_advisory_xact_lock` on the
+ *     centralised `docLockKey(documentId)` (race fix H-7).
+ *   - On idempotent skip, the SSE event is replayed when the doc
+ *     is already at the terminal state (UX fix H-8).
+ *   - Auto-approve writes a separate `processing.auto_approved`
+ *     audit row (audit fix H-10).
  */
 
 // ─── payloads ────────────────────────────────────────────────────────
@@ -85,7 +94,7 @@ interface TenantSettingsShape {
 
 interface ProcessingPrisma {
   document: {
-    findFirst: (args: { where: { id: string } }) => Promise<
+    findFirst: (args: { where: { id: string; tenantId?: string } }) => Promise<
       | {
           id: string;
           tenantId: string;
@@ -122,16 +131,16 @@ export class ProcessingService {
     private readonly events: ProcessingEventsStore,
     private readonly extraction: ExtractionService,
     private readonly documents: DocumentsService,
-    private readonly queue?: QueueAdapter,
+    private readonly queue: QueueAdapter,
   ) {
-    // Bind once when a queue is wired. Tests construct the service
-    // with no queue and call handlers directly — production wiring
-    // always provides a QueueAdapter.
-    if (this.queue) {
-      this.queue.subscribeBatch(TOPICS, async (payload: unknown) => {
-        await this.dispatch(payload);
-      });
-    }
+    // Bind once at construction time. Production always provides a
+    // QueueAdapter via QueueModule.forRoot() — we removed the @Optional
+    // accessor pattern (security-audit H-5) because the static accessor
+    // broke cross-pod delivery. Every event the pipeline emits must go
+    // through the same DI-injected instance.
+    this.queue.subscribeBatch(TOPICS, async (payload: unknown) => {
+      await this.dispatch(payload);
+    });
   }
 
   // ============================================================ handlers
@@ -143,9 +152,17 @@ export class ProcessingService {
   async handleReceived(evt: DocumentUploadedEvent): Promise<void> {
     await this.tryHandler(async () => {
       const updated = await this.prisma.$transaction(async (tx) => {
-        const doc = await tx.document.findFirst({ where: { id: evt.documentId } });
+        // H-7: serialise concurrent handlers on the same documentId
+        // using the centralised lock key (same key documents.service
+        // uses for relocate/approve — see common/locks.ts).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${docLockKey(evt.documentId)})`;
+        // H-6: gate every read by tenantId so a forged event for
+        // another tenant's docId is refused (BOLA).
+        const doc = await tx.document.findFirst({
+          where: { id: evt.documentId, tenantId: evt.tenantId },
+        });
         if (!doc) {
-          this.logger.warn(`[handleReceived] doc not found: ${evt.documentId}`);
+          this.logger.warn(`[handleReceived] doc not found or cross-tenant: ${evt.documentId}`);
           return false;
         }
         // Idempotency: skip when the doc is already past RECEIVED.
@@ -198,7 +215,10 @@ export class ProcessingService {
   async handleExtracted(evt: DocumentExtractedEvent): Promise<void> {
     await this.tryHandler(async () => {
       const updated = await this.prisma.$transaction(async (tx) => {
-        const doc = await tx.document.findFirst({ where: { id: evt.documentId } });
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${docLockKey(evt.documentId)})`;
+        const doc = await tx.document.findFirst({
+          where: { id: evt.documentId, tenantId: evt.tenantId },
+        });
         if (!doc) return false;
         if (
           doc.processingStatus &&
@@ -248,7 +268,10 @@ export class ProcessingService {
   async handleEnriched(evt: DocumentEnrichedEvent): Promise<void> {
     await this.tryHandler(async () => {
       const updated = await this.prisma.$transaction(async (tx) => {
-        const doc = await tx.document.findFirst({ where: { id: evt.documentId } });
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${docLockKey(evt.documentId)})`;
+        const doc = await tx.document.findFirst({
+          where: { id: evt.documentId, tenantId: evt.tenantId },
+        });
         if (!doc) return false;
         if (
           doc.processingStatus &&
@@ -282,13 +305,24 @@ export class ProcessingService {
       // is informational only.
       // A failure here is captured and logged but never re-thrown;
       // we still emit the SSE event so the UI keeps moving.
-      const settings = await this.readTenantSettings(evt.documentId);
-      const docPartyId = await this.readDocPartyId(evt.documentId);
+      const settings = await this.readTenantSettings(evt.documentId, evt.tenantId);
+      const docPartyId = await this.readDocPartyId(evt.documentId, evt.tenantId);
       const autoApprove = settings?.autoApprove === true;
       let approveError: string | null = null;
       if (autoApprove && docPartyId) {
         try {
           await this.documents.approve(evt.tenantId, evt.userId, evt.documentId);
+          // H-10: separate audit row so forensic tools can grep for
+          // 'processing.auto_approved' without sifting through the
+          // stage.advanced rows.
+          await this.audit.log({
+            tenantId: evt.tenantId,
+            userId: evt.userId,
+            action: AuditAction.EDIT,
+            entityType: 'document',
+            entityId: evt.documentId,
+            metadata: { subAction: 'processing.auto_approved' },
+          });
         } catch (err) {
           approveError = err instanceof Error ? err.message : String(err);
           this.logger.warn(
@@ -316,17 +350,27 @@ export class ProcessingService {
   /**
    * ROUTING → COMPLETED. Terminal — the SSE Subject is closed by
    * ProcessingEventsStore on receipt of `processing.completed`.
+   *
+   * H-8: if a duplicate `document.routed` event lands when the doc
+   * is already at COMPLETED, we STILL emit the terminal SSE event so
+   * late subscribers see the pipeline finish.
    */
   async handleRouted(evt: DocumentRoutedEvent): Promise<void> {
     await this.tryHandler(async () => {
       const updated = await this.prisma.$transaction(async (tx) => {
-        const doc = await tx.document.findFirst({ where: { id: evt.documentId } });
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${docLockKey(evt.documentId)})`;
+        const doc = await tx.document.findFirst({
+          where: { id: evt.documentId, tenantId: evt.tenantId },
+        });
         if (!doc) return false;
         if (
           doc.processingStatus &&
           doc.processingStatus !== DocumentProcessingStatus.ROUTING
         ) {
-          return false;
+          // H-8: late event for an already-COMPLETED doc — we still
+          // want the SSE stream to receive the terminal event so
+          // subscribers that connected late know the doc is done.
+          return 'duplicate-terminal';
         }
         await tx.document.update({
           where: { id: evt.documentId },
@@ -346,18 +390,33 @@ export class ProcessingService {
         });
         return true;
       });
-      if (!updated) return;
-      this.events.emit({
-        documentId: evt.documentId,
-        tenantId: evt.tenantId,
-        stage: 'COMPLETED',
-        event: 'processing.completed',
-        payload: {
+      if (updated === true) {
+        this.events.emit({
+          documentId: evt.documentId,
+          tenantId: evt.tenantId,
           stage: 'COMPLETED',
-          status: 'completed',
-          completedAt: evt.completedAt,
-        },
-      });
+          event: 'processing.completed',
+          payload: {
+            stage: 'COMPLETED',
+            status: 'completed',
+            completedAt: evt.completedAt,
+          },
+        });
+      } else if (updated === 'duplicate-terminal') {
+        // Late subscriber still needs to see the pipeline finish.
+        this.events.emit({
+          documentId: evt.documentId,
+          tenantId: evt.tenantId,
+          stage: 'COMPLETED',
+          event: 'processing.completed',
+          payload: {
+            stage: 'COMPLETED',
+            status: 'completed',
+            completedAt: evt.completedAt,
+            replay: true,
+          },
+        });
+      }
     }, evt, 'COMPLETED');
   }
 
@@ -461,13 +520,17 @@ export class ProcessingService {
   /**
    * Re-read the doc to pick up `tenant.settings` after the txn
    * that advanced the pipeline. Kept simple — single SELECT, no
-   * caching.
+   * caching. `tenantId` is required so a forged event can't leak
+   * another tenant's settings (H-6).
    */
   private async readTenantSettings(
     documentId: string,
+    tenantId: string,
   ): Promise<TenantSettingsShape | null> {
     try {
-      const doc = await this.prisma.document.findFirst({ where: { id: documentId } });
+      const doc = await this.prisma.document.findFirst({
+        where: { id: documentId, tenantId },
+      });
       return doc?.tenant?.settings ?? null;
     } catch {
       return null;
@@ -479,9 +542,14 @@ export class ProcessingService {
    * approve gate wants the persisted value, not the event payload,
    * because the doc is the source of truth.
    */
-  private async readDocPartyId(documentId: string): Promise<string | null> {
+  private async readDocPartyId(
+    documentId: string,
+    tenantId: string,
+  ): Promise<string | null> {
     try {
-      const doc = await this.prisma.document.findFirst({ where: { id: documentId } });
+      const doc = await this.prisma.document.findFirst({
+        where: { id: documentId, tenantId },
+      });
       return doc?.partyId ?? null;
     } catch {
       return null;

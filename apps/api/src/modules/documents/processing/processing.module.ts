@@ -1,8 +1,10 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { DocumentsModule } from '../documents.module';
 import { QueueModule } from '../../../common/queue/queue.module';
 import { ProcessingService } from './processing.service';
 import { ProcessingEventsStore } from './processing-events-store.service';
+import { ProcessingController } from './processing.controller';
 
 /**
  * ProcessingModule — wires the 4-stage pipeline.
@@ -12,6 +14,8 @@ import { ProcessingEventsStore } from './processing-events-store.service';
  *     stage transition.
  *   - ProcessingEventsStore is the in-memory broadcaster consumed by
  *     the SSE controller.
+ *   - ProcessingController exposes `GET /documents/:id/processing/stream`
+ *     with @Throttle + per-doc cap + 20s keepalive.
  *
  * DocumentsModule is imported via forwardRef because both sides
  * reference each other (DocumentsService.approve ↔ ProcessingService).
@@ -19,9 +23,18 @@ import { ProcessingEventsStore } from './processing-events-store.service';
  * publishes events back through the QueueAdapter, never by calling
  * DocumentsService methods on the same call stack — but the type
  * graph needs both sides.
+ *
+ * JwtModule is imported (not made global) so the SSE controller can
+ * verify the `?token=` query-param fallback (security-audit H-3)
+ * without depending on the global module configuration.
  */
 @Module({
-  imports: [QueueModule, forwardRef(() => DocumentsModule)],
+  imports: [
+    QueueModule,
+    JwtModule.register({}), // controllers pull secret from config when verifying
+    forwardRef(() => DocumentsModule),
+  ],
+  controllers: [ProcessingController],
   providers: [ProcessingService, ProcessingEventsStore],
   exports: [ProcessingService, ProcessingEventsStore],
 })

@@ -158,6 +158,15 @@ function buildImageToPdfStub() {
   };
 }
 
+function buildQueueStub() {
+  return {
+    driver: 'eventemitter' as const,
+    publish: jest.fn().mockResolvedValue(undefined),
+    subscribe: jest.fn(),
+    subscribeBatch: jest.fn(),
+  };
+}
+
 function makeSvc(prisma: any, audit: any, storage: StorageService) {
   return new DocumentsService(
     prisma as any,
@@ -166,6 +175,7 @@ function makeSvc(prisma: any, audit: any, storage: StorageService) {
     buildRulesEngineStub() as any,
     { enqueue: jest.fn().mockResolvedValue({ queued: false, documentId: 'doc-flow-1', ok: true }) } as any,
     buildImageToPdfStub() as any,
+    buildQueueStub() as any,
   );
 }
 

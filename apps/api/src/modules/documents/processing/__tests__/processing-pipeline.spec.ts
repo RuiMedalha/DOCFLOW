@@ -109,12 +109,22 @@ function buildEventsStore(): ProcessingEventsStore {
   } as unknown as ProcessingEventsStore;
 }
 
+function buildQueue(): QueueAdapter {
+  return {
+    driver: 'eventemitter',
+    publish: jest.fn(async () => undefined),
+    subscribe: jest.fn(),
+    subscribeBatch: jest.fn(),
+  } as unknown as QueueAdapter;
+}
+
 describe('ProcessingService (4-stage pipeline)', () => {
   let prisma: FakePrisma;
   let audit: AuditService;
   let extraction: ExtractionService;
   let documents: DocumentsService;
   let events: ProcessingEventsStore;
+  let queue: QueueAdapter;
   let service: ProcessingService;
 
   beforeEach(() => {
@@ -123,12 +133,14 @@ describe('ProcessingService (4-stage pipeline)', () => {
     extraction = buildExtraction();
     documents = buildDocuments();
     events = buildEventsStore();
+    queue = buildQueue();
     service = new ProcessingService(
       prisma as any,
       audit,
       events,
       extraction,
       documents,
+      queue,
     );
   });
 
@@ -175,6 +187,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleReceived({
@@ -200,6 +213,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleExtracted({
@@ -237,6 +251,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleEnriched({
@@ -271,6 +286,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleEnriched({
@@ -298,6 +314,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleEnriched({
@@ -321,6 +338,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleRouted({
@@ -353,6 +371,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleRouted({
@@ -366,7 +385,17 @@ describe('ProcessingService (4-stage pipeline)', () => {
     });
 
     expect(prisma.document.update).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    // Sprint H security-audit H-8: idempotent skip on a COMPLETED doc
+    // still emits a `processing.completed` event (with `replay: true`)
+    // so late SSE subscribers see the terminal event.
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'COMPLETED',
+        event: 'processing.completed',
+        payload: expect.objectContaining({ replay: true }),
+      }),
+    );
   });
 
   it('handler exception marks the doc FAILED and emits processing.failed', async () => {
@@ -387,6 +416,7 @@ describe('ProcessingService (4-stage pipeline)', () => {
       events,
       extraction,
       documents,
+      queue,
     );
 
     await service.handleReceived({

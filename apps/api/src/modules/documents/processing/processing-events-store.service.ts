@@ -28,9 +28,16 @@ export interface ProcessingStageEvent {
  * see a `complete()` notification so they tear down cleanly).
  *
  * Defensive cap against memory leaks from SSE clients that forget
- * to close. The hard ceiling sits well above any realistic workload.
+ * to close. Reduced from 1000 → 250 (security-audit M-17): 1000 was
+ * above realistic concurrent doc throughput per pod (~10 MB of hot
+ * memory per pod just for Subjects), and a burst that evicts the
+ * oldest 1000 entries drops real subscribers on long-running docs.
+ *
+ * The controller layer (processing.controller) also enforces a
+ * PER-DOC connection cap (5) so the global cap can't be hit by a
+ * single attacker. The 250 ceiling is a backstop.
  */
-const MAX_CONCURRENT_DOCS = 1000;
+const MAX_CONCURRENT_DOCS = 250;
 
 /**
  * ProcessingEventsStore — the in-memory broadcaster that the SSE
@@ -44,10 +51,22 @@ const MAX_CONCURRENT_DOCS = 1000;
  * Terminal events (`processing.completed` / `processing.failed`)
  * also `complete()` the Subject — the SSE controller uses this to
  * know when to close the connection.
+ *
+ * Eviction policy is LEAST-RECENTLY-EMITTED (security-audit M-17).
+ * The previous FIFO on insertion order wasn't LRU — it dropped the
+ * FIRST subscriber to subscribe, which is exactly the long-running
+ * doc that nobody is touching right now. LRU keeps active subjects
+ * alive even when many new docs arrive in a burst.
  */
 @Injectable()
 export class ProcessingEventsStore implements OnModuleDestroy {
   private readonly subjectsByDoc = new Map<string, Subject<ProcessingStageEvent>>();
+  /**
+   * Last-emission timestamp in ms (monotonic). Updated on every
+   * emit(); used as the LRU key for eviction.
+   */
+  private readonly lastEmittedAt = new Map<string, number>();
+  private nextTimestamp = 0;
 
   /**
    * Open (or reuse) the Subject for `documentId` and return an
@@ -59,6 +78,7 @@ export class ProcessingEventsStore implements OnModuleDestroy {
     if (!subject) {
       subject = new Subject<ProcessingStageEvent>();
       this.subjectsByDoc.set(documentId, subject);
+      this.lastEmittedAt.set(documentId, this.nextTimestamp++);
       this.evictIfOverCap();
     }
     return subject.asObservable();
@@ -67,12 +87,13 @@ export class ProcessingEventsStore implements OnModuleDestroy {
   /**
    * Broadcast an event to every active subscriber on `event.documentId`.
    * Emitting for a docId with no subscribers is a cheap no-op (the
-   * Map lookup misses, nothing happens).
+   * Map lookup misses, nothing happens). Updates the LRU timestamp.
    */
   emit(event: ProcessingStageEvent): void {
     const subject = this.subjectsByDoc.get(event.documentId);
     if (!subject) return;
     subject.next(event);
+    this.lastEmittedAt.set(event.documentId, this.nextTimestamp++);
     if (event.event === 'processing.completed' || event.event === 'processing.failed') {
       this.drop(event.documentId);
     }
@@ -87,6 +108,7 @@ export class ProcessingEventsStore implements OnModuleDestroy {
     if (!subject) return;
     subject.complete();
     this.subjectsByDoc.delete(documentId);
+    this.lastEmittedAt.delete(documentId);
   }
 
   /**
@@ -98,14 +120,22 @@ export class ProcessingEventsStore implements OnModuleDestroy {
       subject.complete();
     }
     this.subjectsByDoc.clear();
+    this.lastEmittedAt.clear();
   }
 
   private evictIfOverCap(): void {
     if (this.subjectsByDoc.size <= MAX_CONCURRENT_DOCS) return;
-    // Map iteration order is insertion order — drop the oldest
-    // entry. Better to lose a finished-event subscriber than a
-    // fresh one.
-    const oldestKey = this.subjectsByDoc.keys().next().value;
-    if (oldestKey !== undefined) this.drop(oldestKey);
+    // LRU eviction: drop the entry with the smallest lastEmittedAt.
+    // Ties break by insertion order (FIFO on equal LRU) which is the
+    // usual Map.iteration behaviour.
+    let lruKey: string | undefined;
+    let lruTs = Number.POSITIVE_INFINITY;
+    for (const [key, ts] of this.lastEmittedAt) {
+      if (ts < lruTs) {
+        lruTs = ts;
+        lruKey = key;
+      }
+    }
+    if (lruKey !== undefined) this.drop(lruKey);
   }
 }

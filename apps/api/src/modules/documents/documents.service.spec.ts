@@ -117,6 +117,14 @@ describe('DocumentsService', () => {
       // upload(), so a no-op stub is enough for the dedup tests.
       { enqueue: jest.fn().mockResolvedValue({ queued: false, documentId: 'doc-1', ok: true }) } as any,
       imageToPdf as any,
+      // QueueAdapter stub — Sprint H pipeline trigger publishes
+      // `document.uploaded` to this adapter; tests don't assert on it.
+      {
+        driver: 'eventemitter' as const,
+        publish: jest.fn().mockResolvedValue(undefined),
+        subscribe: jest.fn(),
+        subscribeBatch: jest.fn(),
+      } as any,
     );
   });
 

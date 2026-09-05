@@ -45,6 +45,12 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { FleetModule } from './modules/fleet/fleet.module';
 import { TaxSimulatorModule } from './modules/tax-simulator/tax-simulator.module';
 import { HealthModule } from './modules/health/health.module';
+// Sprint H — async processing pipeline.
+import { ProcessingModule } from './modules/documents/processing/processing.module';
+import { TenantsModule } from './modules/tenants/tenants.module';
+// QueueModule is global-with-factory; we MUST call .forRoot() here so
+// ProcessingService can resolve the QueueAdapter at construction time.
+import { QueueModule } from './common/queue/queue.module';
 
 @Module({
   imports: [
@@ -148,6 +154,12 @@ import { HealthModule } from './modules/health/health.module';
     FleetModule,
     TaxSimulatorModule,
     HealthModule,
+    // Sprint H — wire the queue + the processing pipeline. QueueModule
+    // is `global: true` after .forRoot() so any module that injects
+    // QueueAdapter can find it. ProcessingModule owns the SSE controller.
+    QueueModule.forRoot(),
+    ProcessingModule,
+    TenantsModule,
   ],
   providers: [
     // Global rate-limit guard (custom: tracks by IP/tenant/user via ThrottleBucketGuard)

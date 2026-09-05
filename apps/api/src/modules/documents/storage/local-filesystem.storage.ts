@@ -149,11 +149,26 @@ export class LocalFilesystemStorage implements StorageService, OnModuleInit {
   }
 
   async getSignedUrl(key: string, _ttlSeconds?: number): Promise<string> {
-    // Local driver cannot sign — return a controller route. Callers must
-    // resolve the documentId and call /documents/:id/download instead.
-    // The returned key is informational; the controller maps it to the
-    // authenticated download endpoint.
-    return `/api/v1/documents/storage/${encodeURIComponent(key)}`;
+    // Sprint H security-audit M-14 — the previous implementation
+    // returned `/api/v1/documents/storage/<encoded key>` which is NOT
+    // a registered route. The only real download endpoint is
+    // `GET /documents/:id/download` and it takes a documentId, NOT a
+    // storage key. Returning the phantom URL silently leaked the
+    // storage key (which embeds the tenantId in its path).
+    //
+    // Local driver has no signing facility. Return the storage root as
+    // a path the controller can use to map back to the documentId, but
+    // log a WARN so the caller knows to resolve via the documentId
+    // endpoint instead.
+    //
+    // Callers (DocumentsService) handle the null/empty return by
+    // routing the UI to the authenticated `/documents/:id/download`
+    // route directly.
+    this.logger.warn(
+      `[getSignedUrl] local driver cannot sign keys (key="${key}"); ` +
+        `callers must resolve documentId and use GET /documents/:id/download`,
+    );
+    return '';
   }
 
   /**

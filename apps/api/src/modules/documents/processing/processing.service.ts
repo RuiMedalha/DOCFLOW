@@ -1,14 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   AuditAction,
   DocumentProcessingStatus,
   type PrismaClient,
 } from '@prisma/client';
-import type { AuditService } from '../../audit/audit.service';
-import type { DocumentsService } from '../documents.service';
-import type { ExtractionService } from '../../extraction/extraction.service';
-import type { QueueAdapter } from '../../../common/queue/queue-adapter.interface';
-import type { EnrichmentService } from '../../enrichment/enrichment.service';
+import { AuditService } from '../../audit/audit.service';
+import { DocumentsService } from '../documents.service';
+import { ExtractionService } from '../../extraction/extraction.service';
+import {
+  QUEUE_ADAPTER,
+  type QueueAdapter,
+} from '../../../common/queue/queue-adapter.interface';
+import { EnrichmentService } from '../../enrichment/enrichment.service';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { docLockKey } from '../../../common/locks';
 import { ProcessingEventsStore } from './processing-events-store.service';
 
@@ -127,12 +131,12 @@ export class ProcessingService {
   private readonly logger = new Logger(ProcessingService.name);
 
   constructor(
-    private readonly prisma: ProcessingPrisma,
+    private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly events: ProcessingEventsStore,
     private readonly extraction: ExtractionService,
     private readonly documents: DocumentsService,
-    private readonly queue: QueueAdapter,
+    @Inject(QUEUE_ADAPTER) private readonly queue: QueueAdapter,
     // Sprint I — enrich party (supplier + customer) during the
     // ENRICHING stage and publish `document.enriched` when done so
     // the pipeline can advance to ROUTING. Optional so the existing
@@ -707,8 +711,10 @@ export class ProcessingService {
     try {
       const doc = await this.prisma.document.findFirst({
         where: { id: documentId, tenantId },
+        include: { tenant: { select: { settings: true } } },
       });
-      return doc?.tenant?.settings ?? null;
+      const tenant = (doc as unknown as { tenant?: { settings: TenantSettingsShape | null } | null } | null)?.tenant;
+      return tenant?.settings ?? null;
     } catch {
       return null;
     }

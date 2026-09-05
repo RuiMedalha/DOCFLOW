@@ -45,6 +45,13 @@ import {
 } from "./extraction.constants";
 import { autoOrientImage, decodeAtQr } from "./qr-decode/qr-decoder";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
+// Sprint I — publish `document.extracted` so the processing pipeline's
+// EXTRACTING → ENRICHING handler runs. Previously the extraction service
+// returned its result but never told the pipeline to advance — documents
+// were stuck in EXTRACTING until manual intervention. QueueAdapter is
+// global (QueueModule.forRoot() in app.module.ts) so this resolves even
+// when ExtractionModule is the boot path.
+import type { QueueAdapter } from "../../common/queue/queue-adapter.interface";
 
 /**
  * Where the text fed into the regex/QR pipeline came from. Recorded on
@@ -304,6 +311,15 @@ export class ExtractionService implements OnModuleDestroy {
     @Optional()
     @Inject(forwardRef(() => DocumentsService))
     private readonly documents?: DocumentsService,
+    // QueueAdapter — Sprint I wiring. Published `document.extracted`
+    // at the end of a successful processDocumentAsync so the
+    // processing pipeline's handleExtracted advances the doc from
+    // EXTRACTING → ENRICHING. Marked @Optional because the existing
+    // unit-test harness constructs ExtractionService without DI; the
+    // publish becomes a no-op (logs a warning) so the tests still pass.
+    @Optional()
+    @Inject("QUEUE_ADAPTER")
+    private readonly queueAdapter?: QueueAdapter,
   ) {}
 
   /**
@@ -895,6 +911,13 @@ export class ExtractionService implements OnModuleDestroy {
             select: { id: true, status: true, fileName: true },
           });
           if (afterRename) {
+            // Sprint I: also publish when the rename path returns early,
+            // using the post-rename row id so handleExtracted observes
+            // the same document state we hand back to the caller.
+            await this.publishExtracted(tenantId, documentId, userId, {
+              ...fields,
+              ibanCheck: ibanCheck ?? undefined,
+            }, afterRename.id);
             return {
               queued: false,
               documentId,
@@ -920,6 +943,20 @@ export class ExtractionService implements OnModuleDestroy {
         );
       }
     }
+
+    // ── Sprint I — publish `document.extracted` so the processing
+    // pipeline's handleExtracted advances the doc from EXTRACTING →
+    // ENRICHING. The publish is the critical missing link identified
+    // by the Sprint I scout report: without it the pipeline stops at
+    // EXTRACTING forever. Wrapped in try/catch so any adapter failure
+    // (Redis down, adapter swallowed the publish) NEVER re-throws into
+    // the extraction path — the row is already persisted at this
+    // point, so the foregone enrichment is recoverable via the manual
+    // "Re-extrair dados" button in the Party detail page.
+    await this.publishExtracted(tenantId, documentId, userId, {
+      ...fields,
+      ibanCheck: ibanCheck ?? undefined,
+    }, updated.id);
 
     return {
       queued: false,
@@ -1042,6 +1079,101 @@ export class ExtractionService implements OnModuleDestroy {
       `[writeNeedsReviewMarker] wrote needs_review for document=${documentId} ` +
         `reason=${reason.slice(0, 100)}`,
     );
+  }
+
+  /**
+   * Sprint I — publish `document.extracted` so the processing pipeline's
+   * `handleExtracted` advances the doc from EXTRACTING → ENRICHING.
+   *
+   * Best-effort: any adapter failure is logged and swallowed so it
+   * cannot fail the extraction path. The row is already persisted at
+   * this point, so a missed publish can be compensated by the manual
+   * "Re-extrair dados" button in the Party detail page or by a
+   * future re-trigger via `POST /extraction/documents/:id/reprocess`.
+   *
+   * The shape mirrors the `DocumentExtractedEvent` documented in
+   * `processing.service.ts:58-65` so the handler can map directly.
+   */
+  private async publishExtracted(
+    tenantId: string,
+    documentId: string,
+    userId: string | null,
+    fields: Record<string, unknown> & { ibanCheck?: unknown },
+    persistedDocumentId: string,
+  ): Promise<void> {
+    if (!this.queueAdapter) {
+      this.logger.warn(
+        `[publishExtracted] no QueueAdapter wired for document=${documentId} ` +
+          `— skipping publish; pipeline will stay at EXTRACTING ` +
+          `(manual re-trigger required)`,
+      );
+      return;
+    }
+    try {
+      await this.queueAdapter.publish("document.extracted", {
+        topic: "document.extracted",
+        documentId: persistedDocumentId,
+        tenantId,
+        userId,
+        confidence:
+          typeof fields.confidence === "number" ? fields.confidence : 0,
+        source:
+          typeof fields.source === "string"
+            ? fields.source
+            : "none",
+        extractedFields: this.extractPublicFields(fields),
+      });
+      this.logger.log(
+        `[publishExtracted] published document.extracted for ` +
+          `document=${persistedDocumentId} tenant=${tenantId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `[publishExtracted] publish FAILED for document=${persistedDocumentId}: ` +
+          `${(err as Error).message}`,
+      );
+      // Do NOT re-throw: extraction is already persisted to disk.
+    }
+  }
+
+  /**
+   * Build a flat, JSON-safe payload of the extracted fields for the
+   * pipeline event. Keeps the queue event small (no nested PdfParse
+   * buffers / BigInt values). Mirrors the shape of DocumentExtractedEvent
+   * in processing.service.ts:58-65.
+   */
+  private extractPublicFields(fields: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    const allowed = [
+      "supplier",
+      "supplierNif",
+      "supplierVatId",
+      "customer",
+      "customerNif",
+      "docNumber",
+      "atcud",
+      "docDate",
+      "dueDate",
+      "total",
+      "taxAmount",
+      "netAmount",
+      "iban",
+      "currency",
+      "country",
+      "ibanCountry",
+      "taxRate",
+      "ivaBreakdown",
+      "suggestedCategory",
+      "cashDiscountRate",
+      "discountAmount",
+      "isEuIntracommunity",
+      "documentLocale",
+    ];
+    for (const k of allowed) {
+      const v = fields[k];
+      if (v !== undefined && v !== null) out[k] = v;
+    }
+    return out;
   }
 
   /**

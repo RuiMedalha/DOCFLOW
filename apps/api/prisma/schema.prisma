@@ -633,6 +633,16 @@ model Party {
   partyCategoryId   String?
   partyCategory     PartyCategory? @relation(fields: [partyCategoryId], references: [id], onDelete: SetNull)
 
+  // Sprint I: external-API enrichment metadata. Nullable — populated only
+  // when EnrichmentService runs the Sabi PT / VIES / manual provider chain.
+  // `enrichedAt` gates the 30-day TTL (skip re-fetch if recent). `source`
+  // records which provider succeeded. `error` records the last failure
+  // reason (timeout, rate-limit, manual-required) so the UI badge can
+  // surface "Sem dados externos disponíveis" honestly.
+  enrichedAt         DateTime?
+  enrichmentSource   String?
+  enrichmentError    String?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 

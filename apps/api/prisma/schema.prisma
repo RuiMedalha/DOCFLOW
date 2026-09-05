@@ -62,6 +62,19 @@ enum DocumentStatus {
   ARQUIVADO
 }
 
+// Sprint H — async processing pipeline state machine.
+// Nullable on the column so legacy docs (created before the migration)
+// keep their status untouched until the next upload retriggers them.
+enum DocumentProcessingStatus {
+  RECEIVED
+  EXTRACTING
+  ENRICHING
+  ROUTING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
 enum PaymentStatus {
   DRAFT
   TO_PAY
@@ -438,6 +451,15 @@ model Document {
 
   paymentStatus    PaymentStatus @default(DRAFT)
   paymentDueDate   DateTime?
+
+  // Sprint H — async pipeline state. Set to RECEIVED on upload, then
+  // EXTRACTING → ENRICHING → ROUTING → COMPLETED (or FAILED). Null on
+  // legacy docs that pre-date the migration.
+  processingStatus        DocumentProcessingStatus?
+  processingStartedAt    DateTime?
+  processingCompletedAt  DateTime?
+  processingError        String?
+  processingAttempt      Int      @default(0)
 
   uploadedById     String?
   uploadedBy       User?         @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])

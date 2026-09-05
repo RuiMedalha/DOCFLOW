@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { DocumentsModule } from '../documents.module';
 import { QueueModule } from '../../../common/queue/queue.module';
+import { EnrichmentModule } from '../../enrichment/enrichment.module';
 import { ProcessingService } from './processing.service';
 import { ProcessingEventsStore } from './processing-events-store.service';
 import { ProcessingController } from './processing.controller';
@@ -16,6 +17,10 @@ import { ProcessingController } from './processing.controller';
  *     the SSE controller.
  *   - ProcessingController exposes `GET /documents/:id/processing/stream`
  *     with @Throttle + per-doc cap + 20s keepalive.
+ *
+ * Sprint I — EnrichmentModule is imported so ProcessingService can
+ * fire `enrichment.enrichParty` from inside `handleExtracted` and
+ * publish `document.enriched` when the outer chain finishes.
  *
  * DocumentsModule is imported via forwardRef because both sides
  * reference each other (DocumentsService.approve ↔ ProcessingService).
@@ -33,6 +38,7 @@ import { ProcessingController } from './processing.controller';
     QueueModule,
     JwtModule.register({}), // controllers pull secret from config when verifying
     forwardRef(() => DocumentsModule),
+    EnrichmentModule,
   ],
   controllers: [ProcessingController],
   providers: [ProcessingService, ProcessingEventsStore],

@@ -48,6 +48,8 @@ import { HealthModule } from './modules/health/health.module';
 // Sprint H — async processing pipeline.
 import { ProcessingModule } from './modules/documents/processing/processing.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
+// Sprint I — external-API enrichment (Sabi PT / VIES / manual).
+import { EnrichmentModule } from './modules/enrichment/enrichment.module';
 // QueueModule is global-with-factory; we MUST call .forRoot() here so
 // ProcessingService can resolve the QueueAdapter at construction time.
 import { QueueModule } from './common/queue/queue.module';
@@ -160,6 +162,7 @@ import { QueueModule } from './common/queue/queue.module';
     QueueModule.forRoot(),
     ProcessingModule,
     TenantsModule,
+    EnrichmentModule,
   ],
   providers: [
     // Global rate-limit guard (custom: tracks by IP/tenant/user via ThrottleBucketGuard)

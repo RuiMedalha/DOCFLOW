@@ -8,6 +8,7 @@ import type { AuditService } from '../../audit/audit.service';
 import type { DocumentsService } from '../documents.service';
 import type { ExtractionService } from '../../extraction/extraction.service';
 import type { QueueAdapter } from '../../../common/queue/queue-adapter.interface';
+import type { EnrichmentService } from '../../enrichment/enrichment.service';
 import { docLockKey } from '../../../common/locks';
 import { ProcessingEventsStore } from './processing-events-store.service';
 
@@ -132,6 +133,13 @@ export class ProcessingService {
     private readonly extraction: ExtractionService,
     private readonly documents: DocumentsService,
     private readonly queue: QueueAdapter,
+    // Sprint I — enrich party (supplier + customer) during the
+    // ENRICHING stage and publish `document.enriched` when done so
+    // the pipeline can advance to ROUTING. Optional so the existing
+    // processing test fixture (which builds ProcessingService
+    // directly without EnrichmentModule) keeps compiling — the
+    // enrichment leg simply becomes a no-op when absent.
+    private readonly enrichment?: EnrichmentService,
   ) {
     // Bind once at construction time. Production always provides a
     // QueueAdapter via QueueModule.forRoot() — we removed the @Optional
@@ -210,7 +218,10 @@ export class ProcessingService {
   }
 
   /**
-   * EXTRACTING → ENRICHING.
+   * EXTRACTING → ENRICHING. Sprint I — after the transition fires
+   * the enrichment chain against the doc's supplier party + customer
+   * party (if not the tenant itself) and publishes `document.enriched`
+   * so `handleEnriched` can advance the pipeline.
    */
   async handleExtracted(evt: DocumentExtractedEvent): Promise<void> {
     await this.tryHandler(async () => {
@@ -254,7 +265,173 @@ export class ProcessingService {
           completedAt: new Date().toISOString(),
         },
       });
+
+      // Sprint I — drive the enrichment chain off the doc's partyId
+      // (supplier) + its customer string. Failures are caught and
+      // logged; we ALWAYS publish document.enriched so the pipeline
+      // is never wedged on an enrichment outage.
+      await this.runEnrichment(evt);
     }, evt, 'ENRICHING');
+  }
+
+  /**
+   * Sprint I — kick off the enrichment chain for the doc's supplier
+   * + customer parties and publish `document.enriched` when done.
+   *
+   * Best-effort: any error from `enrichment.enrichParty` is caught
+   * and logged. We refuse to let a misbehaving provider stall the
+   * pipeline at ENRICHING — the operator can retry via the manual
+   * "Re-extrair dados" button. The publish is a second best-effort
+   * call; if it fails, `handleEnriched` won't run but the doc stays
+   * at ENRICHING with `enrichmentError` recorded on the Party row.
+   */
+  private async runEnrichment(evt: DocumentExtractedEvent): Promise<void> {
+    if (!this.enrichment) {
+      this.logger.debug(
+        `[runEnrichment] no EnrichmentService wired — skipping auto-enrich`,
+      );
+    } else {
+      try {
+        // Look up the doc to find its partyId + customerId.
+        // Re-read after the EXTRACTING → ENRICHING transition.
+        const doc = await this.readDocWithParties(
+          evt.documentId,
+          evt.tenantId,
+        );
+        if (!doc) return;
+
+        if (doc.partyId) {
+          await this.enrichment.enrichParty(
+            evt.tenantId,
+            doc.partyId,
+            evt.userId,
+          );
+        } else {
+          this.logger.warn(
+            `[runEnrichment] doc=${evt.documentId} has no supplier partyId — skipping supplier enrich`,
+          );
+        }
+
+        // Customer enrichment: name-match a Party in the tenant and
+        // enrich it if it isn't the tenant itself. Best-effort, see
+        // `enrichCustomerIfKnown` for the matching heuristic.
+        await this.enrichCustomerIfKnown(evt, doc.customer ?? null);
+      } catch (err) {
+        this.logger.warn(
+          `[runEnrichment] enrichment chain failed for doc=${evt.documentId}: ` +
+            `${(err as Error).message}`,
+        );
+        // Fall through to publish document.enriched so the pipeline
+        // can advance — ENRICHING state is not sticky.
+      }
+    }
+
+    // ALWAYS publish document.enriched so handleEnriched can run.
+    try {
+      await this.queue.publish('document.enriched', {
+        topic: 'document.enriched',
+        documentId: evt.documentId,
+        tenantId: evt.tenantId,
+        userId: evt.userId,
+        partyId: null,
+        partyMatched: false,
+        ibanUpdated: false,
+        ibanRiskScore: 0,
+      });
+    } catch (err) {
+      this.logger.error(
+        `[runEnrichment] document.enriched publish FAILED for doc=${evt.documentId}: ` +
+          `${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Minimal doc read for the enrichment leg. Avoids dragging the
+   * full Prisma model shape through the pipeline — we only need
+   * partyId + customer string (and would need customerId FK once
+   * Sprint G.1 lands).
+   */
+  private async readDocWithParties(
+    documentId: string,
+    tenantId: string,
+  ): Promise<
+    | { id: string; partyId: string | null; customer: string | null }
+    | null
+  > {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const doc = await (this.prisma as any).document.findFirst({
+        where: { id: documentId, tenantId },
+        select: { id: true, partyId: true, customer: true },
+      });
+      return doc;
+    } catch (err) {
+      this.logger.warn(
+        `[readDocWithParties] doc=${documentId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Sprint I — customer enrichment (best-effort).
+   *
+   * The Document model doesn't yet have a customerId FK (Sprint G.1
+   * will add it). For now we match on the `customer` free-text name
+   * to a Party in the same tenant. If we find a match AND the
+   * customer isn't the tenant itself, we enrich that party too.
+   *
+   * We do NOT create new Parties here — that's the supplier-resolver's
+   * job, and creating a Party from a free-text customer name without
+   * NIF would be ambiguous. Sprint G.1 will lift this restriction.
+   */
+  private async enrichCustomerIfKnown(
+    evt: { tenantId: string; userId: string },
+    customerName: string | null,
+  ): Promise<void> {
+    if (!this.enrichment || !customerName || customerName.trim().length === 0) {
+      return;
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tenant: { name: string | null } | null = await (this.prisma as any).tenant?.findFirst?.({
+        where: { id: evt.tenantId },
+        select: { name: true },
+      });
+      const customerTrimmed = customerName.trim().toLowerCase();
+      if (
+        tenant?.name &&
+        tenant.name.trim().toLowerCase() === customerTrimmed
+      ) {
+        this.logger.debug(
+          `[enrichCustomerIfKnown] customer matches tenant.name — skip`,
+        );
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const match: { id: string } | null = await (this.prisma as any).party.findFirst({
+        where: {
+          tenantId: evt.tenantId,
+          name: { equals: customerName.trim(), mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (match) {
+        this.logger.log(
+          `[enrichCustomerIfKnown] enriching customer party=${match.id} for tenant=${evt.tenantId}`,
+        );
+        await this.enrichment.enrichParty(evt.tenantId, match.id, evt.userId);
+      } else {
+        this.logger.debug(
+          `[enrichCustomerIfKnown] no Party matches customer name "${customerName}" — skipping`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[enrichCustomerIfKnown] customer enrichment failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

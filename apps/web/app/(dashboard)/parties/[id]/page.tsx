@@ -17,6 +17,7 @@ import { PaymentsTab } from './_components/payments-tab';
 import { IbanTab } from './_components/iban-tab';
 import { TimelineTab } from './_components/timeline-tab';
 
+import { PartyEnrichmentBadge } from './_components/party-enrichment-badge';
 /**
  * PartyDetailPage — Sprint G 360° file. 6 tabs:
  *   - Identity   (default) — the existing PartyForm (kept as-is)
@@ -86,6 +87,7 @@ export default function PartyDetailPage() {
         title={party.name}
         subtitle={`NIF ${party.nif ?? '—'} · ${party.type}`}
         actions={
+          <>
           <span
             className={
               hasOverride
@@ -105,6 +107,8 @@ export default function PartyDetailPage() {
             <Repeat size={10} className="mr-0.5" aria-hidden="true" />
             {hasOverride ? 'Override ADMIN' : isRecurring ? 'Recorrente' : 'Ocasional'}
           </span>
+          <PartyEnrichmentBadge partyId={params.id} isAdmin={isAdmin} />
+          </>
         }
       />
 
@@ -158,3 +162,4 @@ export default function PartyDetailPage() {
     </>
   );
 }
+

@@ -678,6 +678,7 @@ export default function DocumentDetailPage() {
             sendingToToc={sendToToc.isPending}
             approving={approve.isPending}
             documentId={id}
+            partyId={doc.partyId ?? null}
             canEditLines={canEditLines}
             addingLine={addLine.isPending}
             busyItemId={busyItemId}

@@ -57,6 +57,16 @@ const STAGE_ORDER: ProcessingStage['stage'][] = [
   'COMPLETED',
 ];
 
+
+// Sprint I — friendly labels for each pipeline stage.
+const STAGE_LABEL: Record<string, string> = {
+  RECEIVED: 'A aguardar início',
+  EXTRACTING: 'A extrair dados do documento',
+  ENRICHING: 'A enriquecer dados externos (Sabi PT / VIES)',
+  ROUTING: 'A arquivar e rotear',
+  COMPLETED: 'Concluído',
+  FAILED: 'Falhou',
+};
 export function ProcessingStatus({
   documentId,
   initialStatus,
@@ -270,7 +280,7 @@ function renderView(
     <div className="flex flex-col gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
       <div className="flex items-center gap-2 text-slate-700">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span>A processar — estágio {stage.stage}</span>
+        <span>A processar — {STAGE_LABEL[stage.stage] ?? stage.stage}</span>
         {usingFallback && (
           <span className="ml-auto inline-flex items-center gap-1 text-xs text-slate-500">
             <RefreshCw className="h-3 w-3 animate-spin" />

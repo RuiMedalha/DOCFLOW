@@ -31,6 +31,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Send, CheckCircle2, Plus, X, Loader2, Trash2 } from 'lucide-react';
 import { useCategories } from '../../../categories/use-categories';
+import Link from 'next/link';
 
 export interface ExtractedFields {
   supplier?: string | null;
@@ -94,6 +95,8 @@ export interface IbanHistoryEntry {
 
 export interface FieldPanelProps {
   fields: ExtractedFields;
+  /** Sprint I — link to Party detail page (when supplier is linked). */
+  partyId?: string | null;
   confidence: FieldConfidence;
   lineItems?: LineItem[];
   /** Currency display code — used in the totals row only. */
@@ -596,6 +599,17 @@ export function FieldPanel(props: FieldPanelProps) {
             />
           </Field>
 
+          {props.partyId ? (
+            <div className="mt-1 mb-4">
+              <Link
+                href={`/parties/${props.partyId}`}
+                className="text-xs underline inline-flex items-center gap-1"
+                style={{ color: 'var(--accent)' }}
+              >
+                Ver ficha completa do fornecedor →
+              </Link>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
             <Field label="NIF" confidence={confidence.supplierNif}>
               <EdInput

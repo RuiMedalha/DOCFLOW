@@ -747,6 +747,51 @@ export class ExtractionService implements OnModuleDestroy {
       doc.fileName,
     );
 
+    // ── Party-resolve-by-NIF fallback (DIAGNOSTIC-2 §5 item 7) ──────
+    // When the AI's supplier NIF is structurally invalid AND the customer
+    // NIF is structurally valid AND resolves to an existing Party in
+    // this tenant, the customer Party is almost certainly the actual
+    // supplier (AI swapped the slots). We rewrite the fields with the
+    // trusted Party's name + NIF and capture the resolved partyId on
+    // `resolvedPartyFromNif` so the SupplierResolver branch below links
+    // to the trusted Party instead of creating a brand-new (wrong)
+    // supplier row. Skipped when the document is already linked to a
+    // Party — that means the operator verified/corrected earlier and
+    // we MUST NOT overwrite.
+    let resolvedPartyFromNif: { id: string; isRecurring: boolean } | null = null;
+    if (!doc.partyId) {
+      try {
+        const resolved = await this.resolveSupplierByNif(
+          tenantId,
+          documentId,
+          fields,
+        );
+        if (resolved) {
+          fields = {
+            ...fields,
+            supplier: resolved.supplier,
+            supplierNif: resolved.supplierNif,
+            customerNif: undefined, // clear — the buyer NIF was the supplier all along
+            hints: [
+              ...(fields.hints ?? []),
+              `partySwap:reason=${resolved.reason}`,
+              `partySwap:partyId=${resolved.partyId ?? "null"}`,
+            ],
+          };
+          if (resolved.partyId) {
+            resolvedPartyFromNif = { id: resolved.partyId, isRecurring: false };
+          }
+        }
+      } catch (err) {
+        // Belt + braces — never let the NIF-resolve fallback abort
+        // extraction. The supplier-resolver below still runs against
+        // the un-swapped fields and may still produce a useful link.
+        this.logger.warn(
+          `[processDocumentAsync] resolveSupplierByNif threw for document=${documentId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
     const aiQrRawForRow = (fields.hints ?? [])
       .find((h) => h.startsWith("aiQrRaw:"))
       ?.split(":")
@@ -792,7 +837,14 @@ export class ExtractionService implements OnModuleDestroy {
     // and a `supplierResolve` block for the audit trail.
     let supplierReviewFlag = false;
     let supplierResolveReason: string | undefined;
-    if (this.supplierResolver && !doc.partyId) {
+    if (resolvedPartyFromNif) {
+      // NIF-resolve fallback already picked a trusted Party — wire it
+      // directly and skip SupplierResolver (avoids creating a duplicate
+      // row keyed on the swapped-out fields).
+      updateData.party = { connect: { id: resolvedPartyFromNif.id } };
+      supplierReviewFlag = false;
+      supplierResolveReason = "party-resolved-by-nif";
+    } else if (this.supplierResolver && !doc.partyId) {
       try {
         const aiConfidence = Number(
           (fields.hints ?? [])
@@ -2160,29 +2212,31 @@ export class ExtractionService implements OnModuleDestroy {
           !!customerNifRaw && isValidPortugueseNif(customerNifRaw);
         const structuralNifMismatch =
           supplierNifStructurallyInvalid && customerNifStructurallyValid;
-        const shouldSwap =
-          filenameSuspiciousMatch ||
-          // AND-condition: only fire the structural swap when the
-          // filename also looks suspicious (so we don't swap a
-          // genuinely-bad supplier NIF against a customer's NIF that
-          // happens to pass the checksum). The heuristic is the
-          // primary signal; the NIF check is the secondary confirmer.
-          (structuralNifMismatch && filenameSuspiciousMatch);
+        // Root-cause fix (DIAGNOSTIC-2 §5 item 6): the structural NIF check
+        // is now the primary signal. The filename heuristic used to gate
+        // the swap behind `&& filenameSuspiciousMatch`, which meant every
+        // case where the AI hallucinated a supplier name NOT present in
+        // the filename would silently escape the safety net — the user's
+        // "10x the same PDF" pattern. We now swap whenever the supplier
+        // NIF fails mod-11 AND the customer NIF passes it, regardless of
+        // whether the filename heuristic also matches.
+        const shouldSwap = structuralNifMismatch;
         if (shouldSwap) {
-          this.logger.warn(
-            `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
-              `matches filename prefix (${fileName}); likely swapped with customer. ` +
-              `Real bug from 2026-09-06 EDENOX invoice.` +
-              (structuralNifMismatch
-                ? ` Structural NIF check confirmed: supplierNif="${supplierNifRaw}" fails ` +
-                  `mod-11 checksum, customerNif="${customerNifRaw}" passes — AI swapped the slots.`
-                : ""),
-          );
-          this.logger.warn(
-            `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
-              `matches filename prefix (${fileName}); likely swapped with customer. ` +
-              `Forcing a swap supplier↔customer. Real bug from 2026-09-06 EDENOX invoice.`,
-          );
+          if (filenameSuspiciousMatch) {
+            this.logger.warn(
+              `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
+                `matches filename prefix (${fileName}); likely swapped with customer. ` +
+                `Real bug from 2026-09-06 EDENOX invoice. Structural NIF check confirmed: ` +
+                `supplierNif="${supplierNifRaw}" fails mod-11 checksum, customerNif="${customerNifRaw}" ` +
+                `passes — AI swapped the slots.`,
+            );
+          } else {
+            this.logger.warn(
+              `[extraction] partySwap triggered by structural NIF mismatch (no filename anchor) ` +
+                `doc=${fileName ?? "?"} supplierNif="${supplierNifRaw}" customerNif="${customerNifRaw}". ` +
+                `Filename heuristic did not match — swap is NIF-anchored only.`,
+            );
+          }
           const swapped: ExtractedFields = {
             ...fields,
             supplier: fields.customer,
@@ -2209,6 +2263,87 @@ export class ExtractionService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Root-cause fix (DIAGNOSTIC-2 §5 item 7): when the AI's supplier NIF
+   * fails mod-11 BUT the customer NIF is structurally valid AND resolves
+   * to an existing Party in this tenant, the customer Party is almost
+   * certainly the actual supplier (AI swapped the slots). We swap the
+   * supplier/customer fields and link to the resolved Party.
+   *
+   * This is the NIF-anchored counterpart to `shouldSwap`'s filename
+   * heuristic: the heuristic misses every hallucination where the
+   * AI invented a supplier name NOT present in the upload filename.
+   * A Party lookup on (tenantId, nif) is structural and never lies.
+   *
+   * Tenant scoping is mandatory — never let a Party from another tenant
+   * leak into this document. Cross-tenant NIF matches are silently
+   * rejected (returns null) and logged at WARN.
+   *
+   * Returns the resolved swap payload (or null when no swap applies).
+   * The caller applies the swap to `ExtractedFields` and writes the
+   * resulting `partyId` onto `Document.partyId` so the link is the
+   * trusted Party row, not a freshly-created wrong-supplier Party.
+   */
+  async resolveSupplierByNif(
+    tenantId: string,
+    documentId: string,
+    fields: ExtractedFields,
+  ): Promise<{
+    supplier: string;
+    supplierNif: string;
+    partyId: string | null;
+    reason: string;
+  } | null> {
+    const supplierNifRaw = (fields.supplierNif ?? "").toString().trim();
+    const customerNifRaw = (fields.customerNif ?? "").toString().trim();
+
+    // Guard: only fire when the AI's supplier NIF is structurally invalid
+    // AND the customer NIF passes mod-11 — the same precondition as the
+    // `structuralNifMismatch` branch of `shouldSwap`. Skipping a valid
+    // supplier NIF here keeps AI-confidence flows untouched.
+    if (!supplierNifRaw || isValidPortugueseNif(supplierNifRaw)) {
+      return null;
+    }
+    if (!customerNifRaw || !isValidPortugueseNif(customerNifRaw)) {
+      return null;
+    }
+
+    let party: { id: string; name: string; nif: string | null } | null = null;
+    try {
+      party = await this.prisma.party.findFirst({
+        where: { tenantId, nif: customerNifRaw },
+        select: { id: true, name: true, nif: true },
+      });
+    } catch (err) {
+      // Tenant scoping / DB hiccup — never abort extraction on this path.
+      this.logger.warn(
+        `[resolveSupplierByNif] party lookup failed for tenant=${tenantId} ` +
+          `customerNif=${customerNifRaw}: ${(err as Error).message}. ` +
+          `Skipping NIF-resolve fallback.`,
+      );
+      return null;
+    }
+    if (!party) {
+      // No Party in this tenant for the customer NIF — no swap to apply.
+      return null;
+    }
+    // Prisma `where: { tenantId }` already enforces tenant scoping on the
+    // lookup; no extra cross-tenant check needed (and the helper is a
+    // helper, not an audit point).
+
+    this.logger.warn(
+      `[resolveSupplierByNif] AI supplier NIF (${supplierNifRaw}) fails mod-11 ` +
+        `but customer NIF (${customerNifRaw}) resolves Party "${party.name}" ` +
+        `(${party.id}) in tenant=${tenantId} doc=${documentId}. ` +
+        `Swapping supplier/customer — Party lookup is the trusted anchor.`,
+    );
+    return {
+      supplier: party.name,
+      supplierNif: party.nif ?? customerNifRaw,
+      partyId: party.id,
+      reason: "customer-nif-resolves-existing-party",
+    };
+  }
   private mergeVisionWithRegex(
     vision: import("../ai/vision.service").VisionAnalysisResult,
     regex: ExtractedFields,

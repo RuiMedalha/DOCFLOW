@@ -198,43 +198,59 @@ describe("ensureSupplierCustomerSanity — QR overrides AI Vision", () => {
     ).toBeUndefined();
   });
 
-  it("Caso 4 (filename heuristic, defense in depth): AI supplier NAME matches filename prefix + supplier NIF is NOT tenant NIF → swap supplier↔customer", async () => {
-    // CONDITION 4 catches the AI-from-filename error WHEN the existing
-    // CONDITION 1 (NIF match) can't — e.g. when the AI left the supplier
-    // NIF blank/foreign but put the customer's NIF in the customer slot.
-    // Without this defence, the original 2026-09-06 EDENOX doc (where
-    // supplier NIF was 515208566 — same as the tenant NIF) would have
-    // hit CONDITION 1 first and this branch would never run, but the
-    // filename-prefix heuristic is what catches the NEXT variant of the
-    // bug (a new supplier where the AI confused the parties without
-    // mirroring a tenant NIF).
+  it("Caso 4 (NIF-anchored, root-cause fix): AI supplier NIF fails mod-11 + customer NIF passes + NIFs swapped → swap supplier↔customer (filename heuristic is no longer required)", async () => {
+    // DIAGNOSTIC-2 §5 item 6 — Sprint H+ extraction-fix-3.
+    //
+    // The OLD predicate was `filenameSuspiciousMatch || (structuralNifMismatch && filenameSuspiciousMatch)`,
+    // i.e. the structural NIF check was gated behind the filename
+    // heuristic. When the AI hallucinated a supplier name NOT present in
+    // the filename (the user's "10× the same PDF" pattern), none of the
+    // guards fired. The root-cause fix drops the filename gating from
+    // the structural path: we now swap whenever supplier NIF fails mod-11
+    // AND customer NIF passes mod-11, regardless of filename.
+    //
+    // This test was previously named "Caso 4 (filename heuristic, defense
+    // in depth)" and used `supplierNif: "999999990"` (mod-11 valid final-
+    // consumer placeholder) so the structural check would NOT fire and
+    // only the filename heuristic would swap. After the root-cause fix
+    // the filename-only path is gone, so the old fixture would no longer
+    // swap. The new fixture uses `supplierNif: "100000000"` (mod-11
+    // invalid) so the structural check fires — and the supplier name does
+    // NOT match the filename, exactly the previously-missed bug case.
     const { svc } = buildService();
     const fields: ExtractedFields = {
       source: "ai",
       confidence: 0.85,
       currency: "EUR",
-      supplier: "NOV OUSADO LDA",
-      // Foreign placeholder so CONDITION 1 doesn't fire on the tenant NIF.
-      supplierNif: "999999990",
-      customer: "EDENOX — EQUIPAMENTOS HOTELEIROS, LDA",
-      customerNif: EDENOX_NIF,
+      // Supplier name does NOT match filename — the previously-missed
+      // bug case (filename heuristic was gated behind the filename
+      // anchor, so this scenario used to escape the safety net).
+      supplier: "SOME VENDOR WE NEVER HEARD OF",
+      supplierNif: "100000000", // mod-11 INVALID — forces structuralNifMismatch
+      customer: "NOV OUSADO UNIPESSOAL LDA",
+      // Customer NIF passes mod-11. Distinct from the tenant's NIF so the
+      // CONDITION 4 outer-gate `customerNif !== tenantNif` doesn't reject
+      // the swap. `510000002` is mod-11 valid (sum=2, mod=2, expected=9,
+      // check digit=2 — verifiable with `isValidPortugueseNif`).
+      customerNif: "510000002",
       iban: "PT50 0033 0000 4531 2966 5500 7",
       hints: [],
       warnings: [],
     };
-    // NO QR payload — the doc lost the QR decode, so we exercise the
-    // pure-filename heuristic.
+    // Filename deliberately does NOT match the supplier name — the
+    // scenario that the old filename-anchored guard missed. The new
+    // NIF-anchored guard catches it.
     const out = await invoke(
       svc,
       fields,
       undefined,
-      "NOV-OUSADO-LDA_2026-03-19_1018224984.pdf",
+      "random-november-receipt.pdf",
     );
-    // Swap fired via CONDITION 4.
-    expect(out.supplier).toBe("EDENOX — EQUIPAMENTOS HOTELEIROS, LDA");
-    expect(out.supplierNif).toBe(EDENOX_NIF);
-    expect(out.customer).toBe("NOV OUSADO LDA");
-    expect(out.customerNif).toBe("999999990");
+    // Swap fired via the NIF-anchored structural check.
+    expect(out.supplier).toBe("NOV OUSADO UNIPESSOAL LDA");
+    expect(out.supplierNif).toBe("510000002");
+    expect(out.customer).toBe("SOME VENDOR WE NEVER HEARD OF");
+    expect(out.customerNif).toBe("100000000");
     const swap = out.hints?.find((h) =>
       h.startsWith("partySwap:reason=ai_supplier_name_matches_filename_prefix"),
     );

@@ -481,7 +481,25 @@ function NumberCell({
    ================================================================ */
 
 export function FieldPanel(props: FieldPanelProps) {
-  const { fields, confidence, lineItems = [], currency = 'EUR', accounts = [] } = props;
+  const { fields, confidence, lineItems = [], currency = 'EUR' } = props;
+  // Normalize the `accounts` prop. The /accounting/accounts stub may return
+  // either a flat array or an envelope ({ items: [...] } / { data: [...] }
+  // / { accounts: [...] }). Older Sprint-I code paths also passed the raw
+  // envelope through, which crashed field-panel with
+  // "TypeError: accounts.map is not a function" on the render of the debit
+  // and credit account <select>s.
+  const accountsList: AccountingAccount[] = useMemo(() => {
+    const raw = props.accounts;
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      const envelope = raw as { items?: unknown; data?: unknown; accounts?: unknown };
+      if (Array.isArray(envelope.items)) return envelope.items as AccountingAccount[];
+      if (Array.isArray(envelope.data)) return envelope.data as AccountingAccount[];
+      if (Array.isArray(envelope.accounts)) return envelope.accounts as AccountingAccount[];
+    }
+    return [];
+  }, [props.accounts]);
+  const accounts = accountsList;
   const { categories } = useCategories();
   // Resolve the selected category record so the header badge can show the
   // descriptive name + IVA deductibility percent (rather than the raw slug).
@@ -647,8 +665,8 @@ export function FieldPanel(props: FieldPanelProps) {
                 }
               >
                 <option value="">— Selecionar —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.name}>
+                {categories.map((c, idx) => (
+                  <option key={c.id ?? `cat-${idx}`} value={c.name}>
                     {c.name}
                     {c.defaultIvaDeductibilityPct != null
                       ? ` — dedução ${c.defaultIvaDeductibilityPct}%`

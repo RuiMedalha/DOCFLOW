@@ -35,6 +35,7 @@ import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { DocumentsService, ALLOWED_MIMES, MAX_UPLOAD_BYTES } from './documents.service';
 import {
   AssignFolderDto,
+  CorrectSupplierDto,
   DocumentQueryDto,
   UpdateDocumentDto,
   UploadDocumentDto,
@@ -194,6 +195,26 @@ export class DocumentsController {
   ): Promise<{ documentId: string; status: 're-extraction triggered' }> {
     const doc = await this.documents.reExtract(user.tenantId, user.id, id);
     return { documentId: doc.id, status: 're-extraction triggered' };
+  }
+
+  @Post(':id/correct-supplier')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Manually correct the supplier + customer the AI extracted',
+    description:
+      'Overwrites the Document.supplier / supplierNif / iban / customer / customerNif / partyId fields with the operator-supplied values, writes a forensic audit row tagged `document.correct_supplier`, and re-publishes `document.uploaded` so the enrichment pipeline re-runs against the corrected fields. Use this when the extraction swapped the customer/supplier sides or picked the wrong entity altogether.',
+  })
+  @ApiBody({ type: CorrectSupplierDto })
+  @ApiResponse({ status: 200, description: 'Supplier corrected; pipeline re-triggered' })
+  @ApiResponse({ status: 400, description: 'Validation error (NIF / IBAN format)' })
+  @ApiResponse({ status: 404, description: 'Document or Party not found in this tenant' })
+  async correctSupplier(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: CorrectSupplierDto,
+  ): Promise<{ ok: true; supplier: string; partyId: string | null }> {
+    return this.documents.correctSupplier(user.tenantId, user.id, id, dto);
   }
 
   @Get(':id/items')

@@ -31,11 +31,13 @@ import {
   X as XIcon,
   RefreshCw,
   Save,
+  UserCheck,
 } from 'lucide-react';
 import { DocumentViewer } from './_components/document-viewer';
 import { FieldPanel } from './_components/field-panel';
 import { FraudWarning } from './_components/fraud-warning';
 import { QrBadge } from './_components/qr-badge';
+import { CorrectSupplierDialog } from './_components/correct-supplier-dialog';
 import { Dialog } from '../../../_components/ui';
 import { toastBus } from '../../../_components/ui';
 import {
@@ -110,6 +112,11 @@ export default function DocumentDetailPage() {
   // Pending DELETE confirmation (FieldPanel asks the parent to show the dialog
   // because the parent owns the mutation lifecycle and the toastBus feedback).
   const [pendingDelete, setPendingDelete] = useState<{ itemId: string; description: string } | null>(null);
+
+  // Manual supplier correction dialog (Sprint H+). The button lives next
+  // to Re-extrair in the primary actions row; the dialog itself is
+  // mounted at the bottom of the page so its lifecycle is owned here.
+  const [correctDialogOpen, setCorrectDialogOpen] = useState(false);
 
   // Local optimistic field state — flushed to the server via Save.
   const doc = bundle.data?.document;
@@ -667,6 +674,25 @@ export default function DocumentDetailPage() {
               />
               Re-extrair
             </button>
+            <button
+              type="button"
+              onClick={() => setCorrectDialogOpen(true)}
+              disabled={isApproved}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+              style={{
+                background: 'transparent',
+                color: 'var(--ed-ink-soft)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+              title={
+                isApproved
+                  ? 'Documento aprovado — corrija antes de aprovar'
+                  : 'Corrigir fornecedor / cliente extraído pela IA'
+              }
+            >
+              <UserCheck size={14} aria-hidden="true" />
+              Corrigir fornecedor
+            </button>
           </div>
 
           <FieldPanel
@@ -750,6 +776,37 @@ export default function DocumentDetailPage() {
           </div>
         </div>
       </Dialog>
+
+      {/*
+        Manual supplier/customer correction dialog. The dialog lives at
+        the page root so its lifecycle is decoupled from FieldPanel and
+        the bundle can refetch in the background after the POST returns.
+        On a successful save we clear the optimistic draft so the FieldPanel
+        picks up the server-authoritative values on the next refetch.
+      */}
+      <CorrectSupplierDialog
+        open={correctDialogOpen}
+        documentId={id}
+        initial={{
+          supplier: doc.supplier,
+          supplierNif: doc.supplierNif,
+          iban: doc.iban,
+          // customer / customerNif live on the backend Document row but
+          // are not surfaced on the field panel; cast through `any` so we
+          // don't widen the public type for the dialog alone.
+          customer: (doc as any).customer ?? null,
+          customerNif: (doc as any).customerNif ?? null,
+          partyId: doc.partyId ?? null,
+          partyName: null,
+        }}
+        onClose={() => setCorrectDialogOpen(false)}
+        onSaved={() => {
+          // Drop any unsaved field edits — the corrected values are the
+          // canonical ones now, and the bundle refetch will repopulate.
+          setDraft(null);
+          qc.invalidateQueries({ queryKey: ['document-detail', id] });
+        }}
+      />
     </div>
   );
 }

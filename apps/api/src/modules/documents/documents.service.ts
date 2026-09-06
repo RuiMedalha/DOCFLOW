@@ -20,6 +20,7 @@ import { AuditService } from '../audit/audit.service';
 import {
   DocumentQueryDto,
   UpdateDocumentDto,
+  CorrectSupplierDto,
 } from './dto/document.dto';
 import {
   FolderRulesEngine,
@@ -1052,6 +1053,173 @@ export class DocumentsService {
     });
 
     return existing;
+  }
+
+  // ───────────────────────────────────────── correct-supplier ─────────────
+
+  /**
+   * Manual correction of the supplier (and customer) the AI/OCR captured.
+   *
+   * Use case: the extraction picked the wrong side as the supplier (e.g.
+   * extracted the customer name into `supplier`). The user provides the
+   * correct supplier + customer + NIFs + IBAN; we update the Document,
+   * write a forensic audit row carrying the BEFORE/AFTER diff, and re-
+   * publish `document.uploaded` so the 4-stage pipeline re-runs the
+   * enrichment (party link resolution, category routing) against the
+   * corrected fields.
+   *
+   * Tenant scoping: `findFirst({ where: { id, tenantId } })` — a cross-
+   * tenant id surfaces as `null` → 404. We never trust a body-supplied
+   * tenantId.
+   *
+   * Optional partyId: when supplied, the link is replaced atomically
+   * (the FK lives on Document.partyId). Passing `null` clears the link
+   * so the next pipeline run can re-resolve it from the corrected
+   * supplier NIF. Omitting the field keeps the existing partyId.
+   *
+   * The processingStatus reset mirrors `reExtract()` so the pipeline's
+   * idempotency guard picks the doc up again. The user sees the SSE
+   * stage transitions (RECEIVED → EXTRACTING → … → COMPLETED) as it
+   * re-runs.
+   */
+  async correctSupplier(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: CorrectSupplierDto,
+  ): Promise<{ ok: true; supplier: string; partyId: string | null }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        customer: true,
+        customerNif: true,
+        iban: true,
+        partyId: true,
+        fileKey: true,
+        mimeType: true,
+        fileName: true,
+        fileSize: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    // Validate partyId belongs to the same tenant when supplied. An empty
+    // string clears the link; an explicit null also clears; a non-empty
+    // string MUST resolve to a row in this tenant — otherwise we refuse
+    // the write so a cross-tenant partyId can never slip in.
+    let partyIdToWrite: string | null | undefined;
+    if (dto.partyId === null || dto.partyId === '') {
+      partyIdToWrite = null;
+    } else if (dto.partyId !== undefined) {
+      const party = await this.prisma.party.findFirst({
+        where: { id: dto.partyId, tenantId },
+        select: { id: true },
+      });
+      if (!party) throw new NotFoundException('Party not found');
+      partyIdToWrite = party.id;
+    }
+    // else: dto.partyId === undefined → keep existing partyId (write below)
+
+    const triggerAt = new Date().toISOString();
+
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplier: dto.supplier,
+        supplierNif: dto.supplierNif,
+        // Empty IBAN is intentionally coerced to null so the FraudWarning
+        // banner doesn't render an empty chip.
+        iban: dto.iban && dto.iban.trim() !== '' ? dto.iban : null,
+        customer: dto.customer,
+        customerNif: dto.customerNif,
+        // Only write partyId when the caller actually passed one (or null).
+        // Undefined means "leave the link untouched".
+        ...(partyIdToWrite !== undefined ? { partyId: partyIdToWrite } : {}),
+        // Reset the pipeline state so the idempotency guard lets the
+        // doc back in. Same pattern as reExtract().
+        processingStatus: DocumentProcessingStatus.RECEIVED,
+        processingStartedAt: new Date(triggerAt),
+        processingCompletedAt: null,
+        processingError: null,
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        // Forensic trail for "who changed what, when, why". Keep the
+        // BEFORE values so the audit log is replayable without needing
+        // a separate "documentHistory" table. The reason field carries
+        // the operator-supplied note (free text, ≤ 500 chars).
+        subAction: 'document.correct_supplier',
+        oldSupplier: existing.supplier,
+        oldSupplierNif: existing.supplierNif,
+        oldCustomer: existing.customer,
+        oldCustomerNif: existing.customerNif,
+        oldIban: existing.iban,
+        oldPartyId: existing.partyId,
+        newSupplier: dto.supplier,
+        newSupplierNif: dto.supplierNif,
+        newCustomer: dto.customer,
+        newCustomerNif: dto.customerNif,
+        newIban: dto.iban && dto.iban.trim() !== '' ? dto.iban : null,
+        newPartyId: partyIdToWrite === undefined ? existing.partyId : partyIdToWrite,
+        reason: dto.reason ?? null,
+      } as Prisma.InputJsonValue,
+    });
+
+    this.logger.log(
+      `[correctSupplier] pipeline re-trigger for document=${id} ` +
+        `tenant=${tenantId} at=${triggerAt}`,
+    );
+
+    // Same payload shape as upload()/reExtract() — ProcessingService.handleReceived
+    // is the downstream consumer and treats all three identically.
+    try {
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: id,
+        tenantId,
+        userId,
+        fileKey: existing.fileKey,
+        mimeType: existing.mimeType,
+        fileSize: existing.fileSize,
+        originalFilename: existing.fileName,
+        uploadedAt: triggerAt,
+      });
+      publishPromise
+        .then(() => {
+          const elapsed = Date.now() - new Date(triggerAt).getTime();
+          this.logger.log(
+            `[correctSupplier] pipeline re-trigger queued for document=${id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
+          );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `[correctSupplier] pipeline re-trigger FAILED for document=${id} ` +
+              `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+          );
+        });
+    } catch (err) {
+      this.logger.error(
+        `[correctSupplier] pipeline re-trigger SYNC THROW for document=${id} ` +
+          `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    return {
+      ok: true,
+      supplier: dto.supplier,
+      partyId: partyIdToWrite === undefined ? existing.partyId : partyIdToWrite,
+    };
   }
 
   private async createPaymentEventIfMissing(

@@ -4,10 +4,12 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -295,4 +297,84 @@ export class AssignFolderDto {
   @IsOptional()
   @IsUUID()
   folderId?: string;
+}
+
+/**
+ * Request shape for POST /documents/:id/correct-supplier.
+ *
+ * Used when the AI extracted the wrong supplier (or the OCR picked the
+ * customer side as the supplier). The user provides the correct name +
+ * NIF + IBAN for the supplier and a customer correction as well, with an
+ * optional reason recorded in the audit log. The Document is updated and
+ * the processing pipeline is re-triggered via `document.uploaded` so the
+ * downstream enrichment (party linking, category routing) re-runs with
+ * the corrected fields.
+ *
+ * NIF regex mirrors the practical PT/EU surface:
+ *   - PT prefix is optional (`PT` + 9 digits) or 9 raw digits.
+ *   - Foreign NIFs (when extracted from non-PT invoices) are 5–15 chars
+ *     uppercase alnum with optional 2-letter country prefix.
+ *
+ * IBAN regex is permissive: 2 letter country + 2 check digits + 1–30 alnum
+ * body. Strict ISO 13616 mod-97 verification is intentionally NOT done
+ * here — the goal is to catch obvious typos before persistence, not to
+ * reject legitimate IBANs whose check-digit encoding differs by country.
+ */
+export class CorrectSupplierDto {
+  @ApiProperty({ example: 'EDENOX', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  supplier!: string;
+
+  @ApiProperty({ example: '502782160', maxLength: 20 })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[A-Z]{0,2}[A-Z0-9]{5,15}$/, {
+    message: 'supplierNif must be 5–15 uppercase alnum with optional 2-letter country prefix',
+  })
+  @MaxLength(20)
+  supplierNif!: string;
+
+  @ApiPropertyOptional({ example: 'PT50003300004531296655007' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{2}\d{2}[A-Z0-9]{1,30}$/, {
+    message: 'iban must start with 2-letter country code + 2 check digits + alnum body',
+  })
+  @MaxLength(34)
+  iban?: string;
+
+  @ApiProperty({ example: 'NOV OUSADO LDA', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  customer!: string;
+
+  @ApiProperty({ example: '515208566', maxLength: 20 })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[A-Z]{0,2}[A-Z0-9]{5,15}$/, {
+    message: 'customerNif must be 5–15 uppercase alnum with optional 2-letter country prefix',
+  })
+  @MaxLength(20)
+  customerNif!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Party.id to link the document to (replaces the existing partyId when present). Pass null to leave the existing party link untouched.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  partyId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Free-text reason recorded in the audit log (e.g. "AI extracted wrong supplier")',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }

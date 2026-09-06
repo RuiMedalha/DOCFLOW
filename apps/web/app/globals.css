@@ -378,6 +378,27 @@ body {
   box-shadow: 0 0 0 3px var(--ed-accent-gold-dim) !important;
 }
 
+/* Inline dialog input — editorial underline field, matches FieldPanel's EdInput */
+[data-skin='editorial'] .ed-dialog-input {
+  width: 100%;
+  background: transparent;
+  color: var(--ed-ink);
+  font-family: var(--font-inter-tight), system-ui, sans-serif;
+  font-size: 14px;
+  border: none;
+  border-bottom: 1px solid var(--ed-rule);
+  padding: 8px 4px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+[data-skin='editorial'] .ed-dialog-input:focus {
+  border-bottom: 2px solid var(--ed-accent-gold);
+}
+[data-skin='editorial'] .ed-dialog-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 [data-skin='editorial'] .btn-ghost {
   color: var(--ed-ink-soft) !important;
 }

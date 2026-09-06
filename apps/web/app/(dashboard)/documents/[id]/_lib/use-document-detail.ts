@@ -325,6 +325,37 @@ export function useDeleteLineItem() {
   });
 }
 
+/**
+ * Hard-delete the whole document — ADMIN-only on the server (the route is
+ * decorated with @Roles(Role.ADMIN) and a non-ADMIN caller gets 403). The
+ * backend returns 204 No Content, the row + file are gone, and the bundle
+ * cache is invalidated so any list view refetches. The page route is
+ * expected to redirect (router.push('/documents')) on success — the hook
+ * does NOT navigate on its own so the caller controls the UX (some
+ * surfaces may want to keep the user on the page after a partial failure).
+ *
+ * Cache invalidation is the only post-mutation side effect we own here:
+ * the Audit row is written by the server, the file bytes + Document row
+ * are removed server-side, and the SSE channel has nothing to publish for
+ * a deletion.
+ */
+export function useHardDeleteDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      apiFetch<void>(`/documents/${id}/hard`, { method: 'DELETE' }),
+    onSuccess: (_void, id) => {
+      // Drop the detail cache so a navigation back to the same id forces a
+      // fresh fetch (which will 404, the expected post-delete state).
+      qc.removeQueries({ queryKey: ['document-detail', id] });
+      // Invalidate every list-shaped query — the inbox/all/folder views
+      // share the same row id and must drop their cached copies.
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['inbox'] });
+    },
+  });
+}
+
 // =================================================================== helpers
 
 function extractQrFields(qrPayload?: string | null): string[] {

@@ -32,6 +32,7 @@ import {
   RefreshCw,
   Save,
   UserCheck,
+  Trash2,
 } from 'lucide-react';
 import { DocumentViewer } from './_components/document-viewer';
 import { FieldPanel } from './_components/field-panel';
@@ -47,6 +48,7 @@ import {
   useDeleteLineItem,
   useDocumentBundle,
   useDownloadUrl,
+  useHardDeleteDocument,
   useReExtract,
   useSaveFields,
   useSendToToc,
@@ -96,6 +98,7 @@ export default function DocumentDetailPage() {
   const addLine = useAddLineItem();
   const updateLine = useUpdateLineItem();
   const deleteLine = useDeleteLineItem();
+  const hardDelete = useHardDeleteDocument();
 
   // Role gating for line-item editing. Backend enforces the same gate
   // (Role.ADMIN / Role.OPERADOR) — we mirror it here so the UI doesn't
@@ -103,6 +106,10 @@ export default function DocumentDetailPage() {
   const user = useUser();
   const canEditLines =
     user?.role === 'ADMIN' || user?.role === 'OPERADOR';
+  // Hard-delete is ADMIN-only (matches @Roles(Role.ADMIN) on the
+  // backend). OPERADOR cannot see the button; non-admin callers
+  // never get the DELETE endpoint past the RBAC guard anyway.
+  const canHardDelete = user?.role === 'ADMIN';
 
   // Track which row is mid-PATCH so the FieldPanel can disable that row's
   // inputs until the refetch lands.
@@ -112,6 +119,11 @@ export default function DocumentDetailPage() {
   // Pending DELETE confirmation (FieldPanel asks the parent to show the dialog
   // because the parent owns the mutation lifecycle and the toastBus feedback).
   const [pendingDelete, setPendingDelete] = useState<{ itemId: string; description: string } | null>(null);
+
+  // Pending HARD DELETE confirmation (ADMIN-only). The button lives in the
+  // primary actions row; this state holds the doc id while the dialog is
+  // open so the parent can orchestrate the mutation + navigation.
+  const [pendingHardDelete, setPendingHardDelete] = useState(false);
 
   // Manual supplier correction dialog (Sprint H+). The button lives next
   // to Re-extrair in the primary actions row; the dialog itself is
@@ -332,6 +344,40 @@ export default function DocumentDetailPage() {
       setDeletingItemId(null);
     }
   }, [id, pendingDelete, deleteLine, qc]);
+
+  /**
+   * Hard-delete (ADMIN only) — destructive, irreversible. The button
+   * shows a confirmation dialog and only fires on the positive click.
+   * On success we navigate back to the documents list (the detail page
+   * would 404 on the next refetch since the row is gone) and surface
+   * a toast. Failure keeps the user on the page so they can retry or
+   * copy the doc id.
+   *
+   * Mirrors the existing soft-delete / approve / line-item patterns:
+   * parent owns the mutation lifecycle + toastBus feedback, dialog is
+   * just a confirm step.
+   */
+  const confirmHardDelete = useCallback(async () => {
+    if (!id) return;
+    setPendingHardDelete(false);
+    try {
+      await hardDelete.mutateAsync(id);
+      toastBus.success('Documento apagado permanentemente.');
+      // Navigate back to the list — the row no longer exists, so any
+      // refetch on this id would 404. router.replace avoids adding the
+      // dead id to the back stack.
+      router.replace('/documents');
+    } catch (err: any) {
+      const raw = typeof err?.message === 'string' ? err.message : '';
+      // 403 → non-admin (shouldn't happen because we gate the button,
+      // but defensive: surface a friendly copy anyway).
+      const friendly =
+        raw.toLowerCase().includes('forbidden') || raw.toLowerCase().includes('admin')
+          ? 'Sem permissões para apagar este documento.'
+          : raw || 'Falha ao apagar o documento.';
+      toastBus.error(friendly);
+    }
+  }, [id, hardDelete, router]);
 
   if (bundle.isLoading) {
     return (
@@ -693,6 +739,25 @@ export default function DocumentDetailPage() {
               <UserCheck size={14} aria-hidden="true" />
               Corrigir fornecedor
             </button>
+            {canHardDelete && (
+              <button
+                type="button"
+                onClick={() => setPendingHardDelete(true)}
+                aria-label="Apagar documento permanentemente"
+                data-testid="hard-delete-button"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm hover:opacity-80 transition-opacity"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--ed-status-alert, #8b2e2a)',
+                  border: '1px solid var(--ed-status-alert, #8b2e2a)',
+                  borderRadius: 'var(--ed-radius-chip)',
+                }}
+                title="Apagar definitivamente (apenas ADMIN): remove o ficheiro, a linha na base de dados e cascata para itens + eventos de pagamento"
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                Apagar
+              </button>
+            )}
           </div>
 
           <FieldPanel
@@ -770,6 +835,58 @@ export default function DocumentDetailPage() {
                 <>
                   <XIcon size={14} aria-hidden="true" />
                   Eliminar
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* DELETE document (ADMIN-only destructive) confirmation dialog.
+          The button in the primary actions row only opens this for ADMIN
+          users; the server still enforces @Roles(Role.ADMIN) as a second
+          line of defense so a stale token or UI bypass is rejected. */}
+      <Dialog
+        open={pendingHardDelete}
+        onClose={() => setPendingHardDelete(false)}
+        title="Apagar documento permanentemente?"
+        description="Esta ação é irreversível. Remove o ficheiro, a linha na base de dados e cascata para itens + eventos de pagamento."
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p
+            className="text-sm"
+            style={{ color: 'var(--ed-ink-soft)' }}
+          >
+            Documento:{' '}
+            <span className="font-medium" style={{ color: 'var(--ed-ink)' }}>
+              {doc.fileName ?? id}
+            </span>
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingHardDelete(false)}
+              className="btn-secondary text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={confirmHardDelete}
+              disabled={hardDelete.isPending}
+              aria-busy={hardDelete.isPending}
+              className="btn-danger text-sm"
+            >
+              {hardDelete.isPending ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  A apagar…
+                </>
+              ) : (
+                <>
+                  <Trash2 size={14} aria-hidden="true" />
+                  Apagar definitivamente
                 </>
               )}
             </button>

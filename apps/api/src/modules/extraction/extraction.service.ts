@@ -51,7 +51,7 @@ import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.s
 // were stuck in EXTRACTING until manual intervention. QueueAdapter is
 // global (QueueModule.forRoot() in app.module.ts) so this resolves even
 // when ExtractionModule is the boot path.
-import type { QueueAdapter } from "../../common/queue/queue-adapter.interface";
+import { QUEUE_ADAPTER, type QueueAdapter } from "../../common/queue/queue-adapter.interface";
 
 /**
  * Where the text fed into the regex/QR pipeline came from. Recorded on
@@ -318,7 +318,7 @@ export class ExtractionService implements OnModuleDestroy {
     // unit-test harness constructs ExtractionService without DI; the
     // publish becomes a no-op (logs a warning) so the tests still pass.
     @Optional()
-    @Inject("QUEUE_ADAPTER")
+    @Inject(QUEUE_ADAPTER)
     private readonly queueAdapter?: QueueAdapter,
   ) {}
 

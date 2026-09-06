@@ -6,20 +6,23 @@
  *
  * Editorial / Contábil · Blueprint Edition (commit 2026-09-06).
  *
- * Use case: the OCR pipeline picked the customer as the supplier (or got
- * the entity wrong altogether). The operator opens this dialog from the
- * detail page, types the correct supplier + customer, optionally links to
- * an existing Party from the autocomplete, and submits. The backend
- *   - overwrites Document.supplier / supplierNif / iban / customer /
- *     customerNif / partyId;
- *   - writes an audit row tagged `document.correct_supplier` carrying the
- *     BEFORE/AFTER diff;
- *   - re-publishes `document.uploaded` so the enrichment pipeline re-runs
- *     against the corrected fields.
+ * Sprint H+ UX feedback: the dialog used to force the operator to type
+ * corrections even when the AI extraction was already right. There are
+ * now THREE distinct actions, surfaced through a 3-button chooser:
  *
- * Party autocomplete hits `GET /parties?search=…&limit=10` and is bounded
- * to a small page size — the volume per tenant is low (a few hundred
- * recurring suppliers at most) so we don't bother with virtualisation.
+ *   1. "Corrigir dados"       → mode='edit'     → original POST /correct-supplier form
+ *   2. "Re-extrair"           → mode='re-extract' → POST /re-extract, close + toast
+ *   3. "Confirmar como está"  → mode='verify'    → PATCH /verify-supplier, close + toast
+ *
+ * The chooser (`mode='choose'`) is the DEFAULT screen. Only after the
+ * operator explicitly picks "Corrigir dados" does the form render — the
+ * other two actions never expose the form, so the operator can confirm or
+ * re-extract without having to type anything.
+ *
+ * Party autocomplete (used by the edit form) hits
+ * `GET /parties?search=…&limit=10` and is bounded to a small page size —
+ * the volume per tenant is low (a few hundred recurring suppliers at
+ * most) so we don't bother with virtualisation.
  *
  * Validation mirrors the backend DTO (class-validator): NIF regex matches
  * the practical PT/EU surface, IBAN must start with 2 letters + 2
@@ -28,7 +31,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Search, UserCheck, X } from 'lucide-react';
+import { Check, Loader2, RefreshCw, Search, UserCheck, X } from 'lucide-react';
 import { Dialog, toastBus } from '../../../../_components/ui';
 import { authedFetch } from '../../../../_lib/auth-refresh';
 
@@ -72,6 +75,20 @@ interface PartyLite {
   iban?: string | null;
 }
 
+/**
+ * UX flow (Sprint H+):
+ *   - `choose`     → 3 buttons (default on open).
+ *   - `edit`       → the original form, set by "Corrigir dados".
+ *   - `re-extract` → POST /re-extract then close (no form).
+ *   - `verify`     → PATCH /verify-supplier then close (no form).
+ *
+ * `re-extract` and `verify` are kept in the state machine for clarity
+ * even though they short-circuit to the same close + toast — keeps the
+ * `submitting`/disabled flags on the chooser semantically correct while
+ * the request is in flight.
+ */
+type DialogMode = 'choose' | 'edit' | 're-extract' | 'verify';
+
 const EMPTY_FORM = (initial: CorrectSupplierInitial): FormState => ({
   supplier: initial.supplier ?? '',
   supplierNif: initial.supplierNif ?? '',
@@ -97,6 +114,10 @@ export function CorrectSupplierDialog({
   const [form, setForm] = useState<FormState>(() => EMPTY_FORM(initial));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  // Sprint H+ UX — 3-action chooser. Default is 'choose' so the operator
+  // sees the three actions explicitly instead of being dropped into a
+  // form they must escape to do nothing.
+  const [mode, setMode] = useState<DialogMode>('choose');
 
   // Party autocomplete state. The search input is bound to `partyQuery`;
   // the dropdown opens when there's text and results are non-empty.
@@ -115,6 +136,10 @@ export function CorrectSupplierDialog({
       setErrors({});
       setPartyQuery(initial.partyName ?? '');
       setPartyOpen(false);
+      // Always start on the chooser — even if the user already picked
+      // "Corrigir dados" and cancelled, the next open should re-show
+      // the three actions, not silently resume the form.
+      setMode('choose');
     }
   }, [open, initial]);
 
@@ -241,20 +266,7 @@ export function CorrectSupplierDialog({
           body: JSON.stringify(payload),
         },
       );
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          const body = await res.json();
-          if (body?.message) {
-            detail = Array.isArray(body.message)
-              ? body.message.join('; ')
-              : body.message;
-          }
-        } catch {
-          /* ignore parse errors */
-        }
-        throw new Error(detail);
-      }
+      if (!res.ok) throw await httpError(res, 'Não foi possível corrigir o fornecedor');
       toastBus.success('Fornecedor corrigido. Pipeline a re-correr…');
       onSaved?.();
       onClose();
@@ -267,15 +279,136 @@ export function CorrectSupplierDialog({
     }
   };
 
+  /**
+   * Re-extrair — Sprint H+ action #2. Resets the doc to RECEIVED and
+   * re-publishes `document.uploaded`. The backend does the heavy lifting
+   * asynchronously, so we just close the dialog and let the SSE channel
+   * push the progress events.
+   */
+  const reExtract = async () => {
+    setSubmitting(true);
+    setMode('re-extract');
+    try {
+      const res = await authedFetch(
+        `${API_BASE}/documents/${documentId}/re-extract`,
+        { method: 'POST' },
+      );
+      if (!res.ok) throw await httpError(res, 'Não foi possível re-extrair');
+      toastBus.success(
+        'Re-extração iniciada — processamento vai completar em segundos.',
+      );
+      onSaved?.();
+      onClose();
+    } catch (err) {
+      toastBus.error('Não foi possível re-extrair', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+      // Send the user back to the chooser so they can try again or pick
+      // a different action — never leave them stuck on a "loading" frame
+      // after an error.
+      setMode('choose');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Confirmar como está — Sprint H+ action #3. Stamps supplierVerifiedAt
+   * via the new PATCH /documents/:id/verify-supplier endpoint. Distinct
+   * from correct-supplier (which writes fields) and from approve (a
+   * downstream gate): this is purely the "I reviewed the AI extraction
+   * and it's correct as-is" decision, recorded for the audit trail.
+   */
+  const verifyAsIs = async () => {
+    setSubmitting(true);
+    setMode('verify');
+    try {
+      const res = await authedFetch(
+        `${API_BASE}/documents/${documentId}/verify-supplier`,
+        { method: 'PATCH' },
+      );
+      if (!res.ok) throw await httpError(res, 'Não foi possível confirmar');
+      toastBus.success('Fornecedor confirmado. Registo gravado em auditoria.');
+      onSaved?.();
+      onClose();
+    } catch (err) {
+      toastBus.error('Não foi possível confirmar', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+      setMode('choose');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <Dialog
       open={open}
       onClose={submitting ? () => undefined : onClose}
       title="Corrigir fornecedor"
-      description="Substitui os campos extraídos pelo Gemini Vision. A correção é registada em auditoria e a pipeline é re-executada."
+      description={
+        mode === 'choose'
+          ? 'Escolha uma das três ações abaixo — só precisa de corrigir dados quando a IA realmente errou.'
+          : 'Substitui os campos extraídos pelo Gemini Vision. A correção é registada em auditoria e a pipeline é re-executada.'
+      }
       size="lg"
     >
+      {mode === 'choose' ? (
+        <div className="space-y-3" role="group" aria-label="Ações de fornecedor">
+          <ChooserButton
+            tone="primary"
+            icon={<UserCheck size={16} aria-hidden="true" />}
+            title="Corrigir dados"
+            description="Substituir fornecedor, NIF, IBAN ou cliente. A pipeline é re-executada com os valores novos."
+            onClick={() => setMode('edit')}
+            disabled={submitting}
+          />
+          <ChooserButton
+            icon={<RefreshCw size={16} aria-hidden="true" />}
+            title="Re-extrair"
+            description="Re-correr a IA (Gemini Vision) sem mexer em nada. Útil quando o ficheiro mudou ou a primeira extração falhou."
+            onClick={reExtract}
+            disabled={submitting}
+          />
+          <ChooserButton
+            icon={<Check size={16} aria-hidden="true" />}
+            title="Confirmar como está"
+            description="Marcar os dados extraídos como verificados sem os alterar. Regista a decisão em auditoria."
+            onClick={verifyAsIs}
+            disabled={submitting}
+          />
+
+          <div
+            className="flex items-center justify-end gap-2 pt-4 border-t"
+            style={{ borderColor: 'var(--ed-rule)' }}
+          >
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="btn-secondary text-sm"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-5">
+        {/* ─────────────── Back-to-chooser hint ─────────────── */}
+        <button
+          type="button"
+          onClick={() => setMode('choose')}
+          disabled={submitting}
+          className="text-[11px] uppercase tracking-wider hover:opacity-70 disabled:opacity-50"
+          style={{
+            fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+            letterSpacing: '0.14em',
+            color: 'var(--ed-ink-faint)',
+          }}
+        >
+          ← Outras ações
+        </button>
+
         {/* ─────────────── Supplier ─────────────── */}
         <fieldset
           className="space-y-4"
@@ -550,6 +683,7 @@ export function CorrectSupplierDialog({
           </button>
         </div>
       </div>
+      )}
     </Dialog>
   );
 }
@@ -558,6 +692,95 @@ export function CorrectSupplierDialog({
    Local helpers — minimal primitives so the dialog doesn't depend
    on a global "Field" component the page already uses elsewhere.
    ================================================================ */
+
+/**
+ * Translate a non-2xx Response into an Error whose message is the API's
+ * `message` (or "<prefix>: HTTP <status>" as a fallback). Keeps the
+ * call sites readable — the catch block can just spread the error.
+ */
+async function httpError(res: Response, prefix: string): Promise<Error> {
+  let detail = `${prefix}: HTTP ${res.status}`;
+  try {
+    const body = await res.json();
+    if (body?.message) {
+      const msg = Array.isArray(body.message)
+        ? body.message.join('; ')
+        : String(body.message);
+      detail = `${prefix}: ${msg}`;
+    }
+  } catch {
+    /* response was not JSON — keep the HTTP-status fallback */
+  }
+  return new Error(detail);
+}
+
+/**
+ * Big tappable button used by the 3-action chooser. Mirrors the
+ * editorial Card primitive (white surface + 1px navy rule + generous
+ * padding) so the chooser visually anchors to the rest of the dialog.
+ */
+function ChooserButton({
+  icon,
+  title,
+  description,
+  onClick,
+  disabled,
+  tone,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** `primary` → gold accent (default action), `ghost` → neutral. */
+  tone?: 'primary' | 'ghost';
+}) {
+  const isPrimary = tone === 'primary';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group flex w-full items-start gap-4 px-4 py-3 text-left transition-all hover:translate-x-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+      style={{
+        background: isPrimary ? 'var(--ed-canvas-2)' : 'var(--ed-canvas)',
+        border: `1px solid ${isPrimary ? 'var(--ed-accent-gold)' : 'var(--ed-rule-strong)'}`,
+        borderRadius: 'var(--ed-radius-chip)',
+      }}
+    >
+      <span
+        className="flex h-9 w-9 flex-shrink-0 items-center justify-center"
+        style={{
+          background: isPrimary ? 'var(--ed-accent-gold-dim)' : 'var(--ed-canvas-2)',
+          border: `1px solid ${isPrimary ? 'var(--ed-accent-gold)' : 'var(--ed-rule)'}`,
+          borderRadius: '50%',
+          color: 'var(--ed-ink)',
+        }}
+        aria-hidden="true"
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span
+          className="block font-medium"
+          style={{
+            fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+            fontSize: '15px',
+            color: 'var(--ed-ink)',
+          }}
+        >
+          {title}
+        </span>
+        <span
+          className="mt-0.5 block text-[12px] leading-snug"
+          style={{ color: 'var(--ed-ink-faint)' }}
+        >
+          {description}
+        </span>
+      </span>
+    </button>
+  );
+}
 function Field({
   label,
   error,

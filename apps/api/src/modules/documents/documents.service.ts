@@ -1222,6 +1222,68 @@ export class DocumentsService {
     };
   }
 
+  // ───────────────────────────────────────── verify-supplier ──────────────
+
+  /**
+   * Operator explicitly confirms the AI-extracted supplier block is
+   * correct AS-IS — i.e. they reviewed the row and decided no field
+   * edit is needed. Distinct from `correctSupplier` (which overwrites
+   * fields) and from `approve` (which is a downstream approval gate).
+   *
+   * Use case (Sprint H+ UX feedback): the "Corrigir fornecedor" dialog
+   * previously forced the operator to type corrections even when the AI
+   * extraction was right. The dialog now exposes three actions — edit,
+   * re-extract, or just confirm — and `verifySupplier` is the third one.
+   *
+   * Writes `Document.supplierVerifiedAt = now()` (UTC) and emits an
+   * audit row tagged `document.verify_supplier` so the
+   * "operator reviewed this row" decision is replayable from audit logs
+   * alone.
+   *
+   * Tenant scoping: `findFirst({ where: { id, tenantId } })` — a cross-
+   * tenant id surfaces as `null` → 404; we never trust a body-supplied
+   * tenantId.
+   */
+  async verifySupplier(
+    tenantId: string,
+    userId: string,
+    id: string,
+  ): Promise<{ ok: true; verifiedAt: string }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const verifiedAt = new Date();
+
+    await this.prisma.document.update({
+      where: { id },
+      data: { supplierVerifiedAt: verifiedAt },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        // Forensic trail: who confirmed the supplier block, when, and
+        // against which document. The supplier fields themselves are
+        // not changed — we just record the confirmation decision.
+        subAction: 'document.verify_supplier',
+        verifiedAt: verifiedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    this.logger.log(
+      `[verifySupplier] supplier confirmed for document=${id} tenant=${tenantId} at=${verifiedAt.toISOString()}`,
+    );
+
+    return { ok: true, verifiedAt: verifiedAt.toISOString() };
+  }
+
   private async createPaymentEventIfMissing(
     tenantId: string,
     document: {

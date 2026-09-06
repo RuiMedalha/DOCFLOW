@@ -410,6 +410,11 @@ model Document {
   atcud          String?        // QR-AT unique code
   docHash        String?        // hash inside QR-AT payload
   iban           String?        // IBAN from QR-AT (for anti-fraud)
+  // Sprint H+ — set by PATCH /documents/:id/verify-supplier when the
+  // operator explicitly confirms the AI-extracted supplier block is
+  // correct (no field edit). Distinct from `approvedAt`: a doc can be
+  // supplier-verified long before (or without ever being) approved.
+  supplierVerifiedAt DateTime?
 
   docDate        DateTime?
   dueDate        DateTime?
@@ -492,6 +497,7 @@ model Document {
   @@index([tenantId, paymentStatus])
   @@index([tenantId, atcud])
   @@index([tenantId, docNumber, total, docDate])
+  @@index([tenantId, supplierVerifiedAt])
   // H-06: per-tenant dedup on SHA-256. Removes the race window between
   // findFirst + create where two concurrent uploads of the same bytes
   // would both insert. Prisma will surface a unique-violation that the

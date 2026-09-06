@@ -217,6 +217,23 @@ export class DocumentsController {
     return this.documents.correctSupplier(user.tenantId, user.id, id, dto);
   }
 
+  @Patch(':id/verify-supplier')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Confirm the AI-extracted supplier block as-is (no field edit)',
+    description:
+      'Writes Document.supplierVerifiedAt = now() and emits an audit row tagged `document.verify_supplier`. Distinct from `correct-supplier` (which overwrites fields) and from `approve` (which is a downstream approval gate). Use this when the operator reviewed the row and decided the AI extraction is correct — the dialog used to force a field edit even when nothing was wrong, which is what this endpoint + UX triad fixes.',
+  })
+  @ApiResponse({ status: 200, description: 'Supplier block confirmed; verifiedAt returned' })
+  @ApiResponse({ status: 404, description: 'Document not found in this tenant' })
+  async verifySupplier(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ ok: true; verifiedAt: string }> {
+    return this.documents.verifySupplier(user.tenantId, user.id, id);
+  }
+
   @Get(':id/items')
   @ApiOperation({ summary: 'List document line items' })
   @ApiResponse({ status: 404, description: 'Document not found' })

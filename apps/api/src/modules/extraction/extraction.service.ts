@@ -662,7 +662,12 @@ export class ExtractionService implements OnModuleDestroy {
     // stored qrPayload, then the AI's vision read. The supplier-swap
     // safety net uses the most trustworthy QR string available.
     const qrForSanity = zxingQr ?? doc.qrPayload ?? aiQrForSanity ?? undefined;
-    fields = await this.ensureSupplierCustomerSanity(tenantId, fields, qrForSanity);
+    fields = await this.ensureSupplierCustomerSanity(
+      tenantId,
+      fields,
+      qrForSanity,
+      doc.fileName,
+    );
 
     const aiQrRawForRow = (fields.hints ?? [])
       .find((h) => h.startsWith("aiQrRaw:"))
@@ -1824,6 +1829,7 @@ export class ExtractionService implements OnModuleDestroy {
     tenantId: string,
     fields: ExtractedFields,
     qrPayloadOverride?: string,
+    fileName?: string,
   ): Promise<ExtractedFields> {
     try {
       const id = await getTenantIdentity(this.prisma, tenantId);
@@ -1958,6 +1964,118 @@ export class ExtractionService implements OnModuleDestroy {
           `partySwap:reason=supplier_name_eq_tenant_name`,
         ];
         return swapped;
+      }
+
+      // ── CONDITION 5: QR's A: field (issuer NIF) overrides AI supplier NIF
+      // The QR's A: is the legal source of truth for the supplier's NIF —
+      // when present and well-formed, ANY AI-returned supplier NIF that
+      // disagrees must be discarded. This is the primary fix for the
+      // bug where Gemini infers the supplier NAME from the filename (e.g.
+      // `NOV-OUSADO-LDA_*.pdf` looks like a NOV OUSADO supplier but the
+      // QR A: says 502782160 = EDENOX, which is actually the supplier).
+      // We DO NOT swap blindly because we don't have the supplier NAME in
+      // the QR — we set qrAuthoritativeSupplierNif so downstream code can
+      // re-resolve the supplier via NIF lookup after this returns.
+      //
+      // `qrAuthoritativeSupplierNif` here means: the NIF we resolved from
+      // the QR payload (NOT the AI fallback `fields.supplierNif`). We
+      // detect that by re-reading the QR string explicitly.
+      const qrSoleNif = qrStr ? qrStr.match(/(?:^|\*)A:(\d+)/)?.[1] : undefined;
+      const qrNifNormalized = qrSoleNif ? normalizeTenantNif(qrSoleNif) : undefined;
+      if (
+        qrNifNormalized &&
+        qrNifNormalized.length === 9 &&
+        // differs from what the AI put in the supplier slot
+        supplierNifNorm !== qrNifNormalized &&
+        // AND the QR NIF doesn't match the tenant (otherwise CONDITION 1 already handled it)
+        qrNifNormalized !== tenantNif
+      ) {
+        const trustedNif = qrNifNormalized;
+        const aiNifWas = supplierNifNorm || "none";
+        this.logger.warn(
+          `[ensureSupplierCustomerSanity] QR A: NIF (${formatPtNif(trustedNif)}) ` +
+            `overrides AI supplier NIF (${aiNifWas === "none" ? "(empty)" : formatPtNif(aiNifWas)}). ` +
+            `Discarding AI supplier NAME so it can be re-resolved from the trusted NIF. ` +
+            `document=${fileName ?? "?"}, aiSupplier="${fields.supplier ?? "?"}".`,
+        );
+        const corrected: ExtractedFields = {
+          ...fields,
+          // Overwrite NIF with QR truth. Clear NAME so the supplier-resolver
+          // fills it from a Party lookup keyed on the trusted NIF.
+          supplierNif: trustedNif,
+          supplier: undefined,
+          supplierVatId: undefined,
+        };
+        corrected.hints = [
+          ...(corrected.hints ?? []),
+          `qrAuthoritativeSupplierNif:${trustedNif}`,
+          `aiSupplierDiscarded:reason=qr_a_overrides_ai_supplier_nif`,
+        ];
+        return corrected;
+      }
+
+      // ── CONDITION 4: AI supplier name matches the upload filename
+      // (heurística errada: o modelo leu o filename e colocou como
+      // emitente). Quando o customer slot tem dados E o customer NIF
+      // difere do tenant NIF, descartamos o supplier do AI e fazemos o
+      // swap — o nome real do supplier está provavelmente no customer
+      // (a fatura tem DOIS nomes e o AI escolheu o errado baseado no
+      // filename). Marcamos qrAuthoritativeSupplierNif:none + um hint
+      // para auditoria. Real bug medido em 2026-09-06 no doc
+      // `cmtoag5il000ng59oor229cb3` (NOV-OUSADO-LDA_2026-03-19_*.pdf):
+      // Gemini leu o filename como supplier, e o QR não foi captado
+      // pelo pipeline nesse doc, então cai nesse caminho.
+      if (
+        fileName &&
+        supplierName.length >= 5 &&
+        hasCustomerData &&
+        // Customer NIF é presente E não é o tenant NIF (= não é o comprador)
+        customerNif.length > 0 &&
+        customerNif !== tenantNif
+      ) {
+        // Heurística: limpar o filename e ver se o supplier name aparece
+        // como prefixo. DocFlow uploads usam `<NAME>_<DATE>_<NUMBER>.pdf`,
+        // então o nome do CUSTOMER é tipicamente o prefixo. Se o supplier
+        // do AI casa com esse prefixo, é forte sinal de que o AI inverteu.
+        const fileNameNorm = fileName
+          .replace(/\.pdf$/i, "")
+          .replace(/_[0-9]{4}-[0-9]{2}-[0-9]{2}_.*$/, "")
+          .replace(/_[0-9]{8,}.*$/, "")
+          // Treat dashes/spaces/underscores as interchangeable — uploads
+          // often use `NOV-OUSADO-LDA` while the AI extracted `NOV OUSADO
+          // LDA`. Without this normalisation the substring check misses
+          // both directions on every DocFlow upload (the real bug from
+          // 2026-09-06 EDENOX invoice).
+          .replace(/[-_\s]+/g, " ")
+          .toLowerCase()
+          .trim();
+        const supplierNameNorm = supplierName.replace(/[-_\s]+/g, " ");
+        const filenameSuspiciousMatch =
+          fileNameNorm.length >= 5 &&
+          (fileNameNorm.includes(supplierNameNorm) ||
+            supplierNameNorm.includes(fileNameNorm) ||
+            (supplierNameNorm.length >= 8 &&
+              fileNameNorm.startsWith(supplierNameNorm.slice(0, 8))));
+        if (filenameSuspiciousMatch) {
+          this.logger.warn(
+            `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
+              `matches filename prefix (${fileName}); likely swapped with customer. ` +
+              `Forcing a swap supplier↔customer. Real bug from 2026-09-06 EDENOX invoice.`,
+          );
+          const swapped: ExtractedFields = {
+            ...fields,
+            supplier: fields.customer,
+            customer: fields.supplier,
+            supplierNif: fields.customerNif,
+            customerNif: fields.supplierNif,
+          };
+          swapped.hints = [
+            ...(swapped.hints ?? []),
+            `partySwap:ai-swapped-supplier-customer`,
+            `partySwap:reason=ai_supplier_name_matches_filename_prefix`,
+          ];
+          return swapped;
+        }
       }
 
       return fields;

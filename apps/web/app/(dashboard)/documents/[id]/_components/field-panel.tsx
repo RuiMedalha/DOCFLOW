@@ -1256,9 +1256,9 @@ export function FieldPanel(props: FieldPanelProps) {
                 onChange={(e) => props.onAssignDebit?.(e.target.value)}
               >
                 <option value="">— Selecionar —</option>
-                {accounts.map((a) => (
-                  <option key={`d-${a.code}`} value={a.code}>
-                    {a.code} · {a.label}
+                {accounts.map((a, idx) => (
+                  <option key={`d-${a.code ?? `idx-${idx}`}`} value={a.code ?? ''}>
+                    {(a.code ?? 'N/A')} · {(a.label ?? 'Sem nome')}
                   </option>
                 ))}
               </EdSelect>
@@ -1269,9 +1269,9 @@ export function FieldPanel(props: FieldPanelProps) {
                 onChange={(e) => props.onAssignCredit?.(e.target.value)}
               >
                 <option value="">— Selecionar —</option>
-                {accounts.map((a) => (
-                  <option key={`c-${a.code}`} value={a.code}>
-                    {a.code} · {a.label}
+                {accounts.map((a, idx) => (
+                  <option key={`c-${a.code ?? `idx-${idx}`}`} value={a.code ?? ''}>
+                    {(a.code ?? 'N/A')} · {(a.label ?? 'Sem nome')}
                   </option>
                 ))}
               </EdSelect>

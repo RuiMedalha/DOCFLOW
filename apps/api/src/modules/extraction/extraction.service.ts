@@ -52,6 +52,14 @@ import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.s
 // global (QueueModule.forRoot() in app.module.ts) so this resolves even
 // when ExtractionModule is the boot path.
 import { QUEUE_ADAPTER, type QueueAdapter } from "../../common/queue/queue-adapter.interface";
+// Sprint H+ extraction-fix-3 — structural NIF/IBAN validators used by
+// the filename-heuristic guard + the AI-vs-QR disagreement logger below.
+// The validator never throws on malformed input, so importing it is
+// safe in this hot path. `isValidIban` is already imported from
+// @docflow/shared at the top of the file — only `isValidPortugueseNif`
+// is new (the shared helper validates PT NIFs differently and is used
+// in different parts of the pipeline).
+import { isValidPortugueseNif } from "../../common/validation/tax-id.validator";
 
 /**
  * Where the text fed into the regex/QR pipeline came from. Recorded on
@@ -465,6 +473,76 @@ export class ExtractionService implements OnModuleDestroy {
         documentId,
         ok: false,
         reason: "document_not_found",
+      };
+    }
+
+    // Sprint H+ extraction-fix-3 — Operator-Verified Guard.
+    //
+    // If the operator has explicitly confirmed the supplier block via
+    // PATCH /documents/:id/verify-supplier (writes supplierVerifiedAt)
+    // OR has corrected it via POST /documents/:id/correct-supplier (the
+    // endpoint resets processingStatus back to RECEIVED so the pipeline
+    // re-runs the enrichment), we MUST NOT overwrite the supplier
+    // fields with freshly-AI-extracted values. The real bug from
+    // 2026-09-06 cmtoag5il: operator corrected supplier to ONNERA
+    // REFRIGERATION S.A., correct-supplier re-published document.uploaded,
+    // the pipeline re-extracted, and AI Vision — reading the filename
+    // "NOV-OUSADO-LDA_*.pdf" — overwrote the row back to "NOV OUSADO LDA".
+    //
+    // We honour the operator's decision by:
+    //   1) Skipping the supplier-side extraction entirely (no QR/AI merge
+    //      for supplier fields, no party re-resolve, no IBAN re-check).
+    //   2) Still writing metadata + ocrConfidence so the audit trail
+    //      shows the re-run happened but nothing was destroyed.
+    //   3) Returning ok:true so the pipeline can advance to ENRICHING.
+    //
+    // This is a behaviour change from the previous "AI always wins on
+    // re-run" stance, and the only way the operator's correction survives
+    // a pipeline re-trigger. The trade-off: if the operator is wrong, the
+    // wrong values stick until they re-verify or re-correct. That's
+    // intentional — the verify-supplier UX triad already requires an
+    // explicit "Confirmar como está" gesture for exactly this reason.
+    if (doc.supplierVerifiedAt) {
+      this.logger.warn(
+        `[processDocumentAsync] document=${documentId} supplierVerifiedAt=${doc.supplierVerifiedAt.toISOString()} ` +
+          `— skipping supplier-side extraction to preserve operator-verified ` +
+          `supplier block (supplier="${doc.supplier ?? "?"}", supplierNif="${doc.supplierNif ?? "?"}"). ` +
+          `Re-run is harmless (metadata/ocrConfidence will refresh) but won't ` +
+          `overwrite the operator's decision.`,
+      );
+      // Touch only metadata + ocrConfidence so the pipeline can advance.
+      // Status is left as-is — the operator already decided the row's fate.
+      const refreshed = await this.prisma.document.update({
+        where: { id: documentId },
+        data: {
+          metadata: {
+            ...((doc.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
+              ? (doc.metadata as Record<string, unknown>)
+              : {}) as Record<string, unknown>),
+            extraction: {
+              ...((doc.metadata &&
+                typeof doc.metadata === "object" &&
+                "extraction" in (doc.metadata as Record<string, unknown>) &&
+                (doc.metadata as Record<string, unknown>).extraction &&
+                typeof (doc.metadata as Record<string, unknown>).extraction === "object" &&
+                !Array.isArray((doc.metadata as Record<string, unknown>).extraction)
+                ? ((doc.metadata as Record<string, unknown>).extraction as Record<string, unknown>)
+                : {}) as Record<string, unknown>),
+              reRunSkippedSupplier: true,
+              reRunSkippedAt: new Date().toISOString(),
+              reRunSkippedReason: "supplierVerifiedAt_set",
+            },
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return {
+        queued: false,
+        documentId,
+        ok: true,
+        source: "none",
+        confidence: 0,
+        reason: "supplier_verified_skip",
+        document: { id: refreshed.id, status: refreshed.status },
       };
     }
 
@@ -2056,7 +2134,50 @@ export class ExtractionService implements OnModuleDestroy {
             supplierNameNorm.includes(fileNameNorm) ||
             (supplierNameNorm.length >= 8 &&
               fileNameNorm.startsWith(supplierNameNorm.slice(0, 8))));
-        if (filenameSuspiciousMatch) {
+        // Sprint H+ extraction-fix-3 — structural cross-check on the
+        // supplier NIF. When AI Vision returns a supplier NIF that fails
+        // the mod-11 checksum AND a customer NIF that passes, the AI
+        // almost certainly swapped the two — the filename heuristic
+        // alone misses cases where the AI returned a NIF-looking-but-
+        // invalid string in the supplier slot (e.g. the EDENOX NIF
+        // 502782160 which has a wrong check digit). The structural
+        // check is independent of the filename, so it catches both
+        // real-bug cases: wrong NIF for the actual supplier (AI
+        // hallucinated) AND AI swapped customer→supplier (and the
+        // customer NIF is the structurally-valid one).
+        const supplierNifRaw = fields.supplierNif;
+        const customerNifRaw = fields.customerNif;
+        const supplierNifStructurallyInvalid =
+          !!supplierNifRaw &&
+          // strip "PT" prefix before checking — the helper already does
+          // this but we want the explicit predicate here so the
+          // intent is clear.
+          !isValidPortugueseNif(supplierNifRaw) &&
+          // don't fire on foreign NIFs (ES/FR/...) where the helper
+          // intentionally returns false because it's PT-specific.
+          !/^[A-Z]{2}/.test(supplierNifRaw);
+        const customerNifStructurallyValid =
+          !!customerNifRaw && isValidPortugueseNif(customerNifRaw);
+        const structuralNifMismatch =
+          supplierNifStructurallyInvalid && customerNifStructurallyValid;
+        const shouldSwap =
+          filenameSuspiciousMatch ||
+          // AND-condition: only fire the structural swap when the
+          // filename also looks suspicious (so we don't swap a
+          // genuinely-bad supplier NIF against a customer's NIF that
+          // happens to pass the checksum). The heuristic is the
+          // primary signal; the NIF check is the secondary confirmer.
+          (structuralNifMismatch && filenameSuspiciousMatch);
+        if (shouldSwap) {
+          this.logger.warn(
+            `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
+              `matches filename prefix (${fileName}); likely swapped with customer. ` +
+              `Real bug from 2026-09-06 EDENOX invoice.` +
+              (structuralNifMismatch
+                ? ` Structural NIF check confirmed: supplierNif="${supplierNifRaw}" fails ` +
+                  `mod-11 checksum, customerNif="${customerNifRaw}" passes — AI swapped the slots.`
+                : ""),
+          );
           this.logger.warn(
             `[ensureSupplierCustomerSanity] AI supplier name "${fields.supplier}" ` +
               `matches filename prefix (${fileName}); likely swapped with customer. ` +
@@ -2540,6 +2661,72 @@ export class ExtractionService implements OnModuleDestroy {
     if (!merged.supplier && aiSupplier) {
       merged.supplier = aiSupplier;
       aiHints.push(`aiSupplier:${aiSupplier}`);
+    }
+    // ── AI-vs-QR mismatch logger (Sprint H+ extraction-fix-3) ────────
+    // When the QR-A-field carries an authoritative issuer name that
+    // disagrees with what AI Vision produced, emit a structured warning
+    // so the operator can see the disagreement in the extraction log
+    // even when no error fires. The 2026-09-06 ONNERA vs EDENOX bug
+    // showed: AI reads the FILENAME (`NOV-OUSADO-LDA_*.pdf`) and
+    // assumes that string is the supplier. The QR (when present)
+    // would have said `ONNERA REFRIGERATION S.A.` — but the QR was
+    // missing from that particular PDF so the safety net had to fire
+    // from the filename heuristic instead. This logger is the
+    // audit-trail hook that lets ops alert on recurring mismatch.
+    const qrSupplierName = qrFields.supplier;
+    if (
+      qrSupplierName &&
+      aiSupplier &&
+      qrSupplierName.trim().toLowerCase() !== aiSupplier.trim().toLowerCase()
+    ) {
+      this.logger.warn(
+        `[mergeQrWithAi] AI-vs-QR supplier name disagreement for document=${doc.fileName}: ` +
+          `qr="${qrSupplierName}" vs ai="${aiSupplier}". ` +
+          `QR is authoritative for fiscal data; AI wins on supplier name when QR has none. ` +
+          `Both recorded in metadata.extraction.aiVsQrMismatch for the audit trail.`,
+      );
+      aiWarnings.push(
+        `aiVsQrMismatch:supplier_name:qr=${qrSupplierName}:ai=${aiSupplier}`,
+      );
+    }
+    // Also detect: AI supplier NIF == tenant NIF (the supplier slot is
+    // pointing at the buyer / our own company). This is the same
+    // wrong-side-up bug the filename heuristic catches, but here we
+    // catch it from the structural side: if AI's supplier NIF matches
+    // the tenant identity helper, the AI swapped the parties in its
+    // own JSON. The downstream `ensureSupplierCustomerSanity` will
+    // also catch this and swap, but logging it here gives us a
+    // pre-emptive signal that runs even when the safety net short-
+    // circuits (e.g. on a foreign-tenant NIF match).
+    const aiSupplierNifRaw =
+      aiRaw?.supplierNif ?? aiFields.supplierNif ?? undefined;
+    if (aiSupplierNifRaw && tenantId) {
+      try {
+        const id = await getTenantIdentity(this.prisma, tenantId);
+        const tenantNifNorm = normalizeTenantNif(id.tenantNif);
+        const aiNifNorm = normalizeTenantNif(aiSupplierNifRaw);
+        if (
+          tenantNifNorm &&
+          aiNifNorm &&
+          tenantNifNorm === aiNifNorm
+        ) {
+          this.logger.warn(
+            `[mergeQrWithAi] AI supplier NIF (${formatPtNif(aiNifNorm)}) matches tenant NIF — ` +
+              `AI swapped supplier/customer in its own JSON. document=${doc.fileName}, ` +
+              `aiSupplier="${aiSupplier ?? "?"}". Will be corrected by ensureSupplierCustomerSanity.`,
+          );
+          aiWarnings.push(
+            `aiSupplierNifEqualsTenantNif:${aiNifNorm}`,
+          );
+        }
+      } catch (err) {
+        // Identity lookup is best-effort — never fail the extraction
+        // because we couldn't read tenant NIF here.
+        this.logger.debug(
+          `[mergeQrWithAi] tenant identity lookup failed for tenant=${tenantId}: ` +
+            `${(err as Error).message}. Skipping structural tenant-NIF check.`,
+        );
+      }
     }
     if (!merged.customer && aiCustomer) {
       merged.customer = aiCustomer;

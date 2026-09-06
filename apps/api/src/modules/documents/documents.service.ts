@@ -877,6 +877,100 @@ export class DocumentsService {
     return { id, status: DocumentStatus.ARQUIVADO };
   }
 
+  // ─────────────────────────────────────────── hard-delete ──────────────
+
+  /**
+   * Destructive delete. ADMIN-only because it's irreversible: the
+   * underlying file bytes are removed from storage AND the DB row is
+   * physically removed (not soft-archived). Used by the "🗑️ Apagar"
+   * button on the detail page when the operator wants the document
+   * gone — typically after a wrong upload or a duplicate that slipped
+   * past dedup.
+   *
+   * Order of operations matters:
+   *   1. Fetch the row under tenant scope. 404 if cross-tenant / missing
+   *      — never reveal whether the id exists in another tenant.
+   *   2. Best-effort remove of the original fileKey + pdfKey from
+   *      storage. Storage.remove is idempotent (a missing key is NOT
+   *      an error) — failures are logged but do NOT block the delete.
+   *   3. Audit row BEFORE the DB delete so the forensic trail proves
+   *      who pulled the trigger even if the subsequent delete raises.
+   *      Audit rows are write-once and independent of the Document row
+   *      (AuditLog only links to Tenant, never to Document) — so we
+   *      deliberately do NOT delete existing audit history.
+   *   4. prisma.document.delete — cascades to DocumentItem, PaymentEvent
+   *      and any other FK with onDelete: Cascade (see prisma schema).
+   *
+   * Race: a concurrent relocator could be moving the same fileKey
+   * right now. Because storage.remove is idempotent and the file is
+   * one-way gone after this call, the worst case is the relocator
+   * moves TO a path we just vacated (orphan) — the fileKey on the
+   * row is already deleted in step 4, so the relocator's update will
+   * silently fail on a row that no longer exists (P2025 caught by
+   * relocateAfterApprove's lock-based read). No data corruption.
+   */
+  async hardDelete(tenantId: string, userId: string, id: string): Promise<void> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        fileKey: true,
+        pdfKey: true,
+        fileName: true,
+        supplier: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    // Best-effort storage cleanup. We wrap each remove in its own
+    // try/catch so a failure on one key doesn't block the other —
+    // the DB delete is the commit point regardless.
+    if (existing.fileKey) {
+      try {
+        await this.storage.remove(existing.fileKey);
+      } catch (err) {
+        this.logger.warn(
+          `[hardDelete] storage.remove failed for fileKey=${existing.fileKey} ` +
+            `document=${existing.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    if (existing.pdfKey) {
+      try {
+        await this.storage.remove(existing.pdfKey);
+      } catch (err) {
+        this.logger.warn(
+          `[hardDelete] storage.remove failed for pdfKey=${existing.pdfKey} ` +
+            `document=${existing.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Forensic row BEFORE delete so the chain proves the action even
+    // if step 4 raises (Prisma row-missing FK would surface as P2003,
+    // but it's much cleaner to have the audit row committed first).
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.DELETE,
+      entityType: 'document',
+      entityId: existing.id,
+      metadata: {
+        subAction: 'document.hard_deleted',
+        fileName: existing.fileName,
+        supplier: existing.supplier,
+        fileKey: existing.fileKey,
+        pdfKey: existing.pdfKey,
+      } as Prisma.InputJsonValue,
+    });
+
+    // DocumentItem + PaymentEvent cascade-delete via FK onDelete:Cascade.
+    // AuditLog rows for this document survive intentionally (write-once
+    // forensic chain; they link to Tenant, not to Document, so they are
+    // unaffected by the document removal).
+    await this.prisma.document.delete({ where: { id: existing.id } });
+  }
+
   // ─────────────────────────────────────────── approve ──────────────────
 
   /**

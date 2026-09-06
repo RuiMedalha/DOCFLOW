@@ -54,6 +54,9 @@ import {
  *   GET    /documents/:id/download — bytes stream (authenticated)
  *   GET    /documents/:id/url      — signed URL (or local route)
  *   DELETE /documents/:id          — soft-delete (status=ARQUIVADO)
+ *   DELETE /documents/:id/hard     — ADMIN-only destructive delete (removes
+ *                                    file + DB row + cascades to items &
+ *                                    payment events; audit row emitted)
  *
  * Auth is enforced by the global JwtGuard + TenantGuard (APP_GUARD).
  * Tenant scoping is automatic via the Prisma extension — every Prisma
@@ -393,6 +396,24 @@ export class DocumentsController {
     @Param('id') id: string,
   ) {
     return this.documents.softDelete(user.tenantId, user.id, id);
+  }
+
+  @Delete(':id/hard')
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Hard-delete a document (ADMIN only)',
+    description:
+      'Destructive: removes the file bytes from storage, the DB row, and cascades to DocumentItem + PaymentEvent. An audit row is emitted before the delete so the forensic trail records who pulled the trigger. Returns 204 No Content on success, 404 when the document is missing or cross-tenant, 403 for non-ADMIN callers.',
+  })
+  @ApiResponse({ status: 204, description: 'Document removed' })
+  @ApiResponse({ status: 403, description: 'Caller is not ADMIN' })
+  @ApiResponse({ status: 404, description: 'Document not found (or cross-tenant)' })
+  async hardRemove(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<void> {
+    await this.documents.hardDelete(user.tenantId, user.id, id);
   }
 
   // ─────────────────────────────────────────── helpers ──────────────────

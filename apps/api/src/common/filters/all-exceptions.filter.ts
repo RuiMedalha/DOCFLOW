@@ -116,6 +116,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    // The download endpoint (and any other passthrough:false handler) may
+    // have already flushed the response. Trying to write a JSON envelope
+    // here would throw ERR_HTTP_HEADERS_SENT and cascade into a second
+    // 500. End the socket instead so the client gets the bytes that
+    // already went out and nothing more.
+    if (res.headersSent || res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        // socket already closed — nothing we can do.
+      }
+      return;
+    }
+
     res.status(status).json(payload);
   }
 }

@@ -90,6 +90,7 @@ export function ProcessingStatus({
 
     let cancelled = false;
     let fellBackToPolling = false;
+    let receivedSseEvent = false;
     let sseWatchdog: ReturnType<typeof setTimeout> | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -125,15 +126,11 @@ export function ProcessingStatus({
     // (401 from missing token) and fall back to polling.
     sseWatchdog = setTimeout(() => {
       if (cancelled) return;
-      if (!fellBackToPolling && (!stage || stage.stage === 'RECEIVED')) {
+      if (!fellBackToPolling && !receivedSseEvent) {
         // No event yet — fall back to polling.
         startFallback();
       }
     }, SSE_POLL_TIMEOUT_MS);
-
-    es.addEventListener('open', () => {
-      if (sseWatchdog) clearTimeout(sseWatchdog);
-    });
 
     es.addEventListener('error', () => {
       // EventSource doesn't expose a status code; assume auth failure
@@ -149,10 +146,13 @@ export function ProcessingStatus({
       try {
         const parsed = JSON.parse(evt.data) as { payload?: ProcessingStage };
         if (parsed.payload) {
+          receivedSseEvent = true;
+          if (sseWatchdog) clearTimeout(sseWatchdog);
           setStage(parsed.payload);
           if (parsed.payload.stage === 'COMPLETED' || parsed.payload.stage === 'FAILED') {
             // Terminal — close the stream so the server releases the slot.
             es.close();
+            stopPolling();
           }
         }
       } catch {
@@ -185,6 +185,12 @@ export function ProcessingStatus({
       }, FALLBACK_POLL_INTERVAL_MS);
     }
 
+    function stopPolling(): void {
+      if (!pollTimer) return;
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
     async function fetchStatus(): Promise<void> {
       const res = await authedFetch(
         `/documents/${encodeURIComponent(documentId)}`,
@@ -196,9 +202,23 @@ export function ProcessingStatus({
         }
         return;
       }
-      const json = (await res.json()) as { processingStatus?: ProcessingStage };
-      if (json.processingStatus) {
-        setStage(json.processingStatus);
+      const envelope = (await res.json()) as {
+        data?: { processingStatus?: string; processingError?: string | null };
+        processingStatus?: string;
+        processingError?: string | null;
+      };
+      const document = envelope.data ?? envelope;
+      if (document.processingStatus) {
+        const nextStage = document.processingStatus as ProcessingStage['stage'];
+        setStage({
+          stage: nextStage,
+          status: nextStage === 'FAILED' ? 'failed' : nextStage === 'COMPLETED' ? 'completed' : 'started',
+          completedAt: new Date().toISOString(),
+          error: document.processingError ?? undefined,
+        });
+        if (nextStage === 'COMPLETED' || nextStage === 'FAILED') {
+          stopPolling();
+        }
       }
     }
 

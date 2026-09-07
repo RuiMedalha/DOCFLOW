@@ -16,6 +16,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   FolderArchive,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard, section: 'main' },
   { href: '/documents', label: 'Documentos', Icon: FileText, section: 'main' },
+  { href: '/documents/trash', label: 'Lixeira', Icon: Trash2, section: 'main' },
   { href: '/storage', label: 'Armazenamento', Icon: FolderArchive, section: 'main' },
   { href: '/banking', label: 'Banca', Icon: Landmark, section: 'main' },
   { href: '/reconciliation', label: 'Conciliação', Icon: GitCompare, section: 'main' },

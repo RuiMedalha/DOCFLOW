@@ -477,6 +477,14 @@ model Document {
   approvedById     String?
   approvedBy       User?         @relation("DocumentApprovedBy", fields: [approvedById], references: [id])
 
+  // Sprint I+ — soft-delete (trash). `null` = live row; non-null = the
+  // moment the row was archived. The list / inbox / findByParty paths
+  // hide rows with a non-null value; the dedicated `/documents/trash`
+  // listing surfaces them so an ADMIN can restore. `DELETE /:id/hard`
+  // still physically removes the row + storage bytes (ADMIN-only,
+  // irreversible).
+  deletedAt        DateTime?
+
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
@@ -498,6 +506,9 @@ model Document {
   @@index([tenantId, atcud])
   @@index([tenantId, docNumber, total, docDate])
   @@index([tenantId, supplierVerifiedAt])
+  // Trash listing / per-tenant restore lookups filter on `deletedAt`
+  // alongside `tenantId`, so a composite index keeps the query cheap.
+  @@index([tenantId, deletedAt])
   // H-06: per-tenant dedup on SHA-256. Removes the race window between
   // findFirst + create where two concurrent uploads of the same bytes
   // would both insert. Prisma will surface a unique-violation that the

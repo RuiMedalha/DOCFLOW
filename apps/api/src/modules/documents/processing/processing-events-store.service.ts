@@ -73,12 +73,13 @@ export class ProcessingEventsStore implements OnModuleDestroy {
    * Observable view. The Observable is hot — events emitted before
    * a given subscriber subscribes are NOT replayed.
    */
-  stream(documentId: string): Observable<ProcessingStageEvent> {
-    let subject = this.subjectsByDoc.get(documentId);
+  stream(tenantId: string, documentId: string): Observable<ProcessingStageEvent> {
+    const key = this.key(tenantId, documentId);
+    let subject = this.subjectsByDoc.get(key);
     if (!subject) {
       subject = new Subject<ProcessingStageEvent>();
-      this.subjectsByDoc.set(documentId, subject);
-      this.lastEmittedAt.set(documentId, this.nextTimestamp++);
+      this.subjectsByDoc.set(key, subject);
+      this.lastEmittedAt.set(key, this.nextTimestamp++);
       this.evictIfOverCap();
     }
     return subject.asObservable();
@@ -90,12 +91,13 @@ export class ProcessingEventsStore implements OnModuleDestroy {
    * Map lookup misses, nothing happens). Updates the LRU timestamp.
    */
   emit(event: ProcessingStageEvent): void {
-    const subject = this.subjectsByDoc.get(event.documentId);
+    const key = this.key(event.tenantId, event.documentId);
+    const subject = this.subjectsByDoc.get(key);
     if (!subject) return;
     subject.next(event);
-    this.lastEmittedAt.set(event.documentId, this.nextTimestamp++);
+    this.lastEmittedAt.set(key, this.nextTimestamp++);
     if (event.event === 'processing.completed' || event.event === 'processing.failed') {
-      this.drop(event.documentId);
+      this.drop(event.tenantId, event.documentId);
     }
   }
 
@@ -103,12 +105,13 @@ export class ProcessingEventsStore implements OnModuleDestroy {
    * Force-complete the Subject for `documentId` and remove it from
    * the map. Idempotent — calling twice for the same id is a no-op.
    */
-  drop(documentId: string): void {
-    const subject = this.subjectsByDoc.get(documentId);
+  drop(tenantId: string, documentId: string): void {
+    const key = this.key(tenantId, documentId);
+    const subject = this.subjectsByDoc.get(key);
     if (!subject) return;
     subject.complete();
-    this.subjectsByDoc.delete(documentId);
-    this.lastEmittedAt.delete(documentId);
+    this.subjectsByDoc.delete(key);
+    this.lastEmittedAt.delete(key);
   }
 
   /**
@@ -136,6 +139,13 @@ export class ProcessingEventsStore implements OnModuleDestroy {
         lruKey = key;
       }
     }
-    if (lruKey !== undefined) this.drop(lruKey);
+    if (lruKey !== undefined) {
+      const separator = lruKey.indexOf(':');
+      this.drop(lruKey.slice(0, separator), lruKey.slice(separator + 1));
+    }
+  }
+
+  private key(tenantId: string, documentId: string): string {
+    return `${tenantId}:${documentId}`;
   }
 }

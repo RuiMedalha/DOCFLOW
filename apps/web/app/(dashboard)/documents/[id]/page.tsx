@@ -39,6 +39,7 @@ import { FieldPanel } from './_components/field-panel';
 import { FraudWarning } from './_components/fraud-warning';
 import { QrBadge } from './_components/qr-badge';
 import { CorrectSupplierDialog } from './_components/correct-supplier-dialog';
+import { SupplierManualEditSection } from './_components/supplier-manual-edit-section';
 import { Dialog } from '../../../_components/ui';
 import { toastBus } from '../../../_components/ui';
 import {
@@ -50,8 +51,10 @@ import {
   useDownloadUrl,
   useHardDeleteDocument,
   useReExtract,
+  useReExtractSupplier,
   useSaveFields,
   useSendToToc,
+  useSoftDeleteDocument,
   useUpdateLineItem,
   type DocumentDetail,
 } from './_lib/use-document-detail';
@@ -91,6 +94,7 @@ export default function DocumentDetailPage() {
 
   const bundle = useDocumentBundle(id);
   const reExtract = useReExtract();
+  const reExtractSupplier = useReExtractSupplier();
   const saveFields = useSaveFields();
   const approve = useApproveDocument();
   const assignAcc = useAssignAccounting();
@@ -99,6 +103,7 @@ export default function DocumentDetailPage() {
   const updateLine = useUpdateLineItem();
   const deleteLine = useDeleteLineItem();
   const hardDelete = useHardDeleteDocument();
+  const softDelete = useSoftDeleteDocument();
 
   // Role gating for line-item editing. Backend enforces the same gate
   // (Role.ADMIN / Role.OPERADOR) — we mirror it here so the UI doesn't
@@ -125,10 +130,22 @@ export default function DocumentDetailPage() {
   // open so the parent can orchestrate the mutation + navigation.
   const [pendingHardDelete, setPendingHardDelete] = useState(false);
 
+  // Pending SOFT DELETE (trash) confirmation — every user of the tenant
+  // can move a doc to trash; restore is ADMIN-only.
+  const [pendingSoftDelete, setPendingSoftDelete] = useState(false);
+
   // Manual supplier correction dialog (Sprint H+). The button lives next
   // to Re-extrair in the primary actions row; the dialog itself is
   // mounted at the bottom of the page so its lifecycle is owned here.
   const [correctDialogOpen, setCorrectDialogOpen] = useState(false);
+
+  // Pending overwrite confirmation (Sprint H+ Part 2.2). When the AI
+  // supplier block has been operator-verified, "Re-extrair com IA"
+  // shows a confirm modal that calls the endpoint with ?force=true.
+  // `pendingReExtract` holds the doc id while the modal is open so the
+  // parent can orchestrate the mutation + toastBus feedback (mirrors
+  // the hard-delete / soft-delete pattern).
+  const [pendingReExtract, setPendingReExtract] = useState(false);
 
   // Local optimistic field state — flushed to the server via Save.
   const doc = bundle.data?.document;
@@ -256,6 +273,60 @@ export default function DocumentDetailPage() {
     }
   }, [id, reExtract, qc]);
 
+  /**
+   * Sprint H+ Part 2.2 — "Re-extrair com IA" button on the supplier block.
+   *
+   * Calls POST /documents/:id/supplier/re-extract which only refreshes
+   * the supplier block (name / NIF / IBAN / country) without re-running
+   * the entire OCR pipeline. When Document.supplierVerifiedAt is set,
+   * the backend refuses with 409 unless ?force=true — the UI handles
+   * this by showing a confirmation modal first.
+   *
+   * Two entry points:
+   *   - onReExtractSupplierClick() — public handler bound to the
+   *     button. Decides whether to call directly or open the modal
+   *     based on the verified flag.
+   *   - confirmReExtractSupplier() — wired to the modal's positive
+   *     button. Forces the call with ?force=true.
+   */
+  const onReExtractSupplierClick = useCallback(() => {
+    if (!id) return;
+    if (doc?.supplierVerifiedAt) {
+      setPendingReExtract(true);
+      return;
+    }
+    // Unverified → call directly with force=false.
+    void runReExtractSupplier(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, doc?.supplierVerifiedAt]);
+
+  const runReExtractSupplier = useCallback(
+    async (force: boolean) => {
+      if (!id) return;
+      try {
+        await reExtractSupplier.mutateAsync({ id, force });
+        setDraft(null);
+        toastBus.success(
+          force
+            ? 'Fornecedor sobrescrito pela IA — auditoria registada.'
+            : 'Fornecedor re-extraído pela IA.',
+        );
+      } catch (err: any) {
+        const raw =
+          typeof err?.message === 'string' && err.message.length > 0
+            ? err.message
+            : 'Falha na re-extração do fornecedor.';
+        toastBus.error(`Re-extract failed: ${raw}`);
+      }
+    },
+    [id, reExtractSupplier],
+  );
+
+  const confirmReExtractSupplier = useCallback(async () => {
+    setPendingReExtract(false);
+    await runReExtractSupplier(true);
+  }, [runReExtractSupplier]);
+
   const onApprove = useCallback(async () => {
     if (!id) return;
     try {
@@ -378,6 +449,25 @@ export default function DocumentDetailPage() {
       toastBus.error(friendly);
     }
   }, [id, hardDelete, router]);
+
+  /**
+   * Soft-delete (trash) — reversible. Available to every authenticated
+   * user of the tenant. We navigate back to the list because the
+   * detail page would refetch and 404 (the row is hidden from the
+   * default `findOne` query).
+   */
+  const confirmSoftDelete = useCallback(async () => {
+    if (!id) return;
+    setPendingSoftDelete(false);
+    try {
+      await softDelete.mutateAsync(id);
+      toastBus.success('Documento movido para a lixeira.');
+      router.replace('/documents/trash');
+    } catch (err: any) {
+      const raw = typeof err?.message === 'string' ? err.message : '';
+      toastBus.error(raw || 'Falha ao mover para a lixeira.');
+    }
+  }, [id, softDelete, router]);
 
   if (bundle.isLoading) {
     return (
@@ -758,6 +848,22 @@ export default function DocumentDetailPage() {
                 Apagar
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setPendingSoftDelete(true)}
+              data-testid="soft-delete-button"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm hover:opacity-70 transition-opacity"
+              style={{
+                background: 'transparent',
+                color: 'var(--ed-ink-soft)',
+                border: '1px solid var(--ed-rule)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+              title="Mover para a lixeira (reversível por ADMIN via /documents/trash)"
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              Mover para lixo
+            </button>
           </div>
 
           <FieldPanel
@@ -791,6 +897,73 @@ export default function DocumentDetailPage() {
             onDeleteLineItem={(itemId: string, description?: string) => onDeleteLineItem(itemId, description)}
             draftActive={draft !== null}
           />
+
+          {/* ============================================================
+              Sprint H+ Part 2.2 — Fornecedor block
+              ============================================================
+              Two surfaces for managing the supplier block on this doc:
+
+              1. "Re-extrair com IA" — always visible. Refreshes the
+                 supplier block via Gemini Vision (lighter than the
+                 full re-extract on `reExtract`). When the operator has
+                 already verified the supplier (supplierVerifiedAt set),
+                 the click opens a confirmation modal that re-issues
+                 the request with ?force=true.
+              2. <SupplierManualEditSection> — inline form for manual
+                 edits with client-side NIF mod-11 + IBAN mod-97
+                 validation. POSTs to /supplier/update.
+              ============================================================ */}
+          <section
+            aria-label="Bloco de fornecedor"
+            className="mt-10 space-y-4"
+            style={{ borderTop: '1px solid var(--ed-rule)', paddingTop: '32px' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3
+                className="uppercase font-medium"
+                style={{
+                  fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                  fontSize: '13px',
+                  letterSpacing: '0.14em',
+                  color: 'var(--ed-ink-faint)',
+                }}
+              >
+                Fornecedor
+              </h3>
+              <button
+                type="button"
+                onClick={onReExtractSupplierClick}
+                disabled={reExtractSupplier.isPending || isApproved}
+                aria-busy={reExtractSupplier.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--ed-ink-soft)',
+                  border: '1px solid var(--ed-rule-strong)',
+                  borderRadius: 'var(--ed-radius-chip)',
+                }}
+                title={
+                  doc.supplierVerifiedAt
+                    ? 'Re-extrair fornecedor pela IA (sobrescreve dados verificados)'
+                    : 'Re-extrair fornecedor pela IA (Gemini Vision)'
+                }
+                data-testid="supplier-re-extract-button"
+              >
+                <RefreshCw
+                  size={14}
+                  className={reExtractSupplier.isPending ? 'animate-spin' : ''}
+                  aria-hidden="true"
+                />
+                {reExtractSupplier.isPending ? 'A re-extrair…' : 'Re-extrair com IA'}
+              </button>
+            </div>
+
+            <SupplierManualEditSection
+              documentId={id}
+              supplier={doc}
+              disabled={isApproved}
+            />
+          </section>
         </section>
       </div>
 
@@ -887,6 +1060,130 @@ export default function DocumentDetailPage() {
                 <>
                   <Trash2 size={14} aria-hidden="true" />
                   Apagar definitivamente
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* SOFT DELETE (trash) confirmation. Reversible by an ADMIN via
+          POST /documents/:id/restore on the /documents/trash page. */}
+      <Dialog
+        open={pendingSoftDelete}
+        onClose={() => setPendingSoftDelete(false)}
+        title="Mover documento para a lixeira?"
+        description="O documento fica disponível na Lixeira. Um ADMIN pode restaurá-lo a partir de /documents/trash."
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p
+            className="text-sm"
+            style={{ color: 'var(--ed-ink-soft)' }}
+          >
+            Documento:{' '}
+            <span className="font-medium" style={{ color: 'var(--ed-ink)' }}>
+              {doc.fileName ?? id}
+            </span>
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingSoftDelete(false)}
+              className="btn-secondary text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={confirmSoftDelete}
+              disabled={softDelete.isPending}
+              aria-busy={softDelete.isPending}
+              className="btn-primary text-sm"
+            >
+              {softDelete.isPending ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  A mover…
+                </>
+              ) : (
+                <>
+                  <Trash2 size={14} aria-hidden="true" />
+                  Mover para lixo
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/*
+        Sprint H+ Part 2.2 — Overwrite confirmation modal.
+        The "Re-extrair com IA" button routes here whenever the doc has
+        a supplierVerifiedAt timestamp set. The positive button calls
+        POST /documents/:id/supplier/re-extract?force=true and clears
+        the verified timestamp server-side as part of the extraction.
+      */}
+      <Dialog
+        open={pendingReExtract}
+        onClose={reExtractSupplier.isPending ? () => undefined : () => setPendingReExtract(false)}
+        title="Sobrescrever dados verificados pelo operador?"
+        description="Este documento já foi verificado manualmente — a IA vai substituir os valores confirmados."
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p
+            className="text-sm"
+            style={{ color: 'var(--ed-ink-soft)' }}
+          >
+            Fornecedor atual:{' '}
+            <span className="font-medium" style={{ color: 'var(--ed-ink)' }}>
+              {doc.supplier || '(sem nome)'}
+            </span>
+            {doc.supplierNif && (
+              <>
+                {' · '}
+                <span
+                  className="font-mono"
+                  style={{ color: 'var(--ed-ink-faint)' }}
+                >
+                  NIF {doc.supplierNif}
+                </span>
+              </>
+            )}
+          </p>
+          <p
+            className="text-sm"
+            style={{ color: 'var(--ed-ink-soft)' }}
+          >
+            A re-extração com IA corre o Gemini Vision apenas sobre o bloco de fornecedor (NIF, IBAN, país) e escreve um registo de auditoria antes de sobrescrever.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingReExtract(false)}
+              disabled={reExtractSupplier.isPending}
+              className="btn-secondary text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={confirmReExtractSupplier}
+              disabled={reExtractSupplier.isPending}
+              aria-busy={reExtractSupplier.isPending}
+              className="btn-primary text-sm"
+              style={{ background: 'var(--ed-status-alert)', color: '#fff' }}
+            >
+              {reExtractSupplier.isPending ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  A sobrescrever…
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} aria-hidden="true" />
+                  Sobrescrever
                 </>
               )}
             </button>

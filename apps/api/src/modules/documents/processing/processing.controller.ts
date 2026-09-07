@@ -8,6 +8,7 @@ import {
   Req,
   Sse,
   UnauthorizedException,
+  NotFoundException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -21,6 +22,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import type { ProcessingStageEvent } from './processing-events-store.service';
 import { ProcessingEventsStore } from './processing-events-store.service';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 /**
  * Sprint H — SSE controller.
@@ -75,6 +77,7 @@ export class ProcessingController {
   constructor(
     private readonly events: ProcessingEventsStore,
     private readonly jwt: JwtService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─────────────────────────────────────────── SSE ─────────────────
@@ -106,11 +109,11 @@ export class ProcessingController {
       '`processing.failed` terminal event. Connection-cap: 5 per docId.',
   })
   @Sse()
-  processingStream(
+  async processingStream(
     @Param('id') id: string,
     @Query('token') token: string | undefined,
     @Req() req: Request,
-  ): Observable<MessageEvent | { data: string }> {
+  ): Promise<Observable<MessageEvent | { data: string }>> {
     // ──── Auth gate (must run BEFORE the SSE Observable is constructed,
     // because @Sse() will begin streaming on first emission and we
     // can't undo the headers after that). ────
@@ -126,10 +129,21 @@ export class ProcessingController {
     // and the events-store can confirm the doc belongs to this tenant.
     (req as Request & { resolvedTenantId?: string }).resolvedTenantId = tenantId;
 
+    // Authorise the document itself, not merely the token. A valid token
+    // from tenant-A must not create or attach to a stream for tenant-B.
+    // Returning the same 404 as other tenant-scoped document endpoints
+    // avoids turning this route into a document-id oracle.
+    const document = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!document) throw new NotFoundException('Document not found');
+
     // Per-doc cap — refuse the 6th concurrent subscriber. We use
     // a thrown HttpException that Nest's exception filter maps to
     // 429 Too Many Requests before the SSE Observable is constructed.
-    const current = this.connectionsByDoc.get(id) ?? 0;
+    const connectionKey = `${tenantId}:${id}`;
+    const current = this.connectionsByDoc.get(connectionKey) ?? 0;
     if (current >= MAX_CONNECTIONS_PER_DOC) {
       this.logger.warn(
         `[SSE] per-doc connection cap exceeded for docId=${id} (${current}/${MAX_CONNECTIONS_PER_DOC}); refusing`,
@@ -139,19 +153,19 @@ export class ProcessingController {
         429,
       );
     }
-    this.connectionsByDoc.set(id, current + 1);
+    this.connectionsByDoc.set(connectionKey, current + 1);
 
     // Release the slot when the request closes (client disconnect,
     // controller teardown, or terminal SSE event).
     const decrement = (): void => {
-      const next = (this.connectionsByDoc.get(id) ?? 1) - 1;
-      if (next <= 0) this.connectionsByDoc.delete(id);
-      else this.connectionsByDoc.set(id, next);
+      const next = (this.connectionsByDoc.get(connectionKey) ?? 1) - 1;
+      if (next <= 0) this.connectionsByDoc.delete(connectionKey);
+      else this.connectionsByDoc.set(connectionKey, next);
     };
     req.on('close', decrement);
 
     // ──── Stream — subjects + 20s keepalive comments ────
-    const stage$ = this.events.stream(id);
+    const stage$ = this.events.stream(tenantId, id);
     const ka$ = interval(KEEPALIVE_MS).pipe(
       // SSE comment frame — proxied by EventSource as a no-op message.
       map(() => ({ data: ':keepalive\n\n' } as { data: string })),

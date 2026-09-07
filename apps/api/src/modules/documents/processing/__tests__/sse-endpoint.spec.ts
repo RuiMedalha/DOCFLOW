@@ -34,7 +34,7 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
   }
 
   it('streams emitted events to a fresh subscriber', async () => {
-    const obs = store.stream('doc-1');
+    const obs = store.stream('tenant-A', 'doc-1');
     const promise = firstValueFrom(obs.pipe(take(1)));
 
     // Emit BEFORE the subscriber subscribes — RxJS Subjects don't replay
@@ -50,7 +50,7 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
   });
 
   it('emits the terminal event AND completes the Observable', async () => {
-    const obs = store.stream('doc-2');
+    const obs = store.stream('tenant-A', 'doc-2');
     const seen: string[] = [];
     const completed = new Promise<void>((resolve) => {
       obs.subscribe({
@@ -65,20 +65,20 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
   });
 
   it('drop() completes the Subject and is idempotent', () => {
-    const obs = store.stream('doc-3');
+    const obs = store.stream('tenant-A', 'doc-3');
     let completed = false;
     obs.subscribe({ complete: () => { completed = true; } });
 
-    store.drop('doc-3');
+    store.drop('tenant-A', 'doc-3');
     expect(completed).toBe(true);
 
     // Idempotent — calling drop again does not throw.
-    expect(() => store.drop('doc-3')).not.toThrow();
-    expect(() => store.drop('does-not-exist')).not.toThrow();
+    expect(() => store.drop('tenant-A', 'doc-3')).not.toThrow();
+    expect(() => store.drop('tenant-A', 'does-not-exist')).not.toThrow();
   });
 
   it('emits a processing.failed event AND completes the Observable', async () => {
-    const obs = store.stream('doc-4');
+    const obs = store.stream('tenant-A', 'doc-4');
     const seen: string[] = [];
     const done = new Promise<void>((resolve) => {
       obs.subscribe({
@@ -99,7 +99,7 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
   });
 
   it('multiple subscribers on the same docId all receive events', () => {
-    const obs = store.stream('doc-5');
+    const obs = store.stream('tenant-A', 'doc-5');
     const a: string[] = [];
     const b: string[] = [];
     obs.subscribe({ next: (e) => a.push(e.event) });
@@ -118,8 +118,8 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
 
   it('subject cleanup happens on module destroy', () => {
     // Open subscribers on 2 different docs
-    const a = store.stream('doc-6');
-    const b = store.stream('doc-7');
+    const a = store.stream('tenant-A', 'doc-6');
+    const b = store.stream('tenant-A', 'doc-7');
     let aDone = false;
     let bDone = false;
     a.subscribe({ complete: () => { aDone = true; } });
@@ -128,5 +128,19 @@ describe('ProcessingEventsStore (SSE broadcaster)', () => {
     store.onModuleDestroy();
     expect(aDone).toBe(true);
     expect(bDone).toBe(true);
+  });
+
+  it('isolates identical document ids between tenants', () => {
+    const tenantA = store.stream('tenant-A', 'shared-doc');
+    const tenantB = store.stream('tenant-B', 'shared-doc');
+    const seenA: ProcessingStageEvent[] = [];
+    const seenB: ProcessingStageEvent[] = [];
+    tenantA.subscribe({ next: (event) => seenA.push(event) });
+    tenantB.subscribe({ next: (event) => seenB.push(event) });
+
+    store.emit(evt({ documentId: 'shared-doc', tenantId: 'tenant-A', payload: { error: 'tenant-A-only' } }));
+
+    expect(seenA).toHaveLength(1);
+    expect(seenB).toHaveLength(0);
   });
 });

@@ -48,12 +48,14 @@ import {
  *   POST   /documents/upload       — multipart upload
  *   GET    /documents              — paginated list (all statuses)
  *   GET    /documents/inbox        — paginated list, status=NOVO shortcut
+ *   GET    /documents/trash        — paginated list, soft-deleted rows (trash)
  *   GET    /documents/:id          — detail
  *   PATCH  /documents/:id          — partial metadata update
  *   PATCH  /documents/:id/folder   — explicit folder assignment
  *   GET    /documents/:id/download — bytes stream (authenticated)
  *   GET    /documents/:id/url      — signed URL (or local route)
- *   DELETE /documents/:id          — soft-delete (status=ARQUIVADO)
+ *   DELETE /documents/:id          — soft-delete (trash, reversible via /restore)
+ *   POST   /documents/:id/restore  — ADMIN-only restore from trash
  *   DELETE /documents/:id/hard     — ADMIN-only destructive delete (removes
  *                                    file + DB row + cascades to items &
  *                                    payment events; audit row emitted)
@@ -154,6 +156,25 @@ export class DocumentsController {
     @Query() query: DocumentQueryDto,
   ) {
     return this.documents.findInbox(user.tenantId, query);
+  }
+
+  @Get('trash')
+  @ApiOperation({
+    summary: 'List soft-deleted documents (trash)',
+    description:
+      'Tenant-scoped listing of documents with `deletedAt` set. ' +
+      'Powers the trash view where an ADMIN can restore individual ' +
+      'rows via POST /documents/:id/restore. Soft-deleted rows are ' +
+      'excluded from `GET /documents` and `GET /documents/inbox`.',
+  })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'pageSize', required: false, example: 20 })
+  @ApiResponse({ status: 200, description: 'Paginated soft-deleted documents' })
+  findInTrash(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: DocumentQueryDto,
+  ) {
+    return this.documents.findInTrash(user.tenantId, query);
   }
 
   @Get('folders')
@@ -345,6 +366,14 @@ export class DocumentsController {
       id,
       wantPdf ? 'pdf' : 'original',
     );
+    // Belt-and-braces: if any upstream interceptor already wrote to the
+    // response, we MUST NOT set headers or call res.end() again. The
+    // original bug surfaced here as ERR_HTTP_HEADERS_SENT + a second
+    // 500 from the global filter, because TenantInterceptor tried to
+    // stamp x-tenant-id after the bytes had already been flushed.
+    if (res.headersSent || res.writableEnded) {
+      return;
+    }
     res.set({
       'Content-Type': mimeType,
       'Content-Disposition': `inline; filename="${this.sanitizeFilename(fileName)}"`,
@@ -387,15 +416,35 @@ export class DocumentsController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Soft-delete a document',
+    summary: 'Soft-delete a document (move to trash)',
     description:
-      'Marks the row as ARQUIVADO; the file stays on disk for audit. The default listing excludes ARQUIVADO rows.',
+      'Sets `deletedAt = now()` on the row. The file stays on disk for audit, the audit chain is preserved, and the row reappears if an ADMIN hits POST /documents/:id/restore. Default listings (inbox, search, party detail) hide trashed rows. Returns 200 with the `{ id, deletedAt }` payload so the client can update its cache optimistically.',
   })
+  @ApiResponse({ status: 200, description: 'Document moved to trash' })
+  @ApiResponse({ status: 404, description: 'Document not found in this tenant' })
   remove(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
     return this.documents.softDelete(user.tenantId, user.id, id);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Restore a soft-deleted document from trash (ADMIN only)',
+    description:
+      'Clears `deletedAt` so the row is once again visible to `GET /documents` and the inbox. Idempotent: restoring a row that is already live returns 200 with `restored: false` and does NOT emit an additional audit row. Hard-deleted rows (rows physically removed by `DELETE /:id/hard`) cannot be restored.',
+  })
+  @ApiResponse({ status: 200, description: 'Document restored (or already live)' })
+  @ApiResponse({ status: 403, description: 'Caller is not ADMIN' })
+  @ApiResponse({ status: 404, description: 'Document not found (or cross-tenant)' })
+  restore(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.documents.restore(user.tenantId, user.id, id);
   }
 
   @Delete(':id/hard')

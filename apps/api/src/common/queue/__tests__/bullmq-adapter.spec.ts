@@ -1,5 +1,8 @@
 import { BullmqAdapter, DOCUMENT_PROCESSING_QUEUE } from '../bullmq.adapter';
 import * as bullmq from 'bullmq';
+import { DocumentProcessingStatus } from '@prisma/client';
+import { ProcessingService } from '../../../modules/documents/processing/processing.service';
+import { ProcessingEventsStore } from '../../../modules/documents/processing/processing-events-store.service';
 
 /**
  * BullmqAdapter — Redis-backed queue.
@@ -166,6 +169,88 @@ describe('BullmqAdapter (Redis-backed queue)', () => {
     expect(map.has('document.received')).toBe(true);
     expect(map.has('document.extracted')).toBe(true);
     expect(map.has('document.enriched')).toBe(true);
+  });
+
+  it('unwraps the BullMQ envelope before dispatching to the topic handler', async () => {
+    const handler = jest.fn(async () => undefined);
+    adapter.subscribe('document.routed', handler);
+    const workerProcessor = WorkerCtor.mock.calls[0][1] as (job: { name: string; data: unknown }) => Promise<void>;
+    const payload = { documentId: 'doc-1', tenantId: 'tenant-A', userId: 'user-1' };
+
+    await workerProcessor({
+      name: 'document.routed',
+      data: { topic: 'document.routed', payload },
+    });
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+
+  it('does not unwrap EventEmitter-style raw payloads or mismatched envelopes', async () => {
+    const handler = jest.fn(async () => undefined);
+    adapter.subscribe('document.routed', handler);
+    const workerProcessor = WorkerCtor.mock.calls[0][1] as (job: { name: string; data: unknown }) => Promise<void>;
+    const rawPayload = { documentId: 'doc-1', tenantId: 'tenant-A' };
+
+    await workerProcessor({ name: 'document.routed', data: rawPayload });
+    await workerProcessor({ name: 'document.routed', data: { topic: 'other', payload: rawPayload } });
+
+    expect(handler).toHaveBeenNthCalledWith(1, rawPayload);
+    expect(handler).toHaveBeenNthCalledWith(2, { topic: 'other', payload: rawPayload });
+  });
+
+  it('drives document.routed through BullMQ to COMPLETED and the terminal SSE event', async () => {
+    const events = new ProcessingEventsStore();
+    const update = jest.fn(async ({ data }: { data: Record<string, unknown> }) => data);
+    const prisma = {
+      document: {
+        findFirst: jest.fn(async () => ({
+          id: 'doc-1',
+          tenantId: 'tenant-A',
+          partyId: 'party-1',
+          processingStatus: DocumentProcessingStatus.ROUTING,
+          processingStartedAt: null,
+          tenant: { settings: null },
+        })),
+        update,
+      },
+      $executeRaw: jest.fn(async () => undefined),
+      $transaction: jest.fn(async (work: (tx: unknown) => Promise<unknown>) => work(prisma)),
+    };
+    const audit = { log: jest.fn(), logInTx: jest.fn() };
+    const extraction = { enqueue: jest.fn() };
+    const documents = { approve: jest.fn() };
+    new ProcessingService(
+      prisma as any,
+      audit as any,
+      events,
+      extraction as any,
+      documents as any,
+      adapter,
+    );
+    const received: string[] = [];
+    events.stream('tenant-A', 'doc-1').subscribe({ next: (event) => received.push(event.event) });
+    const workerProcessor = WorkerCtor.mock.calls[0][1] as (job: { name: string; data: unknown }) => Promise<void>;
+
+    await workerProcessor({
+      name: 'document.routed',
+      data: {
+        topic: 'document.routed',
+        payload: {
+          documentId: 'doc-1',
+          tenantId: 'tenant-A',
+          userId: 'user-1',
+          approved: false,
+          newFileKey: null,
+          partyId: 'party-1',
+          completedAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ processingStatus: DocumentProcessingStatus.COMPLETED }),
+    }));
+    expect(received).toEqual(['processing.completed']);
   });
 
   it('spawns a Worker on init and closes it on destroy', async () => {

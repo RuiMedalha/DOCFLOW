@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { DocumentsController } from './documents.controller';
+import { SupplierController } from './supplier.controller';
 import { DocumentsService } from './documents.service';
 import { FolderRulesEngine } from './folder-rules/folder-rules.engine';
 import { StorageModule } from './storage/storage.module';
@@ -22,10 +23,15 @@ import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
  * lets ExtractionService use FolderRulesEngine for AI-driven
  * auto-filing. Both modules reference each other, hence the cycle
  * break).
+ *
+ * SupplierController is registered alongside DocumentsController so
+ * the supplier re-extract / strict-update routes can evolve without
+ * touching the legacy DocumentsController. Mounted at the same
+ * `/documents` prefix.
  */
 @Module({
   imports: [StorageModule, forwardRef(() => ExtractionModule)],
-  controllers: [DocumentsController],
+  controllers: [DocumentsController, SupplierController],
   providers: [DocumentsService, FolderRulesEngine, ImageToPdfService],
   exports: [DocumentsService, FolderRulesEngine, ImageToPdfService],
 })

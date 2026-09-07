@@ -150,9 +150,11 @@ export class ProcessingService {
     // accessor pattern (security-audit H-5) because the static accessor
     // broke cross-pod delivery. Every event the pipeline emits must go
     // through the same DI-injected instance.
-    this.queue.subscribeBatch(TOPICS, async (payload: unknown) => {
-      await this.dispatch(payload);
-    });
+    for (const topic of TOPICS) {
+      this.queue.subscribe(topic, async (payload: unknown) => {
+        await this.dispatch(topic, payload);
+      });
+    }
   }
 
   // ============================================================ handlers
@@ -521,10 +523,25 @@ export class ProcessingService {
           stage: 'ROUTING',
           status: 'started',
           completedAt: new Date().toISOString(),
-          approved: !approveError && autoApprove && Boolean(evt.partyId),
+          approved: !approveError && autoApprove && Boolean(docPartyId),
           error: approveError,
         },
       });
+
+      // The ROUTING stage is only complete after the terminal transition
+      // has been persisted by handleRouted. Publishing this event here is
+      // required for both queue-backed and in-process adapters; emitting
+      // the SSE progress event alone leaves documents stuck in ROUTING.
+      await this.queue.publish('document.routed', {
+        topic: 'document.routed',
+        documentId: evt.documentId,
+        tenantId: evt.tenantId,
+        userId: evt.userId,
+        approved: !approveError && autoApprove && Boolean(docPartyId),
+        newFileKey: null,
+        partyId: docPartyId,
+        completedAt: new Date().toISOString(),
+      } satisfies DocumentRoutedEvent & { topic: string });
     }, evt, 'ROUTING');
   }
 
@@ -607,10 +624,10 @@ export class ProcessingService {
    * Topic → handler dispatch. The subscribeBatch binding on
    * constructor funnels every published event here.
    */
-  private async dispatch(payload: unknown): Promise<void> {
+  private async dispatch(topic: (typeof TOPICS)[number], payload: unknown): Promise<void> {
     if (!payload || typeof payload !== 'object') return;
-    const evt = payload as { topic?: string } & Record<string, unknown>;
-    switch (evt.topic) {
+    const evt = payload as Record<string, unknown>;
+    switch (topic) {
       case 'document.uploaded':
         await this.handleReceived(evt as unknown as DocumentUploadedEvent);
         break;

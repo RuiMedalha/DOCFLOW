@@ -272,6 +272,39 @@ describe('ProcessingService (4-stage pipeline)', () => {
     expect(events.emit).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'ROUTING' }),
     );
+    expect(queue.publish).toHaveBeenCalledWith(
+      'document.routed',
+      expect.objectContaining({
+        topic: 'document.routed',
+        documentId: DOC,
+        tenantId: TENANT,
+        partyId: 'party-1',
+      }),
+    );
+  });
+
+  it('publishes the terminal route event even when auto-approval is disabled', async () => {
+    prisma = buildPrisma({
+      initialStatus: DocumentProcessingStatus.ENRICHING,
+      partyId: null,
+      tenantSettings: { autoApprove: false },
+    });
+    service = new ProcessingService(prisma as any, audit, events, extraction, documents, queue);
+
+    await service.handleEnriched({
+      documentId: DOC,
+      tenantId: TENANT,
+      userId: USER,
+      partyId: null,
+      partyMatched: false,
+      ibanUpdated: false,
+      ibanRiskScore: 0,
+    });
+
+    expect(queue.publish).toHaveBeenCalledWith(
+      'document.routed',
+      expect.objectContaining({ approved: false, partyId: null }),
+    );
   });
 
   it('handleEnriched calls approve() when autoApprove=true AND party is linked', async () => {

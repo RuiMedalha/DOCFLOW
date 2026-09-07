@@ -377,4 +377,31 @@ export class CorrectSupplierDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+
+  // Sprint H+ Part 2 — optional address/country slots that complement the
+  // supplier/customer block. Address + country are NOT in the Document
+  // schema, so we persist them under `metadata.supplierAddress` /
+  // `metadata.supplierCountry` rather than as dedicated columns. Pure
+  // metadata snapshots — they do not affect folder routing or party
+  // resolution. Marked optional so existing payloads keep working.
+
+  @ApiPropertyOptional({
+    description:
+      'Supplier postal address (NOT in Document schema — stored in metadata.supplierAddress).',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  supplierAddress?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Supplier country code (ISO 3166-1 alpha-2). NOT in Document schema — stored in metadata.supplierCountry.',
+    maxLength: 2,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  supplierCountry?: string;
 }

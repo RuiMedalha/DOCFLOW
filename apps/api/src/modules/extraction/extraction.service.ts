@@ -4453,6 +4453,177 @@ export class ExtractionService implements OnModuleDestroy {
   }
 
   /**
+   * Sprint H+ Part 2 — supplier-only re-extraction.
+   *
+   * Pulls the file bytes from storage, runs vision (if a provider is
+   * configured) + the regex/OCR path, and merges the result into a
+   * focused supplier-shaped payload:
+   *
+   *   { supplierName?, supplierNif?, supplierIban?, address?, country? }
+   *
+   * Distinct from `processDocumentAsync()` (the full 4-stage pipeline
+   * driver): this helper does NOT advance processingStatus, does NOT
+   * publish any queue events, and does NOT touch totals / line items
+   * / party links. Use this when the operator wants to refresh just
+   * the supplier block on a Document that already has the rest of the
+   * header locked in (typical "AI swapped the wrong party" case after
+   * the operator reviewed but BEFORE they verified-supplier).
+   *
+   * Operator-Verified Guard: the caller is responsible for checking
+   * `Document.supplierVerifiedAt` BEFORE invoking this method. This
+   * helper does not duplicate the guard — running it on a verified
+   * document is technically allowed, but the caller (DocumentsService.
+   * extractSupplierFromDocument) treats verified docs as 409 unless
+   * the operator passes `force=true`.
+   *
+   * Failure modes (graceful — never throws to the caller unless the
+   * underlying read blows up):
+   *   - storage missing                → regex path on filename only
+   *   - no vision provider configured  → regex path only (silent skip)
+   *   - vision throws / times out      → regex path takes over
+   */
+  async extractSupplierFromDocument(
+    tenantId: string,
+    userId: string,
+    documentId: string,
+  ): Promise<{
+    supplierName: string | null;
+    supplierNif: string | null;
+    supplierIban: string | null;
+    address: string | null;
+    country: string | null;
+  }> {
+    this.logger.log(
+      `[extractSupplierFromDocument] start document=${documentId} tenant=${tenantId}`,
+    );
+
+    const doc = await this.prisma.document.findFirst({
+      where: { id: documentId, tenantId },
+    });
+    if (!doc) {
+      throw new Error(`Document ${documentId} not found for tenant ${tenantId}`);
+    }
+
+    // Load text — reuse `loadDocumentText` so we benefit from the same
+    // OCR/PDF parsing pipeline as the full extraction. Returns
+    // `source='filename'` when storage is offline so the regex path
+    // still has SOMETHING to scan.
+    const loaded = await this.loadDocumentText({
+      fileKey: doc.fileKey,
+      mimeType: doc.mimeType,
+      fileName: doc.fileName,
+      fileSize: doc.fileSize,
+    });
+
+    // Regex path — always runs. Cheap, never throws, gives us the
+    // baseline supplier candidate (NIF / IBAN / country) even when the
+    // vision provider is offline.
+    const regexFields = await this.extractWithOcrFallback(
+      { fileKey: doc.fileKey, mimeType: doc.mimeType, fileName: doc.fileName },
+      loaded.text,
+    );
+
+    // Vision path — runs ONLY when a provider is configured AND the
+    // file is a multimodal-supporting type. Mirrors the same gating
+    // the full pipeline uses so we get the same provider fallback
+    // behaviour without re-implementing the chain.
+    let visionExtracted:
+      | import("../ai/vision.service").VisionExtractedFields
+      | null = null;
+    if (this.vision?.liveProviderAvailable) {
+      try {
+        const result = await this.callVisionForSupplier({
+          doc,
+          loaded,
+          tenantId,
+        });
+        visionExtracted = result;
+      } catch (err) {
+        this.logger.warn(
+          `[extractSupplierFromDocument] vision failed for ` +
+            `${doc.fileName}: ${(err as Error).message}. Falling back to regex.`,
+        );
+        visionExtracted = null;
+      }
+    }
+
+    // Merge priority: vision wins on overlap (vision carries the
+    // tenant-identity block, so it's the strongest signal on the
+    // supplier-vs-customer distinction). Regex fills the gaps so the
+    // operator still sees a sensible row when vision is silent or
+    // offline. This mirrors the public `mergeVisionWithRegex` shape
+    // but locally scoped to the supplier fields.
+    const merged = mergeSupplierOnly(visionExtracted, regexFields);
+
+    this.logger.log(
+      `[extractSupplierFromDocument] done document=${documentId} ` +
+        `vision=${visionExtracted ? "yes" : "no"} regex=${regexFields ? "yes" : "no"} ` +
+        `→ supplierName=${merged.supplierName ?? "?"} nif=${merged.supplierNif ?? "?"}`,
+    );
+
+    return merged;
+  }
+
+  /**
+   * Internal — runs the vision call focused on extracting the supplier
+   * block. Lives here (not as a separate public method) because it
+   * shares ~95 % of `tryVisionAnalysis`'s payload-building logic and
+   * the divergence is purely in which fields we keep afterwards. The
+   * caller passes the doc + loaded text and gets a
+   * `VisionExtractedFields` shape back, ready to be merged with the
+   * regex baseline.
+   */
+  private async callVisionForSupplier(args: {
+    doc: {
+      fileKey: string;
+      mimeType: string;
+      fileName: string;
+    };
+    loaded: LoadedText;
+    tenantId: string;
+  }): Promise<
+    import("../ai/vision.service").VisionExtractedFields | null
+  > {
+    const { doc, loaded, tenantId } = args;
+    if (!this.vision) return null;
+
+    // Build the multimodal payload — same logic as `tryVisionAnalysis`
+    // but inlined so we don't need to hoist `tryVisionAnalysis` to
+    // public just for this. Image/PDF routing matches the canonical
+    // pipeline (line 1682-1730 in `tryVisionAnalysis`).
+    let fileBase64: string | undefined;
+    let mimeType: string | undefined;
+    if (this.storage) {
+      try {
+        if (/^image\//i.test(doc.mimeType)) {
+          const obj = await this.storage.getBuffer(doc.fileKey);
+          fileBase64 = obj.buffer.toString("base64");
+          mimeType = obj.contentType ?? doc.mimeType;
+        } else if (/^application\/pdf/i.test(doc.mimeType)) {
+          const obj = await this.storage.getBuffer(doc.fileKey);
+          fileBase64 = obj.buffer.toString("base64");
+          mimeType = obj.contentType ?? "application/pdf";
+        }
+      } catch (err) {
+        this.logger.warn(
+          `extractSupplierFromDocument: vision could not re-read file (${doc.fileName}): ${(err as Error).message}. Falling back to text-only prompt.`,
+        );
+      }
+    }
+
+    const result = await this.vision.analyze({
+      fileBase64,
+      mimeType,
+      text: loaded.text || undefined,
+      fileName: doc.fileName,
+      documentContext: "invoice",
+      timeoutMs: 30_000,
+      tenantId,
+    });
+    return result?.extracted ?? null;
+  }
+
+  /**
    * Parse a PDF's embedded text layer. Returns the joined text plus a
    * source marker. pdf-parse (which wraps pdfjs-dist) always emits a
    * `-- N of M --` marker between pages; we treat that as noise and
@@ -4555,6 +4726,52 @@ export class ExtractionService implements OnModuleDestroy {
       /* swallow — queue may be uninitialised if Redis never came up */
     }
   }
+}
+
+/**
+ * Sprint H+ Part 2 — merge helper that collapses a vision payload
+ * (shape `VisionExtractedFields`) + a regex payload (shape
+ * `ExtractedFields`) into the focused supplier block used by
+ * `extractSupplierFromDocument`. Exported as a top-level function so
+ * the supplier controller can re-use it without dragging the whole
+ * ExtractionService into the controller's dependency tree.
+ *
+ * Priority: vision wins when it has a value, regex fills the gap.
+ * Rationale: vision carries the tenant-identity context block so it's
+ * the strongest signal for distinguishing supplier-vs-customer;
+ * regex is the safety net for offline / no-provider environments.
+ */
+export function mergeSupplierOnly(
+  vision: import("../ai/vision.service").VisionExtractedFields | null | undefined,
+  regex: ExtractedFields | null | undefined,
+): {
+  supplierName: string | null;
+  supplierNif: string | null;
+  supplierIban: string | null;
+  address: string | null;
+  country: string | null;
+} {
+  const vName = vision?.supplier?.trim() ?? undefined;
+  const vNif = vision?.supplierNif?.trim() ?? vision?.supplierVatId?.trim();
+  const vIban = vision?.iban?.trim();
+  const vCountry = vision?.country?.trim();
+
+  const rName = regex?.supplier?.trim();
+  const rNif = regex?.supplierNif?.trim() ?? regex?.supplierVatId?.trim();
+  const rIban = regex?.iban?.trim();
+  const rCountry = regex?.country?.trim();
+
+  return {
+    supplierName: (vName && vName.length > 0 ? vName : rName) ?? null,
+    supplierNif: (vNif && vNif.length > 0 ? vNif : rNif) ?? null,
+    supplierIban: (vIban && vIban.length > 0 ? vIban : rIban) ?? null,
+    // `address` is not extracted by the current vision prompt or the
+    // regex layer (free-text addresses are unreliable), so this slot
+    // is always null at extraction time. Operators fill it in via
+    // the manual-edit endpoint instead.
+    address: null,
+    country: (vCountry && vCountry.length > 0 ? vCountry : rCountry) ?? null,
+  };
 }
 
 /** Minimal port for the storage layer; matches StorageService shape. */

@@ -3993,7 +3993,61 @@ export class ExtractionService implements OnModuleDestroy {
     if (options?.qrPayloadOverride) {
       data.qrPayload = options.qrPayloadOverride;
     }
+
+    // ── Sprint 1.A — per-field extraction confidence ───────────────
+    // The AI returns a single top-level confidence; Gemini does not
+    // score fields individually. We fan that score out to every field
+    // the path actually populated, so the review screen's chip grid
+    // reflects "how confident was the model in what it returned"
+    // instead of "we have no idea". A future migration that captures
+    // per-field scores from the prompt can replace these lines
+    // without touching the schema or the UI.
+    //
+    // We ALSO compute nifValid / ibanValid at write time — mod-11 and
+    // mod-97 are cheap enough that running them here is free, and the
+    // review screen needs the verdict alongside the value to flag
+    // "AI is confident but the checksum disagrees" cases.
+    const fan = (column: string) => {
+      if (
+        typeof fields.confidence !== "number" ||
+        !Number.isFinite(fields.confidence)
+      ) {
+        return;
+      }
+      (data as Record<string, unknown>)[column] = fields.confidence;
+    };
+
+    if (fields.supplierNif) {
+      fan("supplierNifConfidence");
+      data.nifValid = this.isValidPortugueseNifLocal(fields.supplierNif);
+    }
+    if (fields.iban) {
+      fan("supplierIbanConfidence");
+      data.ibanValid = this.isValidIbanLocal(fields.iban);
+    }
+    if (fields.supplier) fan("supplierNameConfidence");
+    if (fields.total != null) fan("totalAmountConfidence");
+    if (fields.docDate) fan("issueDateConfidence");
+    if (fields.dueDate) fan("dueDateConfidence");
+    if (fields.suggestedCategory) fan("categoryConfidence");
     return data;
+  }
+
+  /**
+   * Local re-export of the NIF validator. Imported from
+   * `common/validation/tax-id.validator` at the top of the file but
+   * referenced here via thin wrappers so a future swap to a
+   * per-country helper stays localised.
+   */
+  private isValidPortugueseNifLocal(value: string): boolean {
+    return isValidPortugueseNif(value);
+  }
+
+  /**
+   * Local re-export of the IBAN validator. See isValidPortugueseNifLocal.
+   */
+  private isValidIbanLocal(value: string): boolean {
+    return isValidIban(value);
   }
 
   private composeMetadata(

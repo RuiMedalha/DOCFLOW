@@ -10,10 +10,31 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { Sparkles, Building2, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useSidebarStore } from '@/_lib/sidebar-store';
 import { useTenant } from '@/_lib/use-dashboard-queries';
+import { authedFetch } from '@/_lib/auth-refresh';
 import { NAV_ITEMS } from '../_lib/nav-items';
+
+const API_BASE =
+  (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '')) ||
+  'http://localhost:4000/api/v1';
+
+async function fetchPendingCount(): Promise<number> {
+  // The endpoint returns a bare number; we strip the JSON envelope
+  // the backend wraps around every payload and fall back to 0 when
+  // the request fails so the sidebar stays responsive.
+  try {
+    const res = await authedFetch(`${API_BASE}/approvals/pending-count`);
+    if (!res.ok) return 0;
+    const json = await res.json();
+    const data = json?.data ?? json;
+    return typeof data?.count === 'number' ? data.count : 0;
+  } catch {
+    return 0;
+  }
+}
 
 const SIZE_CLASSES = {
   expanded: 'md:w-[272px]',
@@ -24,6 +45,18 @@ export function Sidebar() {
   const pathname = usePathname();
   const tenant = useTenant();
   const { collapsed, toggle, mobileOpen, closeMobile } = useSidebarStore();
+
+  // Sprint 1.B — pending approvals badge. Polled every 30s so the
+  // count stays close to the list page without forcing a refetch
+  // on every navigation.
+  const pendingQuery = useQuery({
+    queryKey: ['sidebar-pending-count'],
+    queryFn: fetchPendingCount,
+    refetchInterval: 30000,
+    refetchOnWindowFocus: false,
+    staleTime: 15000,
+  });
+  const pendingCount = pendingQuery.data ?? 0;
 
   const showLabel = !collapsed;
   const widthClass = collapsed ? SIZE_CLASSES.collapsed : SIZE_CLASSES.expanded;
@@ -137,7 +170,7 @@ export function Sidebar() {
 
           {/* Nav */}
           <nav className="flex-1 px-3 space-y-1 overflow-y-auto" aria-label="Secções">
-            <NavGroup items={mainItems} pathname={pathname} showLabel={showLabel} closeMobile={closeMobile} />
+            <NavGroup items={mainItems} pathname={pathname} showLabel={showLabel} closeMobile={closeMobile} pendingCount={pendingCount} />
             {showLabel && configItems.length > 0 && (
               <>
                 <div className="pt-4 pb-1 px-3">
@@ -148,7 +181,7 @@ export function Sidebar() {
                     Configuração
                   </span>
                 </div>
-                <NavGroup items={configItems} pathname={pathname} showLabel={showLabel} closeMobile={closeMobile} />
+                <NavGroup items={configItems} pathname={pathname} showLabel={showLabel} closeMobile={closeMobile} pendingCount={pendingCount} />
               </>
             )}
           </nav>
@@ -181,11 +214,13 @@ function NavGroup({
   pathname,
   showLabel,
   closeMobile,
+  pendingCount,
 }: {
   items: typeof NAV_ITEMS;
   pathname: string;
   showLabel: boolean;
   closeMobile: () => void;
+  pendingCount: number;
 }) {
   return (
     <ul className="space-y-1">
@@ -194,6 +229,10 @@ function NavGroup({
           pathname === item.href ||
           (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
         const { Icon } = item;
+        // Badge only renders on the approvals entry — other items
+        // stay clean. Hidden when collapsed so the icon-only layout
+        // does not compete with the count chip.
+        const showBadge = item.href === '/approvals' && pendingCount > 0 && showLabel;
         return (
           <li key={item.href}>
             <Link
@@ -213,6 +252,19 @@ function NavGroup({
                 aria-hidden="true"
               />
               {showLabel && <span className="truncate">{item.label}</span>}
+              {showBadge && (
+                <span
+                  className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold"
+                  style={{
+                    background: 'var(--accent)',
+                    color: 'var(--accent-contrast, #fff)',
+                  }}
+                  data-testid="sidebar-approvals-count"
+                  aria-label={`${pendingCount} aprovações pendentes`}
+                >
+                  {pendingCount > 99 ? '99+' : pendingCount}
+                </span>
+              )}
             </Link>
           </li>
         );

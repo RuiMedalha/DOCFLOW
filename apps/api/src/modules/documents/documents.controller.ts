@@ -40,6 +40,11 @@ import {
   UpdateDocumentDto,
   UploadDocumentDto,
 } from './dto/document.dto';
+import {
+  ConfirmAllDto,
+  ConfirmFieldDto,
+  ExtractionConfidenceResponseDto,
+} from './dto/extraction-confidence.dto';
 
 /**
  * DocumentsController — REST surface for the inbox.
@@ -256,6 +261,88 @@ export class DocumentsController {
     @Param('id') id: string,
   ): Promise<{ ok: true; verifiedAt: string }> {
     return this.documents.verifySupplier(user.tenantId, user.id, id);
+  }
+
+  // ─────────────────────────────────────────── extraction confidence ─────
+
+  /**
+   * GET /documents/:id/extraction-confidence — the data backing the
+   * review screen. Returns one entry per reviewable field with
+   * `{ value, confidence, valid, confirmedAt }` plus a top-level
+   * summary. Open to every authenticated member of the tenant — the
+   * review screen is part of the inbox flow and not sensitive to
+   * APPROVE / ADMIN gating (the verify-supplier/confirm-field
+   * mutations are the privileged parts).
+   */
+  @Get(':id/extraction-confidence')
+  @ApiOperation({
+    summary: 'Get per-field extraction confidence + summary for the review screen',
+    description:
+      'Returns one `{ value, confidence, valid, confirmedAt }` entry per reviewable field (supplierName, supplierNif, supplierIban, supplierAddress, supplierCountry, totalAmount, issueDate, dueDate, category) plus a top-level summary the UI renders in the header. Tenant-scoped; cross-tenant ids surface as 404.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Per-field confidence payload',
+    type: ExtractionConfidenceResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Document not found (or cross-tenant)' })
+  getExtractionConfidence(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<ExtractionConfidenceResponseDto> {
+    return this.documents.getExtractionConfidence(user.tenantId, id);
+  }
+
+  /**
+   * PATCH /documents/:id/confirm-field — operator confirms ONE field.
+   * Writes the value (when supplied) to the matching column or
+   * metadata slot, records the confirmation in
+   * `document_field_confirmations`, and emits an AuditAction.EDIT row
+   * with the BEFORE/AFTER diff. ADMIN + OPERADOR — same gate as the
+   * other supplier-edit routes.
+   */
+  @Patch(':id/confirm-field')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Confirm a single extraction field (with optional value override)',
+    description:
+      "Writes the operator-confirmed value to the corresponding Document column (or `metadata.supplierAddress` / `metadata.supplierCountry` / `metadata.filing.expenseCategory` for the fields that don't have a dedicated column), records the confirmation in `document_field_confirmations`, and emits an AuditAction.EDIT row with the BEFORE/AFTER diff. If `value` is omitted, the operator is acknowledging the AI's extraction without changing anything — still records the confirmation so the review screen's pending chip flips to confirmed.",
+  })
+  @ApiResponse({ status: 200, description: 'Field confirmed' })
+  @ApiResponse({ status: 400, description: 'Invalid field name or malformed value' })
+  @ApiResponse({ status: 404, description: 'Document not found (or cross-tenant)' })
+  async confirmField(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ConfirmFieldDto,
+  ): Promise<{ ok: true; field: string; confirmedAt: string }> {
+    return this.documents.confirmField(user.tenantId, user.id, id, dto);
+  }
+
+  /**
+   * POST /documents/:id/confirm-all — bulk confirm + supplier-verified.
+   * Writes `supplierVerifiedAt = now()` and emits a single AuditAction
+   * .EDIT row tagged `document.confirm_all`. Idempotent: a second
+   * call updates the timestamp and emits a second audit row tagged
+   * with `previousVerifiedAt`.
+   */
+  @Post(':id/confirm-all')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Bulk-confirm a set of fields + mark supplier block verified',
+    description:
+      'Sets `supplierVerifiedAt = now()` and emits one AuditAction row tagged `document.confirm_all` carrying the list of fields the operator reviewed. Field-level overrides (if any) should be sent ahead of time via `PATCH /confirm-field` — this endpoint closes the loop. Idempotent: a second call updates `supplierVerifiedAt` and records `previousVerifiedAt` in the audit row.',
+  })
+  @ApiResponse({ status: 200, description: 'Supplier block verified' })
+  @ApiResponse({ status: 404, description: 'Document not found (or cross-tenant)' })
+  async confirmAll(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ConfirmAllDto,
+  ): Promise<{ ok: true; verifiedAt: string; confirmedFields: string[] }> {
+    return this.documents.confirmAll(user.tenantId, user.id, id, dto);
   }
 
   @Get(':id/items')

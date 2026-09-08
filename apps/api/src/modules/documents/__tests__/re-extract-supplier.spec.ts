@@ -72,6 +72,19 @@ function buildImageToPdfStub() {
   };
 }
 
+function buildNifLookupStub() {
+  return {
+    lookup: jest.fn().mockResolvedValue({
+      nif: "515208566",
+      mod11Valid: true,
+      baseVerified: false,
+      reason: "upstream_unavailable",
+      source: "mod11_only",
+      fetchedAt: new Date().toISOString(),
+    }),
+  };
+}
+
 function buildQueueStub() {
   return {
     driver: 'eventemitter' as const,
@@ -101,6 +114,7 @@ function makeSvc(prisma: any, audit: any, storage: StorageService, extraction: a
     buildRulesEngineStub() as any,
     extraction as any,
     buildImageToPdfStub() as any,
+    buildNifLookupStub() as any,
     buildQueueStub() as any,
   );
 }

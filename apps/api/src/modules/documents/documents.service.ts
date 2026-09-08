@@ -24,6 +24,23 @@ import {
 } from './dto/document.dto';
 import { UpdateSupplierDto } from './dto/supplier.dto';
 import {
+  ConfirmAllDto,
+  ConfirmFieldDto,
+  ExtractionConfidenceResponseDto,
+  FIELD_COLUMN,
+  FieldConfidenceDto,
+  REVIEWABLE_FIELDS,
+  ReviewableField,
+} from './dto/extraction-confidence.dto';
+import {
+  summariseConfidence,
+  type FieldInput,
+} from './extraction-confidence';
+import {
+  isValidIban,
+  isValidPortugueseNif,
+} from '../../common/validation/tax-id.validator';
+import {
   FolderRulesEngine,
 } from './folder-rules/folder-rules.engine';
 import {
@@ -48,6 +65,7 @@ import {
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
+import { NifLookupService } from '../nif-lookup/nif-lookup.service';
 
 export interface UploadedFile {
   fieldname: string;
@@ -100,6 +118,11 @@ export class DocumentsService {
     // resolved to null.
     private readonly extraction: ExtractionService,
     private readonly imageToPdf: ImageToPdfService,
+    // Sprint 1.C — Portal das Finanças enrichment after a
+    // supplier re-extract. Optional because we never want the
+    // re-extract to hard-fail when the base is unreachable —
+    // the service falls back to mod-11-only automatically.
+    private readonly nifLookup: NifLookupService,
     // Sprint H — publish `document.uploaded` to the queue so the
     // ProcessingService pipeline picks the doc up. The QueueAdapter is
     // supplied by QueueModule.forRoot() (eventemitter in dev, BullMQ in
@@ -1770,11 +1793,15 @@ export class DocumentsService {
     // extraction service. The service already owns the VisionService
     // + StoragePort + tenant-identity plumbing — re-implementing it
     // here would duplicate the provider-fallback chain.
-    const extracted = await this.extraction.extractSupplierFromDocument(
+    const extractedRaw = await this.extraction.extractSupplierFromDocument(
       tenantId,
       userId,
       id,
     );
+    // Local mutable copy so the public-base enrichment below
+    // can overwrite fields without violating the read-only
+    // shape of the extraction return type.
+    const extracted = { ...extractedRaw };
 
     // Persist only the supplier-shaped fields — leave customer /
     // totals / line items untouched so a supplier-only re-run is
@@ -1792,6 +1819,45 @@ export class DocumentsService {
     }
     if (extracted.country !== undefined && extracted.country !== null) {
       nextMeta.supplierCountry = extracted.country;
+    }
+
+    // Sprint 1.C — Portal das Finanças enrichment. When the
+    // re-extracted NIF differs from the stored one, ask the
+    // public base for the canonical name + address. We only
+    // overwrite when the AI's confidence was low (so we don't
+    // churn good data) and the base returned a hit. Cache + rate
+    // limit live in NifLookupService.
+    const aiNameConf = existing.supplierNameConfidence ?? 1;
+    const aiAddressConf = existing.supplierAddressConfidence ?? 1;
+    const newNif = extracted.supplierNif ?? existing.supplierNif ?? null;
+    const nifChanged = (newNif ?? null) !== (existing.supplierNif ?? null);
+    if (
+      opts.force === true &&
+      newNif &&
+      nifChanged &&
+      (aiNameConf < 0.7 || aiAddressConf < 0.7)
+    ) {
+      try {
+        const lookup = await this.nifLookup.lookup(tenantId, userId, newNif);
+        if (lookup.baseVerified) {
+          if (lookup.name && aiNameConf < 0.7 && !extracted.supplierName) {
+            extracted.supplierName = lookup.name;
+          }
+          if (lookup.address && aiAddressConf < 0.7) {
+            nextMeta.supplierAddress = lookup.address;
+          }
+          this.logger.log(
+            `[extractSupplier] enriched supplier ${newNif} from public base (source=${lookup.source})`,
+          );
+        }
+      } catch (err) {
+        // We never want a base-side failure to fail the re-extract.
+        // Audit row still goes through (the lookup service logged
+        // its own). Move on.
+        this.logger.warn(
+          `[extractSupplier] public base lookup failed for ${newNif}: ${(err as Error).message}`,
+        );
+      }
     }
 
     await this.prisma.document.update({
@@ -1885,15 +1951,28 @@ export class DocumentsService {
   ): Promise<{ ok: true; verifiedAt: string }> {
     const existing = await this.prisma.document.findFirst({
       where: { id, tenantId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!existing) throw new NotFoundException('Document not found');
 
     const verifiedAt = new Date();
 
+    // Sprint 1.B — setting supplierVerifiedAt moves the doc into
+    // PENDING_APPROVAL when it was still in NOVO. We never regress
+    // past PENDING_APPROVAL/APROVADO/REJEITADO/CHANGES_REQUESTED so
+    // a verifySupplier click on an already-decided doc does not
+    // undo the operator's earlier decision.
+    const flipStatus =
+      existing.status === DocumentStatus.NOVO
+        ? DocumentStatus.PENDING_APPROVAL
+        : undefined;
+
     await this.prisma.document.update({
       where: { id },
-      data: { supplierVerifiedAt: verifiedAt },
+      data: {
+        supplierVerifiedAt: verifiedAt,
+        ...(flipStatus ? { status: flipStatus } : {}),
+      },
     });
 
     await this.audit.log({
@@ -1916,6 +1995,459 @@ export class DocumentsService {
     );
 
     return { ok: true, verifiedAt: verifiedAt.toISOString() };
+  }
+
+  // ─────────────────────────────────────────── extraction confidence ─────
+
+  /**
+   * GET /documents/:id/extraction-confidence.
+   *
+   * Returns one `FieldConfidenceDto` per reviewable field + a top-level
+   * summary. The UI renders the summary header ("X/Y alta confiança ·
+   * 1 inválido · 1 pendente") and the per-field chips for the table.
+   *
+   * Source of truth:
+   *   - `value`     : the persisted column (or metadata slot for
+   *                    address / country / category).
+   *   - `confidence`: the per-field `*Confidence` column written by the
+   *                    extraction service. `null` means "no provider
+   *                    score returned for this field".
+   *   - `valid`     : structural validator result. Only NIF + IBAN
+   *                    have validators; the other fields return `null`.
+   *   - `confirmedAt`: latest `DocumentFieldConfirmation.confirmedAt`
+   *                    for the field. `null` until the operator
+   *                    confirms.
+   *
+   * Tenant scoping mirrors every other Document endpoint —
+   * `findFirst({ where: { id, tenantId } })` so a cross-tenant id
+   * surfaces as 404.
+   */
+  async getExtractionConfidence(
+    tenantId: string,
+    id: string,
+  ): Promise<ExtractionConfidenceResponseDto> {
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        // Header columns + the new confidence columns.
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        total: true,
+        docDate: true,
+        dueDate: true,
+        ocrConfidence: true,
+        supplierNameConfidence: true,
+        supplierNifConfidence: true,
+        supplierIbanConfidence: true,
+        supplierAddressConfidence: true,
+        supplierCountryConfidence: true,
+        totalAmountConfidence: true,
+        issueDateConfidence: true,
+        dueDateConfidence: true,
+        categoryConfidence: true,
+        nifValid: true,
+        ibanValid: true,
+        supplierVerifiedAt: true,
+        metadata: true,
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    // Pull the AI provenance out of metadata.extraction so the review
+    // screen can show "extraído por Gemini · gemini-2.5-flash".
+    const extraction = this.getNestedObject(doc.metadata, 'extraction');
+    const aiProvider =
+      typeof extraction?.aiProvider === 'string' ? extraction.aiProvider : null;
+    const aiModel = typeof extraction?.aiModel === 'string' ? extraction.aiModel : null;
+
+    const supplierAddress = this.readMetadataString(doc.metadata, 'supplierAddress');
+    const supplierCountry = this.readMetadataString(doc.metadata, 'supplierCountry');
+    const filing = this.getNestedObject(doc.metadata, 'filing');
+    const category =
+      filing && typeof filing.expenseCategory === 'string'
+        ? filing.expenseCategory
+        : null;
+
+    // Latest confirmation per field — single query, grouped client-side.
+    const confirmations = await this.prisma.documentFieldConfirmation.findMany({
+      where: { tenantId, documentId: id },
+      orderBy: { confirmedAt: 'desc' },
+      select: { field: true, confirmedAt: true },
+    });
+    const lastConfirmedAt = new Map<string, Date>();
+    for (const c of confirmations) {
+      if (!lastConfirmedAt.has(c.field)) lastConfirmedAt.set(c.field, c.confirmedAt);
+    }
+
+    const pick = (
+      field: ReviewableField,
+      value: unknown,
+      confidence: number | null | undefined,
+      valid: boolean | null | undefined,
+    ): FieldConfidenceDto => {
+      const confirmed = lastConfirmedAt.get(field) ?? null;
+      return {
+        value: value === null || value === undefined ? null : String(value),
+        confidence: confidence ?? null,
+        valid: valid ?? null,
+        confirmedAt: confirmed ? confirmed.toISOString() : null,
+      };
+    };
+
+    const fields: Record<ReviewableField, FieldConfidenceDto> = {
+      supplierName: pick('supplierName', doc.supplier, doc.supplierNameConfidence, null),
+      supplierNif: pick('supplierNif', doc.supplierNif, doc.supplierNifConfidence, doc.nifValid),
+      supplierIban: pick('supplierIban', doc.iban, doc.supplierIbanConfidence, doc.ibanValid),
+      supplierAddress: pick(
+        'supplierAddress',
+        supplierAddress,
+        doc.supplierAddressConfidence,
+        null,
+      ),
+      supplierCountry: pick(
+        'supplierCountry',
+        supplierCountry,
+        doc.supplierCountryConfidence,
+        null,
+      ),
+      totalAmount: pick('totalAmount', doc.total, doc.totalAmountConfidence, null),
+      issueDate: pick(
+        'issueDate',
+        doc.docDate ? doc.docDate.toISOString().slice(0, 10) : null,
+        doc.issueDateConfidence,
+        null,
+      ),
+      dueDate: pick(
+        'dueDate',
+        doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : null,
+        doc.dueDateConfidence,
+        null,
+      ),
+      category: pick('category', category, doc.categoryConfidence, null),
+    };
+
+    const summary = summariseConfidence(
+      REVIEWABLE_FIELDS.map((f) => ({
+        confidence: fields[f].confidence,
+        valid: fields[f].valid,
+        confirmedAt: fields[f].confirmedAt,
+      } satisfies FieldInput)),
+    );
+
+    return {
+      summary,
+      supplierName: fields.supplierName,
+      supplierNif: fields.supplierNif,
+      supplierIban: fields.supplierIban,
+      supplierAddress: fields.supplierAddress,
+      supplierCountry: fields.supplierCountry,
+      totalAmount: fields.totalAmount,
+      issueDate: fields.issueDate,
+      dueDate: fields.dueDate,
+      category: fields.category,
+      aiProvider,
+      aiModel,
+      ocrConfidence: doc.ocrConfidence ?? null,
+      supplierVerifiedAt: doc.supplierVerifiedAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * PATCH /documents/:id/confirm-field.
+   *
+   * Operator confirms a single field. Two behaviours:
+   *   - If `dto.value` is supplied: write the value to the
+   *     corresponding Document column (or metadata slot for the fields
+   *     that don't have a dedicated column), record the change in
+   *     `DocumentFieldConfirmation`, and emit an `AuditAction.EDIT`
+   *     row carrying the BEFORE/AFTER diff.
+   *   - If `dto.value` is omitted: the operator is acknowledging the
+   *     AI's extraction without changing the value. Still records a
+   *     confirmation row (so the review screen's "pendente" chip flips
+   *     to "confirmado") and emits a lighter audit row tagged
+   *     `document.confirm_field_no_change`.
+   *
+   * Tenant scoping + 404 path mirrors the rest of the surface.
+   */
+  async confirmField(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: ConfirmFieldDto,
+  ): Promise<{ ok: true; field: ReviewableField; confirmedAt: string }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        total: true,
+        docDate: true,
+        dueDate: true,
+        nifValid: true,
+        ibanValid: true,
+        supplierNameConfidence: true,
+        supplierNifConfidence: true,
+        supplierIbanConfidence: true,
+        totalAmountConfidence: true,
+        issueDateConfidence: true,
+        dueDateConfidence: true,
+        metadata: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const columnRef = FIELD_COLUMN[dto.field];
+    const isMetadataField = columnRef.startsWith('__metadata');
+
+    // Capture the pre-write value for the audit diff. Metadata fields
+    // live inside the JSON column — fall through to the metadata
+    // reader so we get the actual stored string.
+    let previousValue: string | null = null;
+    if (dto.field === 'supplierName') previousValue = existing.supplier ?? null;
+    else if (dto.field === 'supplierNif') previousValue = existing.supplierNif ?? null;
+    else if (dto.field === 'supplierIban') previousValue = existing.iban ?? null;
+    else if (dto.field === 'totalAmount') {
+      previousValue = existing.total != null ? String(existing.total) : null;
+    } else if (dto.field === 'issueDate') {
+      previousValue = existing.docDate ? existing.docDate.toISOString().slice(0, 10) : null;
+    } else if (dto.field === 'dueDate') {
+      previousValue = existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : null;
+    } else if (dto.field === 'category' || dto.field === 'supplierAddress' || dto.field === 'supplierCountry') {
+      const metaKey =
+        dto.field === 'supplierAddress'
+          ? 'supplierAddress'
+          : dto.field === 'supplierCountry'
+          ? 'supplierCountry'
+          : 'filing';
+      if (dto.field === 'category') {
+        const filing = this.getNestedObject(existing.metadata, 'filing');
+        previousValue =
+          filing && typeof filing.expenseCategory === 'string' ? filing.expenseCategory : null;
+      } else {
+        previousValue = this.readMetadataString(existing.metadata, metaKey);
+      }
+    }
+
+    // Build the column-level update payload (only when the operator
+    // supplied a value). Empty-string and null are both valid "clear"
+    // semantics — we coerce "" → null so the column stays nullable.
+    let nextMetadata: Prisma.InputJsonValue | undefined;
+    let updateData: Prisma.DocumentUpdateInput = {};
+    let storedValue: string | null = dto.value ?? null;
+
+    if (dto.value !== undefined && !isMetadataField) {
+      if (dto.field === 'totalAmount') {
+        const decimal = this.parseDecimalOrThrow(dto.value);
+        updateData.total = decimal;
+        storedValue = decimal.toString();
+      } else if (dto.field === 'issueDate') {
+        updateData.docDate = new Date(dto.value);
+      } else if (dto.field === 'dueDate') {
+        updateData.dueDate = new Date(dto.value);
+      } else if (dto.field === 'supplierName') {
+        updateData.supplier = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierNif') {
+        updateData.supplierNif = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierIban') {
+        updateData.iban = dto.value === '' ? null : dto.value;
+      }
+    }
+
+    if (dto.value !== undefined && isMetadataField) {
+      const baseMeta =
+        existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+          ? (existing.metadata as Record<string, unknown>)
+          : {};
+      const nextMeta: Record<string, unknown> = { ...baseMeta };
+      if (dto.field === 'supplierAddress') {
+        nextMeta.supplierAddress = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierCountry') {
+        nextMeta.supplierCountry = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'category') {
+        const filing =
+          baseMeta.filing && typeof baseMeta.filing === 'object' && !Array.isArray(baseMeta.filing)
+            ? { ...(baseMeta.filing as Record<string, unknown>) }
+            : {};
+        if (dto.value === '') {
+          delete filing.expenseCategory;
+        } else {
+          filing.expenseCategory = dto.value;
+        }
+        filing.source = 'user';
+        nextMeta.filing = filing;
+      }
+      nextMetadata = nextMeta as Prisma.InputJsonValue;
+      updateData.metadata = nextMetadata;
+    }
+
+    // Write the column update (when applicable) + record the
+    // confirmation in the same call. Two operations, but Prisma does
+    // not expose a portable cross-table tx for an upsert + update
+    // without raw SQL, so we serialise them. A failure between the
+    // two leaves a stale "value set, no confirmation" row — the next
+    // confirm-field call still works (idempotent) and the operator
+    // can re-verify.
+    if (Object.keys(updateData).length > 0) {
+      await this.prisma.document.update({ where: { id }, data: updateData });
+    }
+
+    // Recompute nifValid / ibanValid when the corresponding column
+    // changed so the chip reflects the new value, not the stale one.
+    // Cheap (mod-11 / mod-97 are constant time) and the row is in
+    // memory already after the update.
+    if (
+      (dto.field === 'supplierNif' && dto.value !== undefined) ||
+      (dto.field === 'supplierIban' && dto.value !== undefined)
+    ) {
+      const nifValue =
+        dto.field === 'supplierNif'
+          ? dto.value
+          : (await this.prisma.document.findFirst({
+              where: { id, tenantId },
+              select: { supplierNif: true },
+            }))?.supplierNif ?? null;
+      const ibanValue =
+        dto.field === 'supplierIban'
+          ? dto.value
+          : (await this.prisma.document.findFirst({
+              where: { id, tenantId },
+              select: { iban: true },
+            }))?.iban ?? null;
+      await this.prisma.document.update({
+        where: { id },
+        data: {
+          nifValid: nifValue ? isValidPortugueseNif(nifValue) : null,
+          ibanValid: ibanValue ? isValidIban(ibanValue) : null,
+        },
+      });
+    }
+
+    const confirmedAt = new Date();
+    await this.prisma.documentFieldConfirmation.create({
+      data: {
+        tenantId,
+        documentId: id,
+        field: dto.field,
+        value: storedValue ?? '',
+        previousValue,
+        confirmedById: userId,
+        confirmedAt,
+      },
+    });
+
+    // Audit row: EDIT for value changes, lighter "no change" row for
+    // pure acknowledgements. Carries BEFORE/AFTER diff so the forensic
+    // trail survives even if the confirmation row is purged later.
+    //
+    // `dto.value` is optional — the operator may confirm the AI's
+    // read without overriding the value (a "looks good, move on"
+    // gesture). Treat undefined as "no change intent" so the audit
+    // row gets the no-change subAction; null vs a string is still
+    // considered a change because the operator explicitly cleared
+    // the column.
+    const valueChanged =
+      dto.value !== undefined && (dto.value ?? null) !== previousValue;
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: valueChanged
+          ? 'document.confirm_field'
+          : 'document.confirm_field_no_change',
+        field: dto.field,
+        previousValue,
+        newValue: storedValue,
+        valueChanged,
+        confirmedAt: confirmedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    return { ok: true, field: dto.field, confirmedAt: confirmedAt.toISOString() };
+  }
+
+  /**
+   * POST /documents/:id/confirm-all.
+   *
+   * Bulk confirm: write `supplierVerifiedAt = now()` and emit a single
+   * `AuditAction.CONFIRM` row carrying the list of confirmed fields.
+   * The individual field overrides (if any) should have been written
+   * ahead of time via `PATCH /confirm-field` — this endpoint just
+   * closes the loop and marks the supplier block verified.
+   *
+   * Idempotent: calling it twice is allowed and emits a second audit
+   * row tagged with `previousVerifiedAt` so the trail still reflects
+   * the operator's decision timeline.
+   */
+  async confirmAll(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: ConfirmAllDto,
+  ): Promise<{ ok: true; verifiedAt: string; confirmedFields: ReviewableField[] }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true, supplierVerifiedAt: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const verifiedAt = new Date();
+    // Sprint 1.B — flip status to PENDING_APPROVAL when the
+    // confirm-all action lands on a NOVO doc (mirrors verifySupplier
+    // so the workflow stays consistent regardless of which
+    // confirmation path the operator took).
+    const flipStatus =
+      existing.status === DocumentStatus.NOVO
+        ? DocumentStatus.PENDING_APPROVAL
+        : undefined;
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplierVerifiedAt: verifiedAt,
+        ...(flipStatus ? { status: flipStatus } : {}),
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.CONFIRM,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: 'document.confirm_all',
+        confirmedFields: dto.confirmedFields,
+        previousVerifiedAt: existing.supplierVerifiedAt?.toISOString() ?? null,
+        verifiedAt: verifiedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    return {
+      ok: true,
+      verifiedAt: verifiedAt.toISOString(),
+      confirmedFields: dto.confirmedFields ?? [],
+    };
+  }
+
+  /**
+   * Coerce a decimal string into a Prisma.Decimal. Throws a
+   * `BadRequestException` when the input is malformed so the
+   * controller returns a clean 400 instead of leaking a Prisma error.
+   */
+  private parseDecimalOrThrow(input: string): Prisma.Decimal {
+    if (typeof input !== 'string' || input.trim() === '') {
+      throw new BadRequestException('totalAmount must be a decimal string');
+    }
+    try {
+      return new Prisma.Decimal(input.trim());
+    } catch {
+      throw new BadRequestException(`totalAmount is not a valid decimal: ${input}`);
+    }
   }
 
   private async createPaymentEventIfMissing(

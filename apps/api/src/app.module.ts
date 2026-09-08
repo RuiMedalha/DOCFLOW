@@ -33,6 +33,9 @@ import { InboundModule } from './modules/inbound/inbound.module';
 import { ScannerModule } from './modules/scanner/scanner.module';
 import { EmailInboundModule } from './modules/email-inbound/email-inbound.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { SaftExportModule } from './modules/saft-export/saft-export.module';
+import { NifLookupModule } from './modules/nif-lookup/nif-lookup.module';
 import { ExtractionModule } from './modules/extraction/extraction.module';
 import { PartiesModule } from './modules/parties/parties.module';
 import { PartyCategoriesModule } from './modules/party-categories/party-categories.module';
@@ -150,6 +153,9 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
     ExtractionModule,
     ReconciliationModule,
     AuditModule,
+    ApprovalsModule,
+    SaftExportModule,
+    NifLookupModule,
     BankingModule,
     PartiesModule,
     PartyCategoriesModule,

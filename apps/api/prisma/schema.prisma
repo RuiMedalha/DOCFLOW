@@ -27,6 +27,12 @@ enum Role {
   GESTOR_RH
   OPERADOR
   APPROVER
+  // Sprint 1.C — dedicated role for the SAF-T exporter + NIF
+  // base lookup. Distinct from CONTABILIDADE so we can grant
+  // read-only access to accounting partners without exposing
+  // them to the operator write surface (which CONTABILIDADE
+  // already carries in some flows).
+  ACCOUNTANT
 }
 
 enum DocumentOrigin {
@@ -60,6 +66,12 @@ enum DocumentStatus {
   APROVADO
   REJEITADO
   ARQUIVADO
+  // Sprint 1.B — approval workflow states. The new values
+  // cover the PENDING → DECIDED lifecycle the approval
+  // module drives; ARQUIVADO/PROCESSADO/EM_REVISAO remain
+  // for legacy rows that pre-date the workflow.
+  PENDING_APPROVAL
+  CHANGES_REQUESTED
 }
 
 // Sprint H — async processing pipeline state machine.
@@ -151,6 +163,7 @@ enum AuditAction {
   DELETE
   APPROVE
   REJECT
+  CONFIRM
   IMPORT
   EXPORT
   RECONCILE
@@ -166,6 +179,15 @@ enum MatchType {
   STRONG
   MEDIUM
   WEAK
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+  // Operator withdrew their own request before a decision was made.
+  WITHDRAWN
 }
 
 enum MatchStatus {
@@ -308,6 +330,8 @@ model User {
   dealsCreated          Deal[]
   notifications         Notification[]
   payablesApproved      PayableItem[]   @relation("PayableApprovedBy")
+  approvalsRequested    Approval[]      @relation("ApprovalRequestedBy")
+  approvalsDecided      Approval[]      @relation("ApprovalDecidedBy")
 
   @@unique([tenantId, email])
   @@index([tenantId, role])
@@ -439,6 +463,27 @@ model Document {
   qrPayload      String?        // raw QR-AT decoded payload
   searchVector   Unsupported("tsvector") @default(dbgenerated("''::tsvector"))
 
+  // Sprint 1.A — per-field extraction confidence + structural validators.
+  // Populated by ExtractionService when the AI/vision provider returns a
+  // confidence hint (Gemini does; regex/fallback path leaves them null and
+  // the UI falls back to the global ocrConfidence). All nullable: legacy
+  // rows that pre-date the column stay NULL until the next re-extraction.
+  supplierNameConfidence     Float?
+  supplierNifConfidence      Float?
+  supplierIbanConfidence     Float?
+  supplierAddressConfidence  Float?
+  supplierCountryConfidence  Float?
+  totalAmountConfidence      Float?
+  issueDateConfidence        Float?
+  dueDateConfidence          Float?
+  categoryConfidence         Float?
+  // Structural validators run on the persisted value. Cheap to compute
+  // (mod-11 / mod-97) so the column is set alongside the confidence
+  // write. Used by the review screen for the green/yellow/red chip and
+  // by the audit trail to flag "AI says confident, validator disagrees".
+  nifValid  Boolean?
+  ibanValid Boolean?
+
   // Master data links
   partyId          String?
   party            Party?        @relation(fields: [partyId], references: [id])
@@ -496,6 +541,23 @@ model Document {
   payableItems     PayableItem[]
   journalLines     JournalLine[]
   matches          MatchSuggestion[]
+  fieldConfirmations DocumentFieldConfirmation[]
+  approvals        Approval[]
+
+  // Sprint 1.B — denormalised pointer to the latest OPEN
+  // approval for this document. Lets the UI render "X awaiting
+  // review" without scanning the full approvals[] history on every
+  // list query. Cleared (NULL) when the approval is decided or
+  // when the document is un-approved through a separate path.
+  //
+  // We intentionally do NOT declare a Prisma relation here: a true
+  // one-to-one would require @unique on the FK (only one doc can
+  // point to the same approval — fine), but the inverse side (one
+  // approval can back many documents in theory) does not match
+  // Prisma's one-to-one rule. We model it as a plain FK column +
+  // explicit lookup in the service layer. The DB-level FK still
+  // enforces the integrity.
+  currentApprovalId String?
 
   @@index([tenantId, status])
   @@index([tenantId, type])
@@ -532,6 +594,73 @@ model DocumentItem {
 
   @@index([documentId])
   @@map("document_items")
+}
+
+// Sprint 1.A — operator-confirmed field overrides recorded as immutable
+// rows so the audit trail can replay "who confirmed which field, when,
+// and with what value" without relying on the live Document snapshot.
+// One row per (documentId, field) pair — the latest write wins by
+// `confirmedAt DESC`, but rows are append-only (we never delete or
+// UPDATE these) so every historical confirmation survives even if the
+// Document row is hard-deleted later.
+model DocumentFieldConfirmation {
+  id            String   @id @default(cuid())
+  tenantId      String
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  field         String   // "supplierName" | "supplierNif" | "supplierIban" | ...
+  value         String   // confirmed value as a string (decimal/date are stringified)
+  previousValue String?  // optional pre-confirm snapshot — mirrors the diff in audit metadata
+  confirmedById String?  // nullable so a tenant-wide bulk confirm can record `userId=null`
+  confirmedAt   DateTime @default(now())
+
+  @@index([tenantId, documentId])
+  @@index([tenantId, documentId, field])
+  @@index([tenantId, confirmedAt])
+  @@map("document_field_confirmations")
+}
+
+// Sprint 1.B — approval workflow.
+//
+// One row per approval request. The lifecycle is:
+//   1. Operator calls POST /:id/request-approval → row inserted with
+//      status=PENDING, Document.currentApprovalId points here.
+//   2. An APPROVER/ADMIN user calls POST /approvals/:id/{approve,
+//      reject, request-changes}. The row is mutated atomically with
+//      Document.status in a single Prisma transaction.
+//   3. After a decision, the row stays in history but
+//      Document.currentApprovalId is cleared so the document is no
+//      longer "pending".
+//
+// Audit row carries the BEFORE/AFTER diff so the forensic trail
+// survives even if the approval row is later purged. The self-decide
+// guard prevents the requester from approving their own request —
+// enforced at the service layer (controller-level RBAC is not enough
+// because requesters are OPERADOR, who would otherwise be allowed
+// through the role gate on the decide endpoints).
+model Approval {
+  id            String         @id @default(cuid())
+  tenantId      String
+  documentId    String
+  document      Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  status        ApprovalStatus @default(PENDING)
+  requestedById String
+  requestedBy   User           @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
+  decidedById   String?
+  decidedBy     User?          @relation("ApprovalDecidedBy", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  comment       String?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, documentId])
+  @@index([tenantId, requestedById])
+  @@index([tenantId, decidedById])
+  @@index([tenantId, createdAt])
+  @@map("approvals")
 }
 
 model Folder {

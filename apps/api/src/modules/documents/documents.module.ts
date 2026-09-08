@@ -6,6 +6,7 @@ import { FolderRulesEngine } from './folder-rules/folder-rules.engine';
 import { StorageModule } from './storage/storage.module';
 import { ExtractionModule } from '../extraction/extraction.module';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
+import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
 
 /**
  * DocumentsModule — inbox + folder-rules + storage.
@@ -30,7 +31,15 @@ import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
  * `/documents` prefix.
  */
 @Module({
-  imports: [StorageModule, forwardRef(() => ExtractionModule)],
+  imports: [
+    StorageModule,
+    forwardRef(() => ExtractionModule),
+    // Sprint 1.C — supplier re-extract enriches with the
+    // Portal das Finanças base when the AI left fields at
+    // low confidence. The import is forward-safe: NifLookupModule
+    // does not import DocumentsModule.
+    NifLookupModule,
+  ],
   controllers: [DocumentsController, SupplierController],
   providers: [DocumentsService, FolderRulesEngine, ImageToPdfService],
   exports: [DocumentsService, FolderRulesEngine, ImageToPdfService],

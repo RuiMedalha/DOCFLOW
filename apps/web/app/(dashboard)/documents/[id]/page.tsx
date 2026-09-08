@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   AlertCircle,
@@ -33,6 +33,8 @@ import {
   Save,
   UserCheck,
   Trash2,
+  FileSearch,
+  ExternalLink,
 } from 'lucide-react';
 import { DocumentViewer } from './_components/document-viewer';
 import { FieldPanel } from './_components/field-panel';
@@ -60,6 +62,45 @@ import {
 } from './_lib/use-document-detail';
 import type { ExtractedFields } from './_components/field-panel';
 import { useUser } from '@/_lib/use-dashboard-queries';
+
+// Approval-workflow types + helpers (Sprint 1.B). The full data
+// model lives in the approvals module — we mirror only the slice
+// the detail page renders.
+type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CHANGES_REQUESTED' | 'WITHDRAWN';
+
+interface ApprovalListItem {
+  id: string;
+  documentId: string;
+  status: ApprovalStatus;
+  requestedById: string;
+  requestedByName?: string;
+  decidedById?: string | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  comment?: string | null;
+  createdAt: string;
+  documentLabel: string;
+  supplierName?: string | null;
+  totalAmount?: number | null;
+}
+
+async function approvalsApiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // We re-derive API_BASE here to avoid widening the sibling hooks
+  // file. Both halves of the dashboard share the same backend URL.
+  const apiBase =
+    (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '')) ||
+    'http://localhost:4000/api/v1';
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { authedFetch } = await import('../../../_lib/auth-refresh');
+  const res = await authedFetch(`${apiBase}${path}`, init);
+  if (!res.ok) {
+    let body: any = {};
+    try { body = await res.json(); } catch { /* ignore */ }
+    throw new Error(body?.message ?? `HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return (json?.data ?? json) as T;
+}
 
 /** Split "FT 2026/1234" → { "FT" (gold), "2026/1234" (navy) } for the anchor. */
 function splitDocNumber(raw: string | null | undefined): { prefix: string; rest: string } {
@@ -105,6 +146,67 @@ export default function DocumentDetailPage() {
   const hardDelete = useHardDeleteDocument();
   const softDelete = useSoftDeleteDocument();
 
+  // Sprint 1.B — approval workflow hooks. Approval history is read
+  // directly from the approvals endpoint so the detail page does
+  // not need a new field on the Document payload. The latest
+  // PENDING row (if any) drives the approve / reject / request-changes
+  // action group visible to APPROVER/ADMIN.
+  const approvalHistoryQuery = useQuery({
+    queryKey: ['document-approval-history', id],
+    queryFn: () => approvalsApiFetch<ApprovalListItem[]>(`/documents/${id}/approval-history`),
+    enabled: !!id,
+    refetchInterval: 30000,
+  });
+  const currentApproval = useMemo(() => {
+    const list = approvalHistoryQuery.data ?? [];
+    return list.find((a) => a.status === 'PENDING') ?? null;
+  }, [approvalHistoryQuery.data]);
+  const requestApproval = useMutation({
+    mutationFn: (comment?: string) =>
+      approvalsApiFetch<{ approvalId: string; verifiedAt: string }>(
+        `/documents/${id}/request-approval`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comment }),
+        },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['document-approval-history', id] });
+      qc.invalidateQueries({ queryKey: ['document-detail', id] });
+      qc.invalidateQueries({ queryKey: ['approvals'] });
+      toastBus.success('Pedido de aprovação enviado.');
+    },
+    onError: (err: any) => {
+      toastBus.error(typeof err?.message === 'string' ? err.message : 'Falha ao solicitar aprovação.');
+    },
+  });
+  const decideApproval = useMutation({
+    mutationFn: ({
+      approvalId,
+      action,
+      comment,
+    }: {
+      approvalId: string;
+      action: 'approve' | 'reject' | 'request-changes';
+      comment?: string;
+    }) =>
+      approvalsApiFetch(`/approvals/${approvalId}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
+      }),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ['document-approval-history', id] });
+      qc.invalidateQueries({ queryKey: ['approvals'] });
+      qc.invalidateQueries({ queryKey: ['document-detail', id] });
+      toastBus.success('Decisão registada.');
+    },
+    onError: (err: any) => {
+      toastBus.error(typeof err?.message === 'string' ? err.message : 'Falha ao decidir.');
+    },
+  });
+
   // Role gating for line-item editing. Backend enforces the same gate
   // (Role.ADMIN / Role.OPERADOR) — we mirror it here so the UI doesn't
   // expose controls that would 403 on submit.
@@ -146,6 +248,12 @@ export default function DocumentDetailPage() {
   // parent can orchestrate the mutation + toastBus feedback (mirrors
   // the hard-delete / soft-delete pattern).
   const [pendingReExtract, setPendingReExtract] = useState(false);
+
+  // Sprint 1.B — pending approve decision (reject + request-changes
+  // need a comment; the modal lives below the page body).
+  const [pendingApprovalDecision, setPendingApprovalDecision] = useState<
+    { approval: ApprovalListItem; action: 'reject' | 'request-changes'; comment: string } | null
+  >(null);
 
   // Local optimistic field state — flushed to the server via Save.
   const doc = bundle.data?.document;
@@ -534,6 +642,9 @@ export default function DocumentDetailPage() {
     },
     CONCILIADO: { copy: 'Conciliado · ver extrato', tone: 'ok', icon: 'check' },
     PAGO: { copy: 'Pago · ver recibo', tone: 'ok', icon: 'check' },
+    // Sprint 1.B — approval workflow states.
+    PENDING_APPROVAL: { copy: 'A aguardar aprovação', tone: 'warn', icon: 'shield' },
+    CHANGES_REQUESTED: { copy: 'Mudanças solicitadas', tone: 'alert', icon: 'x' },
   };
   const hero = heroStatusCopy[doc.status as keyof typeof heroStatusCopy];
 
@@ -753,8 +864,146 @@ export default function DocumentDetailPage() {
 
         {/* RIGHT (col-span-8) — FieldPanel */}
         <section className="xl:col-span-8" style={{ borderLeft: '1px solid var(--ed-rule)', paddingLeft: '40px' }}>
+          {/* Sprint 1.B — approval status badge. Sits above the
+              primary actions so the operator sees the workflow
+              state at a glance. Hidden when the doc is still NOVO
+              (nothing to review / nothing to decide yet). */}
+          {doc.status !== 'NOVO' && doc.status !== 'EM_REVISAO' && (
+            <div
+              className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 text-xs"
+              style={{
+                background:
+                  doc.status === 'APROVADO' || doc.status === 'CONCILIADO' || doc.status === 'PAGO'
+                    ? 'rgba(79, 121, 66, 0.10)'
+                    : doc.status === 'REJEITADO' || doc.status === 'CHANGES_REQUESTED'
+                    ? 'rgba(139, 46, 42, 0.10)'
+                    : 'var(--ed-accent-gold-dim)',
+                color:
+                  doc.status === 'APROVADO' || doc.status === 'CONCILIADO' || doc.status === 'PAGO'
+                    ? 'var(--ed-status-ok)'
+                    : doc.status === 'REJEITADO' || doc.status === 'CHANGES_REQUESTED'
+                    ? 'var(--ed-status-alert)'
+                    : 'var(--ed-accent-gold)',
+                borderRadius: 'var(--ed-radius-chip)',
+                fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                letterSpacing: '0.06em',
+              }}
+              data-testid="approval-status-badge"
+              data-status={doc.status}
+            >
+              <ShieldCheck size={14} aria-hidden="true" />
+              <span className="font-medium uppercase">{doc.status.replace(/_/g, ' ')}</span>
+              {currentApproval && (doc.status as string) === 'PENDING_APPROVAL' && (
+                <span className="text-[10px]" style={{ color: 'var(--ed-ink-faint)' }}>
+                  · pedido #{currentApproval.id.slice(0, 6)}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Primary actions — pinned at the top of the right column */}
           <div className="flex items-center justify-end gap-2 mb-8">
+            {/* Sprint 1.B — "Solicitar aprovação" button. Visible when
+                status===NOVO + supplierVerifiedAt is set. The backend
+                enforces both checks again at 400/409. */}
+            {!isApproved && doc.status === 'NOVO' && doc.supplierVerifiedAt && (
+              <button
+                type="button"
+                onClick={() => requestApproval.mutate()}
+                disabled={requestApproval.isPending}
+                aria-busy={requestApproval.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--ed-status-ok)',
+                  border: '1px solid var(--ed-status-ok)',
+                  borderRadius: 'var(--ed-radius-chip)',
+                }}
+                title="Submeter este documento para aprovação de um revisor"
+                data-testid="approval-request-button"
+              >
+                <ShieldCheck size={14} aria-hidden="true" />
+                {requestApproval.isPending ? 'A enviar…' : 'Solicitar aprovação'}
+              </button>
+            )}
+
+            {/* Sprint 1.B — approver action group. Visible when the
+                doc has a PENDING approval AND the caller is
+                ADMIN/APPROVER AND is not the requester (self-decide
+                guard mirrors the backend). The approve button
+                fires immediately; reject/request-changes open a
+                comment modal via the state below. */}
+            {currentApproval && (user?.role === 'ADMIN' || user?.role === 'APPROVER') && currentApproval.requestedById !== user?.id && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => decideApproval.mutate({ approvalId: currentApproval.id, action: 'approve' })}
+                  disabled={decideApproval.isPending}
+                  aria-busy={decideApproval.isPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ed-status-ok)',
+                    border: '1px solid var(--ed-status-ok)',
+                    borderRadius: 'var(--ed-radius-chip)',
+                  }}
+                  data-testid="approval-decide-approve-button"
+                >
+                  <Check size={14} aria-hidden="true" />
+                  {decideApproval.isPending ? 'A decidir…' : 'Aprovar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingApprovalDecision({ approval: currentApproval, action: 'reject', comment: '' })}
+                  disabled={decideApproval.isPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ed-status-alert)',
+                    border: '1px solid var(--ed-status-alert)',
+                    borderRadius: 'var(--ed-radius-chip)',
+                  }}
+                  data-testid="approval-decide-reject-button"
+                >
+                  <XIcon size={14} aria-hidden="true" />
+                  Rejeitar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingApprovalDecision({ approval: currentApproval, action: 'request-changes', comment: '' })}
+                  disabled={decideApproval.isPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ed-ink-soft)',
+                    border: '1px solid var(--ed-rule-strong)',
+                    borderRadius: 'var(--ed-radius-chip)',
+                  }}
+                  data-testid="approval-decide-request-changes-button"
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  Pedir mudanças
+                </button>
+              </>
+            )}
+            {!isApproved && (
+              <button
+                type="button"
+                onClick={() => router.push(`/documents/${id}/review`)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--ed-ink-soft)',
+                  border: '1px solid var(--ed-rule-strong)',
+                  borderRadius: 'var(--ed-radius-chip)',
+                }}
+                title="Abrir ecrã de revisão com confiança por campo"
+                data-testid="review-link-button"
+              >
+                <FileSearch size={14} aria-hidden="true" />
+                Revisar extração
+              </button>
+            )}
             {!isApproved && (
               <button
                 type="button"
@@ -956,12 +1205,56 @@ export default function DocumentDetailPage() {
                 />
                 {reExtractSupplier.isPending ? 'A re-extrair…' : 'Re-extrair com IA'}
               </button>
+              {doc.partyId && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/suppliers/${doc.partyId}`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--ed-ink-soft)',
+                    border: '1px solid var(--ed-rule-strong)',
+                    borderRadius: 'var(--ed-radius-chip)',
+                  }}
+                  data-testid="supplier-file-link-button"
+                  title="Abrir a ficha completa do fornecedor (inclui Validar NIF)"
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                  Ficha do fornecedor
+                </button>
+              )}
             </div>
 
             <SupplierManualEditSection
               documentId={id}
               supplier={doc}
               disabled={isApproved}
+            />
+          </section>
+
+          {/* Sprint 1.B — approval timeline. Full history; the
+              latest PENDING row is already exposed via
+              `currentApproval`. The widget collapses to a single
+              "sem pedidos ainda" line when the history is empty. */}
+          <section
+            aria-label="Histórico de aprovações"
+            className="mt-10 space-y-4"
+            style={{ borderTop: '1px solid var(--ed-rule)', paddingTop: '32px' }}
+          >
+            <h3
+              className="uppercase font-medium"
+              style={{
+                fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                fontSize: '13px',
+                letterSpacing: '0.14em',
+                color: 'var(--ed-ink-faint)',
+              }}
+            >
+              Histórico de aprovações
+            </h3>
+            <ApprovalTimeline
+              history={approvalHistoryQuery.data ?? []}
+              loading={approvalHistoryQuery.isLoading}
             />
           </section>
         </section>
@@ -1221,6 +1514,207 @@ export default function DocumentDetailPage() {
           qc.invalidateQueries({ queryKey: ['document-detail', id] });
         }}
       />
+
+      {/* Sprint 1.B — reject / request-changes comment modal. The
+          approve action does not need a dialog (comment optional);
+          reject + request-changes require a non-empty comment that
+          lands in the audit row. */}
+      <Dialog
+        open={pendingApprovalDecision !== null}
+        onClose={() => {
+          if (decideApproval.isPending) return;
+          setPendingApprovalDecision(null);
+        }}
+        title={
+          pendingApprovalDecision?.action === 'reject'
+            ? 'Rejeitar pedido de aprovação'
+            : 'Pedir mudanças'
+        }
+        description="O comentário é obrigatório e fica no histórico de auditoria."
+        size="sm"
+      >
+        {pendingApprovalDecision && (
+          <div className="space-y-4">
+            <p className="text-sm" style={{ color: 'var(--ed-ink-soft)' }}>
+              Pedido #{pendingApprovalDecision.approval.id.slice(0, 8)} —{' '}
+              <span className="font-mono" style={{ color: 'var(--ed-ink)' }}>
+                {doc.fileName ?? id}
+              </span>
+            </p>
+            <textarea
+              value={pendingApprovalDecision.comment}
+              onChange={(e) =>
+                setPendingApprovalDecision((prev) =>
+                  prev ? { ...prev, comment: e.target.value } : prev,
+                )
+              }
+              rows={4}
+              maxLength={1000}
+              placeholder={
+                pendingApprovalDecision.action === 'reject'
+                  ? 'Porquê que este pedido está a ser rejeitado…'
+                  : 'Que mudanças são necessárias no documento…'
+              }
+              className="w-full px-2 py-1.5 text-sm border rounded"
+              style={{
+                borderColor: 'var(--ed-rule-strong)',
+                background: 'var(--ed-card, #fff)',
+                color: 'var(--ed-ink)',
+              }}
+              data-testid="approval-decide-comment-input"
+              autoFocus
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingApprovalDecision(null)}
+                disabled={decideApproval.isPending}
+                className="btn-secondary text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const trimmed = pendingApprovalDecision.comment.trim();
+                  if (!trimmed) {
+                    toastBus.error('O comentário é obrigatório.');
+                    return;
+                  }
+                  decideApproval.mutate({
+                    approvalId: pendingApprovalDecision.approval.id,
+                    action: pendingApprovalDecision.action,
+                    comment: trimmed,
+                  });
+                }}
+                disabled={
+                  decideApproval.isPending || pendingApprovalDecision.comment.trim().length === 0
+                }
+                aria-busy={decideApproval.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-opacity disabled:opacity-50"
+                style={{
+                  background:
+                    pendingApprovalDecision.action === 'reject'
+                      ? 'var(--ed-status-alert)'
+                      : 'var(--ed-accent-gold)',
+                  color: pendingApprovalDecision.action === 'reject' ? '#fff' : 'var(--ed-ink)',
+                  borderRadius: 'var(--ed-radius-chip)',
+                }}
+                data-testid="approval-decide-comment-submit"
+              >
+                {decideApproval.isPending ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                ) : pendingApprovalDecision.action === 'reject' ? (
+                  <XIcon size={14} aria-hidden="true" />
+                ) : (
+                  <RefreshCw size={14} aria-hidden="true" />
+                )}
+                {decideApproval.isPending
+                  ? 'A registar…'
+                  : pendingApprovalDecision.action === 'reject'
+                  ? 'Rejeitar'
+                  : 'Pedir mudanças'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Dialog>
     </div>
+  );
+}
+
+/**
+ * ApprovalTimeline — local presentation helper for the
+ * approval-history widget. Self-contained so the rest of the
+ * detail page does not need to know the shape.
+ */
+function ApprovalTimeline({
+  history,
+  loading,
+}: {
+  history: ApprovalListItem[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <p className="text-xs" style={{ color: 'var(--ed-ink-faint)' }}>
+        A carregar histórico…
+      </p>
+    );
+  }
+  if (history.length === 0) {
+    return (
+      <p className="text-xs" style={{ color: 'var(--ed-ink-faint)' }} data-testid="approval-timeline-empty">
+        Sem pedidos de aprovação ainda.
+      </p>
+    );
+  }
+  return (
+    <ol className="space-y-3" data-testid="approval-timeline">
+      {history.map((row) => (
+        <li
+          key={row.id}
+          className="flex items-start gap-3 text-sm"
+          style={{ borderBottom: '1px solid var(--ed-rule)', paddingBottom: '12px' }}
+          data-testid={`approval-timeline-row-${row.id}`}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full flex-shrink-0 mt-2"
+            style={{
+              background:
+                row.status === 'APPROVED'
+                  ? 'var(--ed-status-ok)'
+                  : row.status === 'REJECTED'
+                  ? 'var(--ed-status-alert)'
+                  : row.status === 'PENDING'
+                  ? 'var(--ed-accent-gold)'
+                  : 'var(--ed-ink-faint)',
+            }}
+            aria-hidden="true"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span
+                className="text-[11px] uppercase tracking-wider font-medium"
+                style={{ color: 'var(--ed-ink-soft)' }}
+              >
+                {row.status.replace(/_/g, ' ')}
+              </span>
+              <span
+                className="text-[11px]"
+                style={{ color: 'var(--ed-ink-faint)' }}
+              >
+                · {new Date(row.createdAt).toLocaleString('pt-PT')}
+              </span>
+            </div>
+            <p className="text-sm" style={{ color: 'var(--ed-ink)' }}>
+              Solicitado por{' '}
+              <span className="font-medium">
+                {row.requestedByName ?? row.requestedById.slice(0, 8)}
+              </span>
+              {row.decidedByName && (
+                <>
+                  {' · decidido por '}
+                  <span className="font-medium">{row.decidedByName}</span>
+                  {row.decidedAt && (
+                    <span className="text-[11px]" style={{ color: 'var(--ed-ink-faint)' }}>
+                      {' '}em {new Date(row.decidedAt).toLocaleString('pt-PT')}
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+            {row.comment && (
+              <p
+                className="mt-1 text-[13px] italic"
+                style={{ color: 'var(--ed-ink-soft)' }}
+              >
+                “{row.comment}”
+              </p>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

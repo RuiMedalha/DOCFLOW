@@ -37,6 +37,20 @@ async function main() {
     },
   });
 
+  // Sprint 1.B — Approver demo user. The role already exists in the
+  // `Role` enum (APPROVER); we just materialise a row the UI can
+  // use to exercise the approval-decision endpoints. Same password
+  // as ADMIN for the demo fixture — production uses SSO + per-user
+  // secrets.
+  await prisma.user.upsert({
+    where: { tenantId_email: { tenantId: tenant.id, email: 'approver@demo.pt' } },
+    update: { passwordHash, name: 'Approver Demo', role: Role.APPROVER, isActive: true },
+    create: {
+      tenantId: tenant.id, email: 'approver@demo.pt', passwordHash,
+      name: 'Approver Demo', role: Role.APPROVER, canApprovePayments: true,
+    },
+  });
+
   for (const account of ACCOUNTS) {
     await prisma.account.upsert({
       where: { tenantId_code: { tenantId: tenant.id, code: account.code } },

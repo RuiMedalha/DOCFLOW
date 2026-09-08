@@ -1,0 +1,885 @@
+[0] type=skill name=llm-prompt-optimizer key=["skill","llm-prompt-optimizer"]
+    Use when improving prompts for any LLM. Applies proven prompt engineering techniques to boost output quality, reduce hallucinations, and cut token usage.
+
+[1] type=skill name=llm-structured-output key=["skill","llm-structured-output"]
+    Get reliable JSON, enums, and typed objects from LLMs using response_format, tool_use, and schema-constrained decoding across OpenAI, Anthropic, and Google APIs.
+
+[2] type=skill name=local-legal-seo-audit key=["skill","local-legal-seo-audit"]
+    Audit and improve local SEO for law firms, attorneys, forensic experts and legal/professional services sites with local presence, focusing on GBP, directories, E-E-A-T and practice/location pages.
+
+[3] type=skill name=local-llm-expert key=["skill","local-llm-expert"]
+    Master local LLM inference, model selection, VRAM optimization, and local deployment using Ollama, llama.cpp, vLLM, and LM Studio. Expert in quantization formats (GGUF, EXL2) and local AI privacy.
+
+[4] type=skill name=logic-diff key=["skill","logic-diff"]
+    Compare two code versions for semantic equivalence via semi-formal tracing of both versions side-by-side. Trigger when the user shares a refactor, rewrite, migration, or A/B implementation and wants to confirm behavior is unchanged — "did I break anything", "is this equivalent", "are...
+
+[5] type=skill name=logic-explain key=["skill","logic-explain"]
+    Explain what a specific piece of code actually does for a given input by producing a step-by-step execution trace (interprocedural, with name resolution and type transitions). Trigger when the user is confused about behavior or asks why code produces X instead of Y — "walk me through...
+
+[6] type=skill name=logic-fix-all key=["skill","logic-fix-all"]
+    Autonomous repository-wide audit-and-fix pipeline: health → review → locate/explain → fix → diff-verify → iterate until clean. Starts with a mandatory consent prompt (token-intensive); after consent runs hands-free. Trigger when the user wants ALL logic issues found and fixed — "fix...
+
+[7] type=skill name=logic-lens key=["skill","logic-lens"]
+    AI-powered Claude Code skill that performs deep code review using formal logic and reasoning frameworks to detect bugs, anti-patterns, and security risks beyond what linters catch.
+
+[8] type=skill name=logic-locate key=["skill","logic-locate"]
+    Locate the root cause of a CONFIRMED failure via backward-then-forward semi-formal tracing. Trigger when the user provides a stack trace, failing assertion, error message, or specific wrong-value observation — "find the bug", "this test is failing", "track down this crash", "why is...
+
+[9] type=skill name=logic-review key=["skill","logic-review"]
+    Find logic bugs in a single file or function via semi-formal execution tracing (Premises → Trace → Divergence → Trigger → Remedy). Trigger when a user shares code and suspects something is wrong without naming a concrete failure — phrases like "review this", "does this look right",...
+
+[10] type=skill name=logistics-exception-management key=["skill","logistics-exception-management"]
+    Codified expertise for handling freight exceptions, shipment delays, damages, losses, and carrier disputes. Informed by logistics professionals with 15+ years operational experience.
+
+[11] type=skill name=loki-mode key=["skill","loki-mode"]
+    Version 2.35.0 | PRD to Production | Zero Human Intervention > Research-enhanced: OpenAI SDK, DeepMind, Anthropic, AWS Bedrock, Agent SDK, HN Production (2025)
+
+[12] type=skill name=longbridge key=["skill","longbridge"]
+    125+ agent skills for Longbridge Securities — real-time quotes, charts, fundamentals, portfolio analysis, options, and more for HK/US/A-share/SG markets. Trilingual: Simplified Chinese, Traditional Chinese, English.
+
+[13] type=skill name=longbridge-content key=["skill","longbridge-content"]
+    Latest news articles, regulatory filings, community discussion topics for listed stocks, and SEC EDGAR filing analysis (10-K/10-Q/8-K/proxy/Form 4) via Longbridge. Triggers: "新闻", "公告", "资讯", "话题", "社区讨论", "SEC", "10-K", "10-Q", "8-K", "Form 4", "新聞", "公告", "資訊", "話題", "社區討論", "news",...
+
+[14] type=skill name=longbridge-fundamentals key=["skill","longbridge-fundamentals"]
+    Financial statements, business segments, dividends, valuation multiples (PE/PB/PS), industry comparison, operating data, corporate actions, company and executive profiles, cross-stock comparison, and valuation ranking via Longbridge. Also: DCF models, value investing screens (low...
+
+[15] type=skill name=longbridge-market-data key=["skill","longbridge-market-data"]
+    Real-time quotes, K-line charts, order book, trade ticks, intraday capital flow, market sentiment temperature, trading session schedule, security lists, exchange rates, and IPO calendar for HK/US/A-share/SG via Longbridge. Also covers ADR premium and FX carry frameworks. Triggers:...
+
+[16] type=skill name=lookdev key=["skill","lookdev"]
+    Human-in-the-loop web studio to tune AI-generated output by eye. Stand up a local interactive studio (sliders, pickers, drag handles) or an inline edit/highlight/comment annotation studio for prose & media, instead of guessing values or shipping a static comparison grid.
+
+[17] type=skill name=lookdev-auto key=["skill","lookdev-auto"]
+    Automated visual tuning: a vision or video model rates rendered variants in a loop. Render several labeled variants into one artifact, ask the model to rate them and suggest better values, render the suggestions, ask it to pick the best, repeat until good — the model is the eye, you run the loop.
+
+[18] type=skill name=loop-library key=["skill","loop-library"]
+    Find, compare, adapt, and design bounded AI-agent feedback loops with explicit checks, stop rules, guardrails, and handoffs.
+
+[19] type=skill name=loopy key=["skill","loopy"]
+    Discover, find, compare, audit, repair, adapt, craft, run, debrief, and prepare repeatable AI-agent loops for publication. Use when a user asks to analyze code or coding threads for recurring work, find a published loop, interview them to turn a goal into a bounded loop, review a loop...
+
+[20] type=skill name=lore key=["skill","lore"]
+    Markdown project memory for AI agents. Use for decisions, architecture, conventions, monorepo scopes, `.lore/`, or `lore` commands; not native `/init`/`/compact` or generic init/compress/audit/query.
+
+[21] type=skill name=loss-aversion-designer key=["skill","loss-aversion-designer"]
+    One sentence - what this skill does and when to invoke it
+
+[22] type=skill name=lovable-cleanup key=["skill","lovable-cleanup"]
+    Audits and strips Lovable scaffolding from Vite + React projects — removes lovable-tagger, swaps placeholder assets, prunes unused Radix deps, and cleans generated docs so the codebase ships as yours.
+
+[23] type=skill name=luna key=["skill","luna"]
+    Reviews code for objective correctness, security, and reliability.
+
+[24] type=skill name=m365-agents-dotnet key=["skill","m365-agents-dotnet"]
+    Microsoft 365 Agents SDK for .NET. Build multichannel agents for Teams/M365/Copilot Studio with ASP.NET Core hosting, AgentApplication routing, and MSAL-based auth.
+
+[25] type=skill name=m365-agents-py key=["skill","m365-agents-py"]
+    Microsoft 365 Agents SDK for Python. Build multichannel agents for Teams/M365/Copilot Studio with aiohttp hosting, AgentApplication routing, streaming responses, and MSAL-based auth.
+
+[26] type=skill name=m365-agents-ts key=["skill","m365-agents-ts"]
+    Microsoft 365 Agents SDK for TypeScript/Node.js.
+
+[27] type=skill name=machine-learning-ops-ml-pipeline key=["skill","machine-learning-ops-ml-pipeline"]
+    Design and implement a complete ML pipeline for: $ARGUMENTS
+
+[28] type=skill name=macos-menubar-tuist-app key=["skill","macos-menubar-tuist-app"]
+    Build, refactor, or review SwiftUI macOS menubar apps that use Tuist.
+
+[29] type=skill name=macos-screen-recorder key=["skill","macos-screen-recorder"]
+    macOS screen recorder that captures the main display PLUS system audio via ScreenCaptureKit — no BlackHole/loopback driver, no sudo, just the standard Screen Recording permission. CLI-driven; fills the headless-screen-recording-with-system-sound gap QuickTime and `screencapture -v` can't.
+
+[30] type=skill name=macos-spm-app-packaging key=["skill","macos-spm-app-packaging"]
+    Scaffold, build, sign, and package SwiftPM macOS apps without Xcode projects.
+
+[31] type=skill name=magic-animator key=["skill","magic-animator"]
+    (no frontmatter)
+
+[32] type=skill name=magic-ui-generator key=["skill","magic-ui-generator"]
+    (no frontmatter)
+
+[33] type=skill name=mailchimp-automation key=["skill","mailchimp-automation"]
+    Automate Mailchimp email marketing including campaigns, audiences, subscribers, segments, and analytics via Rube MCP (Composio). Always search tools first for current schemas.
+
+[34] type=skill name=mailtrap-managing-contacts key=["skill","mailtrap-managing-contacts"]
+    Manage Mailtrap contacts, lists, segments, custom fields, imports, CRM syncs, and campaign audiences through the UI or API.
+
+[35] type=skill name=mailtrap-sending-emails key=["skill","mailtrap-sending-emails"]
+    Configure or troubleshoot Mailtrap live email sending with Email API, SMTP, transactional streams, bulk streams, or batches.
+
+[36] type=skill name=mailtrap-setting-up-sending-domain key=["skill","mailtrap-setting-up-sending-domain"]
+    Add or verify a Mailtrap sending domain, troubleshoot DNS propagation, publish SPF/DKIM/DMARC records, and complete compliance.
+
+[37] type=skill name=mailtrap-testing-with-sandbox key=["skill","mailtrap-testing-with-sandbox"]
+    Capture outbound email in Mailtrap Email Sandbox for development, staging, CI, HTML inspection, spam checks, and fake inbox tests.
+
+[38] type=skill name=make-automation key=["skill","make-automation"]
+    Automate Make (Integromat) tasks via Rube MCP (Composio): operations, enums, language and timezone lookups. Always search tools first for current schemas.
+
+[39] type=skill name=make-plan key=["skill","make-plan"]
+    Create a detailed, phased implementation plan with documentation discovery. Use when asked to plan a feature, task, or multi-step implementation — especially before executing with do.
+
+[40] type=skill name=makepad-animation key=["skill","makepad-animation"]
+    CRITICAL: Use for Makepad animation system. Triggers on: makepad animation, makepad animator, makepad hover, makepad state, makepad transition, "from: { all: Forward", makepad pressed, makepad 动画, makepad 状态, makepad 过渡, makepad 悬停效果
+
+[41] type=skill name=makepad-basics key=["skill","makepad-basics"]
+    CRITICAL: Use for Makepad getting started and app structure. Triggers on: makepad, makepad getting started, makepad tutorial, live_design!, app_main!, makepad project setup, makepad hello world, "how to create makepad app", makepad 入门, 创建 makepad 应用, makepad 教程, makepad 项目结构
+
+[42] type=skill name=makepad-deployment key=["skill","makepad-deployment"]
+    CRITICAL: Use for Makepad packaging and deployment. Triggers on: deploy, package, APK, IPA, 打包, 部署, cargo-packager, cargo-makepad, WASM, Android, iOS, distribution, installer, .deb, .dmg, .nsis, GitHub Actions, CI, action, marketplace
+
+[43] type=skill name=makepad-dsl key=["skill","makepad-dsl"]
+    CRITICAL: Use for Makepad DSL syntax and inheritance. Triggers on: makepad dsl, live_design, makepad inheritance, makepad prototype, "<Widget>", "Foo = { }", makepad object, makepad property, makepad DSL 语法, makepad 继承, makepad 原型, 如何定义 makepad 组件
+
+[44] type=skill name=makepad-event-action key=["skill","makepad-event-action"]
+    CRITICAL: Use for Makepad event and action handling. Triggers on: makepad event, makepad action, Event enum, ActionTrait, handle_event, MouseDown, KeyDown, TouchUpdate, Hit, FingerDown, post_action, makepad 事件, makepad action, 事件处理
+
+[45] type=skill name=makepad-font key=["skill","makepad-font"]
+    CRITICAL: Use for Makepad font and text rendering. Triggers on: makepad font, makepad text, makepad glyph, makepad typography, font atlas, text layout, font family, font size, text shaping, makepad 字体, makepad 文字, makepad 排版, makepad 字形
+
+[46] type=skill name=makepad-layout key=["skill","makepad-layout"]
+    CRITICAL: Use for Makepad layout system. Triggers on: makepad layout, makepad width, makepad height, makepad flex, makepad padding, makepad margin, makepad flow, makepad align, Fit, Fill, Size, Walk, "how to center in makepad", makepad 布局, makepad 宽度, makepad 对齐, makepad 居中
+
+[47] type=skill name=makepad-platform key=["skill","makepad-platform"]
+    CRITICAL: Use for Makepad cross-platform support. Triggers on: makepad platform, makepad os, makepad macos, makepad windows, makepad linux, makepad android, makepad ios, makepad web, makepad wasm, makepad metal, makepad d3d11, makepad opengl, makepad webgl, OsType, CxOs, makepad 跨平台, makepad 平台支持
+
+[48] type=skill name=makepad-reference key=["skill","makepad-reference"]
+    This category provides reference materials for debugging, code quality, and advanced layout patterns.
+
+[49] type=skill name=makepad-shaders key=["skill","makepad-shaders"]
+    CRITICAL: Use for Makepad shader system. Triggers on: makepad shader, makepad draw_bg, Sdf2d, makepad pixel, makepad glsl, makepad sdf, draw_quad, makepad gpu, makepad 着色器, makepad shader 语法, makepad 绘制
+
+[50] type=skill name=makepad-skills key=["skill","makepad-skills"]
+    Makepad UI development skills for Rust apps: setup, patterns, shaders, packaging, and troubleshooting.
+
+[51] type=skill name=makepad-splash key=["skill","makepad-splash"]
+    CRITICAL: Use for Makepad Splash scripting language. Triggers on: splash language, makepad script, makepad scripting, script!, cx.eval, makepad dynamic, makepad AI, splash 语言, makepad 脚本
+
+[52] type=skill name=makepad-widgets key=["skill","makepad-widgets"]
+    Version: makepad-widgets (dev branch) | Last Updated: 2026-01-19 > > Check for updates: https://crates.io/crates/makepad-widgets
+
+[53] type=skill name=malware-analyst key=["skill","malware-analyst"]
+    Expert malware analyst specializing in defensive malware research, threat intelligence, and incident response. Masters sandbox analysis, behavioral analysis, and malware family identification.
+
+[54] type=skill name=manage-skills key=["skill","manage-skills"]
+    Discover, list, create, edit, toggle, copy, move, and delete AI agent skills across 11 tools (Cursor, Claude, Agents, Windsurf, Copilot, Codex, Cline, Aider, Continue, Roo Code, Augment)
+
+[55] type=skill name=manifest key=["skill","manifest"]
+    Install and configure the Manifest observability plugin for your agents. Use when setting up telemetry, configuring API keys, or troubleshooting the plugin.
+
+[56] type=skill name=markdown-rendering key=["skill","markdown-rendering"]
+    Open Markdown reliably in cmux panes and recover from blank rendered surfaces.
+
+[57] type=skill name=market-sizing-analysis key=["skill","market-sizing-analysis"]
+    Comprehensive market sizing methodologies for calculating Total Addressable Market (TAM), Serviceable Available Market (SAM), and Serviceable Obtainable Market (SOM) for startup opportunities.
+
+[58] type=skill name=marketing-ideas key=["skill","marketing-ideas"]
+    Provide proven marketing strategies and growth ideas for SaaS and software products, prioritized using a marketing feasibility scoring system.
+
+[59] type=skill name=marketing-plan key=["skill","marketing-plan"]
+    When the user needs a comprehensive marketing plan for a client, a company they advise, or their own product. Also use when the user mentions "marketing plan," "growth plan," "GTM plan," "go-to-market plan," "AARRR plan," "90-day marketing plan," "12-month marketing roadmap,"...
+
+[60] type=skill name=marketing-psychology key=["skill","marketing-psychology"]
+    Apply behavioral science and mental models to marketing decisions, prioritized using a psychological leverage and feasibility scoring system.
+
+[61] type=skill name=marketing-strategy-pmm key=["skill","marketing-strategy-pmm"]
+    Product marketing, positioning, GTM strategy, and competitive intelligence. Includes ICP definition, April Dunford positioning methodology, launch playbooks, competitive battlecards, and international market entry guides. Use when developing positioning, planning product launches, creating messaging
+
+[62] type=skill name=markstream-install key=["skill","markstream-install"]
+    Install and configure Markstream streaming Markdown renderers for Vue, React, Svelte, Angular, Nuxt, Next.js, and Vue 2 applications.
+
+[63] type=skill name=mason key=["skill","mason"]
+    Produces clean, functional code that matches the architecture and checklists.
+
+[64] type=skill name=matematico-tao key=["skill","matematico-tao"]
+    Matemático ultra-avançado inspirado em Terence Tao. Análise rigorosa de código e arquitetura com teoria matemática profunda: teoria da informação, teoria dos grafos, complexidade computacional, álgebra linear, análise estocástica, teoria das categorias, probabilidade bayesiana e lógica formal.
+
+[65] type=skill name=material-design key=["skill","material-design"]
+    Web and App implementation guide for Material Design. Trigger when user wants Google's aesthetic, elevation, motion, and consistent components.
+
+[66] type=skill name=mathguard key=["skill","mathguard"]
+    Math-heavy escalation for n >= 10^6 — Bloom, HyperLogLog, Count-Min, MinHash/LSH, FFT, JL projection, sweep line. Use when classical O(n log n) is the floor and approximate or math wins.
+
+[67] type=skill name=matplotlib key=["skill","matplotlib"]
+    Matplotlib is Python's foundational visualization library for creating static, animated, and interactive plots.
+
+[68] type=skill name=max key=["skill","max"]
+    Cleans up and improves existing code without changing behavior.
+
+[69] type=skill name=maxia key=["skill","maxia"]
+    Connect to MAXIA AI-to-AI marketplace on Solana. Discover, buy, sell AI services. Earn USDC. 13 MCP tools, A2A protocol, DeFi yields, sentiment analysis, rug detection.
+
+[70] type=skill name=maximalism key=["skill","maximalism"]
+    Web and App implementation guide for Controlled Maximalism. Trigger when user wants lots of elements, dense content, but a highly curated and artistic presentation.
+
+[71] type=skill name=mcp-builder key=["skill","mcp-builder"]
+    Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).
+
+[72] type=skill name=mcp-builder-ms key=["skill","mcp-builder-ms"]
+    Use this skill when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).
+
+[73] type=skill name=mcp-tool-developer key=["skill","mcp-tool-developer"]
+    Build Model Context Protocol (MCP) servers and tools from scratch. Full-stack MCP development with TypeScript/Python, testing, deployment, and registry publishing.
+
+[74] type=skill name=mdpr-skill key=["skill","mdpr-skill"]
+    Review MDPR Markdown presentation workflows with semantic hints, visual checks, and deterministic renderer boundaries.
+
+[75] type=skill name=mem-search key=["skill","mem-search"]
+    Search claude-mem's persistent cross-session memory database. Use when user asks "did we already solve this?", "how did we do X last time?", or needs work from previous sessions.
+
+[76] type=skill name=memory-forensics key=["skill","memory-forensics"]
+    Comprehensive techniques for acquiring, analyzing, and extracting artifacts from memory dumps for incident response and malware analysis.
+
+[77] type=skill name=memory-safety-patterns key=["skill","memory-safety-patterns"]
+    Cross-language patterns for memory-safe programming including RAII, ownership, smart pointers, and resource management.
+
+[78] type=skill name=memory-systems key=["skill","memory-systems"]
+    Design short-term, long-term, and graph-based memory architectures. Use when building agents that must persist across sessions, needing to maintain entity consistency across conversations, or implementing reasoning over accumulated knowledge.
+
+[79] type=skill name=mental-health-analyzer key=["skill","mental-health-analyzer"]
+    分析心理健康数据、识别心理模式、评估心理健康状况、提供个性化心理健康建议。支持与睡眠、运动、营养等其他健康数据的关联分析。
+
+[80] type=skill name=mercury-mcp key=["skill","mercury-mcp"]
+    Cheatsheet for the Mercury (proton) MCP tools. Use when connected to the Mercury MCP server to look up which mercury_* tool to call for messaging teammates, threads, tasks, automations, or admin team-graph edits.
+
+[81] type=skill name=mermaid-diagrams key=["skill","mermaid-diagrams"]
+    Comprehensive guide for creating software diagrams using Mermaid syntax. Use when users need to create, visualize, or document software through diagrams including class diagrams (domain modeling, object-oriented design), sequence diagrams (application flows, API interactions, code execution), flowch
+
+[82] type=skill name=mermaid-expert key=["skill","mermaid-expert"]
+    Create Mermaid diagrams for flowcharts, sequences, ERDs, and architectures. Masters syntax for all diagram types and styling.
+
+[83] type=skill name=mesh-memory key=["skill","mesh-memory"]
+    Self-hosted semantic memory for AI agents via MCP. Save worklogs, decisions, and notes, then recall them across sessions by meaning, not keyword. Postgres + pgvector with auto-tagging.
+
+[84] type=skill name=metasploit-framework key=["skill","metasploit-framework"]
+    ⚠️ AUTHORIZED USE ONLY > This skill is for educational purposes or authorized security assessments only. > You must have explicit, written permission from the system owner before using this tool. > Misuse of this tool is illegal and strictly prohibited.
+
+[85] type=skill name=micro-saas-launcher key=["skill","micro-saas-launcher"]
+    Expert in launching small, focused SaaS products fast - the indie hacker approach to building profitable software. Covers idea validation, MVP development, pricing, launch strategies, and growing to sustainable revenue. Ship in weeks, not months.
+
+[86] type=skill name=microservices-patterns key=["skill","microservices-patterns"]
+    Master microservices architecture patterns including service boundaries, inter-service communication, data management, and resilience patterns for building distributed systems.
+
+[87] type=skill name=microsoft-azure-webjobs-extensions-authentication-events-dotnet key=["skill","microsoft-azure-webjobs-extensions-authentication-events-dotnet"]
+    Microsoft Entra Authentication Events SDK for .NET. Azure Functions triggers for custom authentication extensions.
+
+[88] type=skill name=microsoft-code-reference key=["skill","microsoft-code-reference"]
+    Find working code samples, verify API signatures, and fix Microsoft SDK errors using official docs. Use whenever the user is writing, debugging, or reviewing code that touches any Microsoft SDK, .NET library, Azure client library, or Microsoft API—even if they don't ask for a "reference." Catches ha
+
+[89] type=skill name=microsoft-docs key=["skill","microsoft-docs"]
+    Understand Microsoft technologies by querying official documentation. Use whenever the user asks how something works, wants tutorials, needs configuration options, limits, quotas, or best practices for any Microsoft technology (Azure, .NET, M365, Windows, Power Platform, etc.)—even if they don't men
+
+[90] type=skill name=microsoft-learn-cli key=["skill","microsoft-learn-cli"]
+    Use the Microsoft Learn CLI to retrieve current official Microsoft documentation and code samples when Microsoft Learn MCP tools are unavailable. Use for questions about Microsoft technologies, SDKs, APIs, configuration, limits, best practices, tutorials, or Microsoft-specific coding errors that wou
+
+[91] type=skill name=microsoft-skill-creator key=["skill","microsoft-skill-creator"]
+    Create agent skills for Microsoft technologies using official documentation. Use whenever the user wants to build, generate, or scaffold a skill for any Microsoft technology (Azure, .NET, M365, VS Code, Bicep, etc.)—even phrased casually like "make a skill for Cosmos DB." Investigates the topic via 
+
+[92] type=skill name=microsoft-teams-automation key=["skill","microsoft-teams-automation"]
+    Automate Microsoft Teams tasks via Rube MCP (Composio): send messages, manage channels, create meetings, handle chats, and search messages. Always search tools first for current schemas.
+
+[93] type=skill name=minecraft-bukkit-pro key=["skill","minecraft-bukkit-pro"]
+    Master Minecraft server plugin development with Bukkit, Spigot, and Paper APIs.
+
+[94] type=skill name=minimalism key=["skill","minimalism"]
+    Web and App implementation guide for the Minimalism design style. Trigger when the user wants simple layouts, lots of whitespace, few colors, and clear hierarchy.
+
+[95] type=skill name=minimalist-ui key=["skill","minimalist-ui"]
+    Use when creating clean editorial interfaces with warm monochrome palettes, crisp borders, restrained motion, and flat bento layouts.
+
+[96] type=skill name=miro-automation key=["skill","miro-automation"]
+    Automate Miro tasks via Rube MCP (Composio): boards, items, sticky notes, frames, sharing, connectors. Always search tools first for current schemas.
+
+[97] type=skill name=mise-configurator key=["skill","mise-configurator"]
+    Generate production-ready mise.toml setups for local development, CI/CD pipelines, and toolchain standardization.
+
+[98] type=skill name=mixpanel-automation key=["skill","mixpanel-automation"]
+    Automate Mixpanel tasks via Rube MCP (Composio): events, segmentation, funnels, cohorts, user profiles, JQL queries. Always search tools first for current schemas.
+
+[99] type=skill name=ml-engineer key=["skill","ml-engineer"]
+    Build production ML systems with PyTorch 2.x, TensorFlow, and modern ML frameworks. Implements model serving, feature engineering, A/B testing, and monitoring.
+
+[100] type=skill name=ml-pipeline-workflow key=["skill","ml-pipeline-workflow"]
+    Complete end-to-end MLOps pipeline orchestration from data preparation through model deployment.
+
+[101] type=skill name=mlops-engineer key=["skill","mlops-engineer"]
+    Build comprehensive ML pipelines, experiment tracking, and model registries with MLflow, Kubeflow, and modern MLOps tools.
+
+[102] type=skill name=mmx-cli key=["skill","mmx-cli"]
+    Use mmx to generate text, images, video, speech, and music via the MiniMax AI platform. Use when the user wants to create media content, chat with MiniMax models, perform web search, or manage MiniMax API resources from the terminal.
+
+[103] type=skill name=moatmri key=["skill","moatmri"]
+    Analyze AI disruption pressure across a business, map competitive exposure, and produce a 90-day defensive action plan.
+
+[104] type=skill name=mobile-design key=["skill","mobile-design"]
+    Mobile-first design thinking and decision-making for iOS and Android apps. Touch interaction, performance patterns, platform conventions. Teaches principles, not fixed values. Use when building React Native, Flutter, or native mobile apps.
+
+[105] type=skill name=mobile-developer key=["skill","mobile-developer"]
+    Develop React Native, Flutter, or native mobile apps with modern architecture patterns. Masters cross-platform development, native integrations, offline sync, and app store optimization.
+
+[106] type=skill name=mobile-games key=["skill","mobile-games"]
+    Mobile game development principles. Touch input, battery, performance, app stores.
+
+[107] type=skill name=mobile-security-coder key=["skill","mobile-security-coder"]
+    Expert in secure mobile coding practices specializing in input validation, WebView security, and mobile-specific security patterns.
+
+[108] type=skill name=mock-hunter key=["skill","mock-hunter"]
+    Audit a live web page in five phases (catalog, click, trace, classify, report) to identify mock data, hardcoded values, LLM-generated metrics, and broken endpoints. Outputs a markdown report with REAL/MOCK/LLM/HARDCODED/BROKEN/UNKNOWN verdicts per visible value.
+
+[109] type=skill name=mode-creator key=["skill","mode-creator"]
+    Interactively create, install, activate, and verify custom claude-mem modes, including domain-specific observation types, concept tags, optional Telegram alerts, bot setup, worker restart, and startup-context verification. Use this whenever someone asks to customize what claude-mem remembers, create
+
+[110] type=skill name=modellix key=["skill","modellix"]
+    Integrate Modellix unified API/CLI for async AI image and video generation (model run --wait, task download).
+
+[111] type=skill name=modern-javascript-patterns key=["skill","modern-javascript-patterns"]
+    Comprehensive guide for mastering modern JavaScript (ES6+) features, functional programming patterns, and best practices for writing clean, maintainable, and performant code.
+
+[112] type=skill name=molykit key=["skill","molykit"]
+    CRITICAL: Use for MolyKit AI chat toolkit. Triggers on: BotClient, OpenAI, SSE streaming, AI chat, molykit, PlatformSend, spawn(), ThreadToken, cross-platform async, Chat widget, Messages, PromptInput, Avatar, LLM
+
+[113] type=skill name=monday-automation key=["skill","monday-automation"]
+    Automate Monday.com work management including boards, items, columns, groups, subitems, and updates via Rube MCP (Composio). Always search tools first for current schemas.
+
+[114] type=skill name=monetization key=["skill","monetization"]
+    Estrategia e implementacao de monetizacao para produtos digitais - Stripe, subscriptions, pricing experiments, freemium, upgrade flows, churn prevention, revenue optimization e modelos de negocio SaaS.
+
+[115] type=skill name=monochromatic-ui key=["skill","monochromatic-ui"]
+    Web and App implementation guide for Monochromatic UI. Trigger when user wants a single-color palette, high elegance, and strict color discipline.
+
+[116] type=skill name=monopoly key=["skill","monopoly"]
+    MONOPOLY is a Senior System Design Engineer skill for architecting, reviewing, and scaling systems. Triggers on requests involving architecture, databases, scaling, microservices, or infrastructure design. Proactively engages to design resilient backend systems.
+
+[117] type=skill name=monorepo-architect key=["skill","monorepo-architect"]
+    Expert in monorepo architecture, build systems, and dependency management at scale. Masters Nx, Turborepo, Bazel, and Lerna for efficient multi-project development. Use PROACTIVELY for monorepo setup,
+
+[118] type=skill name=monorepo-management key=["skill","monorepo-management"]
+    Build efficient, scalable monorepos that enable code sharing, consistent tooling, and atomic changes across multiple packages and applications.
+
+[119] type=skill name=monte-carlo-analyze-root-cause key=["skill","monte-carlo-analyze-root-cause"]
+    Investigate data incidents and find root causes using Monte Carlo's observability data. Guides the agent through systematic investigation: alert lookup, lineage tracing, ETL checks, query analysis, and data profiling. Activates when a user asks about data issues, incidents, alerts, or...
+
+[120] type=skill name=monte-carlo-asset-health key=["skill","monte-carlo-asset-health"]
+    Check the health of a data table/asset using Monte Carlo. Activates on "how is table X", "check health of X", "is X healthy", "status of X", "check on X table", or any health/status question about a data asset.
+
+[121] type=skill name=monte-carlo-monitor-creation key=["skill","monte-carlo-monitor-creation"]
+    Guides creation of Monte Carlo monitors via MCP tools, producing monitors-as-code YAML for CI/CD deployment.
+
+[122] type=skill name=monte-carlo-monitoring-advisor key=["skill","monte-carlo-monitoring-advisor"]
+    Analyze data coverage, create monitors for warehouse tables and AI agents. Covers coverage gaps, use-case analysis, data monitor creation, and agent observability.
+
+[123] type=skill name=monte-carlo-performance-diagnosis key=["skill","monte-carlo-performance-diagnosis"]
+    Diagnoses pipeline performance issues -- slow jobs, expensive queries, latency trends -- using Monte Carlo's cross-platform observability. Uses a tiered investigation approach: discover problems, bridge to affected tables, then drill into root causes. Activates when a user asks about...
+
+[124] type=skill name=monte-carlo-prevent key=["skill","monte-carlo-prevent"]
+    Surfaces Monte Carlo data observability context (table health, alerts, lineage, blast radius) before SQL/dbt edits.
+
+[125] type=skill name=monte-carlo-push-ingestion key=["skill","monte-carlo-push-ingestion"]
+    Expert guide for pushing metadata, lineage, and query logs to Monte Carlo from any data warehouse.
+
+[126] type=skill name=monte-carlo-remediation key=["skill","monte-carlo-remediation"]
+    Investigate and remediate data quality alerts using Monte Carlo MCP tools. Runs root cause analysis, assesses blast radius, discovers available tools (MCP/CLI/API), proposes and executes fixes, or escalates with full context when uncertain.
+
+[127] type=skill name=monte-carlo-storage-cost-analysis key=["skill","monte-carlo-storage-cost-analysis"]
+    Analyze a warehouse for stale, unused, or redundant tables via the analyze_storage_costs MCP tool. Classifies waste patterns and table categories, computes safety tiers, and handles category drill-downs and lineage follow-ups.
+
+[128] type=skill name=monte-carlo-validation-notebook key=["skill","monte-carlo-validation-notebook"]
+    Generates SQL validation notebooks for dbt PR changes with before/after comparison queries.
+
+[129] type=skill name=moodle-external-api-development key=["skill","moodle-external-api-development"]
+    This skill guides you through creating custom external web service APIs for Moodle LMS, following Moodle's external API framework and coding standards.
+
+[130] type=skill name=moyu key=["skill","moyu"]
+    Anti-over-engineering guardrail that activates when an AI coding agent expands scope, adds abstractions, or changes files the user did not request.
+
+[131] type=skill name=mtls-configuration key=["skill","mtls-configuration"]
+    Configure mutual TLS (mTLS) for zero-trust service-to-service communication. Use when implementing zero-trust networking, certificate management, or securing internal service communication.
+
+[132] type=skill name=multi-advisor key=["skill","multi-advisor"]
+    Conselho de especialistas — consulta multiplos agentes do ecossistema em paralelo para analise multi-perspectiva de qualquer topico. Ativa personas, especialistas e agentes tecnicos simultaneamente, cada um pela sua otica unica, e consolida em sintese decisoria final.
+
+[133] type=skill name=multi-agent-architect key=["skill","multi-agent-architect"]
+    Design and optimize production-grade multi-agent systems with LangGraph, LangChain, and DeepAgents for complex AI workflows.
+
+[134] type=skill name=multi-agent-brainstorming key=["skill","multi-agent-brainstorming"]
+    Simulate a structured peer-review process using multiple specialized agents to validate designs, surface hidden assumptions, and identify failure modes before implementation.
+
+[135] type=skill name=multi-agent-patterns key=["skill","multi-agent-patterns"]
+    This skill should be used when the user asks to "design multi-agent system", "implement supervisor pattern", "create swarm architecture", "coordinate multiple agents", or mentions multi-agent patterns, context isolation, agent handoffs, sub-agents, or parallel agent execution.
+
+[136] type=skill name=multi-agent-task-orchestrator key=["skill","multi-agent-task-orchestrator"]
+    Route tasks to specialized AI agents with anti-duplication, quality gates, and 30-minute heartbeat monitoring
+
+[137] type=skill name=multi-cloud-architecture key=["skill","multi-cloud-architecture"]
+    Decision framework and patterns for architecting applications across AWS, Azure, and GCP.
+
+[138] type=skill name=multi-platform-apps-multi-platform key=["skill","multi-platform-apps-multi-platform"]
+    Build and deploy the same feature consistently across web, mobile, and desktop platforms using API-first architecture and parallel implementation strategies.
+
+[139] type=skill name=multiplayer key=["skill","multiplayer"]
+    Multiplayer game development principles. Architecture, networking, synchronization.
+
+[140] type=skill name=n8n-code-javascript key=["skill","n8n-code-javascript"]
+    Write JavaScript code in n8n Code nodes. Use when writing JavaScript in n8n, using $input/$json/$node syntax, making HTTP requests with $helpers, working with dates using DateTime, troubleshooting Code node errors, or choosing between Code node modes.
+
+[141] type=skill name=n8n-code-python key=["skill","n8n-code-python"]
+    Write Python code in n8n Code nodes. Use when writing Python in n8n, using _input/_json/_node syntax, working with standard library, or need to understand Python limitations in n8n Code nodes.
+
+[142] type=skill name=n8n-expression-syntax key=["skill","n8n-expression-syntax"]
+    Validate n8n expression syntax and fix common errors. Use when writing n8n expressions, using {{}} syntax, accessing $json/$node variables, troubleshooting expression errors, or working with webhook data in workflows.
+
+[143] type=skill name=n8n-mcp-tools-expert key=["skill","n8n-mcp-tools-expert"]
+    Expert guide for using n8n-mcp MCP tools effectively. Use when searching for nodes, validating configurations, accessing templates, managing workflows, or using any n8n-mcp tool. Provides tool selection guidance, parameter formats, and common patterns.
+
+[144] type=skill name=n8n-node-configuration key=["skill","n8n-node-configuration"]
+    Operation-aware node configuration guidance. Use when configuring nodes, understanding property dependencies, determining required fields, choosing between get_node detail levels, or learning common configuration patterns by node type.
+
+[145] type=skill name=n8n-validation-expert key=["skill","n8n-validation-expert"]
+    Expert guide for interpreting and fixing n8n validation errors.
+
+[146] type=skill name=n8n-workflow-patterns key=["skill","n8n-workflow-patterns"]
+    Proven architectural patterns for building n8n workflows.
+
+[147] type=skill name=nanobanana-ppt-skills key=["skill","nanobanana-ppt-skills"]
+    AI-powered PPT generation with document analysis and styled images
+
+[148] type=skill name=native-data-fetching key=["skill","native-data-fetching"]
+    Use when implementing or debugging ANY network request, API call, or data fetching. Covers fetch API, React Query, SWR, error handling, caching, offline support, and Expo Router data loaders (`useLoaderData`).
+
+[149] type=skill name=ncbi-sequence-fetch key=["skill","ncbi-sequence-fetch"]
+    Retrieve protein and nucleotide sequences from NCBI databases using E-utilities. Supports direct accession lookup, CDS translation, gene+organism search, locus lookup, PubMed-linked sequences, patent protein extraction, and organism+length fallback search. Use when you need to fetch biological seque
+
+[150] type=skill name=negentropy-lens key=["skill","negentropy-lens"]
+    A decision-support framework that evaluates systems, architectures, and strategies through the entropy (decay) vs negentropy (growth) lens, while surfacing tacit knowledge gaps. Use this skill whenever the user is making architecture decisions, evaluating system designs, reviewing technical approach
+
+[151] type=skill name=neo-brutalism key=["skill","neo-brutalism"]
+    Web and App implementation guide for Neo-Brutalism. Trigger when user wants thick borders, hard shadows, bright colors, and a playful yet structured look.
+
+[152] type=skill name=neon-ai-gateway key=["skill","neon-ai-gateway"]
+    One API and one credential for frontier and open-source LLMs, built into your Neon branch and powered by Databricks. Use when a user wants to call an LLM, add AI/chat/an agent to their app, route between model providers (OpenAI, Anthropic, Google/Gemini, Meta, Alibaba, DeepSeek), or...
+
+[153] type=skill name=neon-functions key=["skill","neon-functions"]
+    Long-running, serverless Node.js HTTP functions deployed onto your Neon branch, with DATABASE_URL injected automatically and compute that runs next to your data. Use when a user wants to host an API, an AI agent with long streaming responses, a WebSocket or server-sent-events (SSE)...
+
+[154] type=skill name=neon-object-storage key=["skill","neon-object-storage"]
+    S3-compatible object storage that branches with your Neon project, so files and the database stay in sync across every branch. Use when a user wants object storage, a bucket, blob/file storage, or somewhere to put uploads, images, documents, avatars, or user-generated files for their...
+
+[155] type=skill name=neon-postgres key=["skill","neon-postgres"]
+    Guides and best practices for working with Neon Serverless Postgres. Covers setup, connection methods, branching, autoscaling, scale-to-zero, read replicas, connection pooling, Neon Auth, and the Neon CLI, MCP server, REST API, TypeScript SDK, and Python SDK. Use when users ask about...
+
+[156] type=skill name=neon-postgres-branches key=["skill","neon-postgres-branches"]
+    Choose and create the right Neon branch type for testing and development. Use when users ask about Neon branching, migration testing with real data, isolated test environments, schema-only branch workflows for sensitive data, or branch creation via Neon CLI or Neon MCP. Triggers...
+
+[157] type=skill name=neon-postgres-egress-optimizer key=["skill","neon-postgres-egress-optimizer"]
+    Diagnose and fix excessive Postgres egress (network data transfer) in a codebase. Use when a user mentions high database bills, unexpected data transfer costs, network transfer charges, egress spikes, "why is my Neon bill so high", "database costs jumped", SELECT * optimization, query...
+
+[158] type=skill name=nerdzao-elite key=["skill","nerdzao-elite"]
+    Senior Elite Software Engineer (15+) and Senior Product Designer. Full workflow with planning, architecture, TDD, clean code, and pixel-perfect UX validation.
+
+[159] type=skill name=nerdzao-elite-gemini-high key=["skill","nerdzao-elite-gemini-high"]
+    Modo Elite Coder + UX Pixel-Perfect otimizado especificamente para Gemini 3.1 Pro High. Workflow completo com foco em qualidade máxima e eficiência de tokens.
+
+[160] type=skill name=nestjs-expert key=["skill","nestjs-expert"]
+    You are an expert in Nest.js with deep knowledge of enterprise-grade Node.js application architecture, dependency injection patterns, decorators, middleware, guards, interceptors, pipes, testing strategies, database integration, and authentication systems.
+
+[161] type=skill name=network-101 key=["skill","network-101"]
+    Configure and test common network services (HTTP, HTTPS, SNMP, SMB) for penetration testing lab environments. Enable hands-on practice with service enumeration, log analysis, and security testing against properly configured target systems.
+
+[162] type=skill name=network-engineer key=["skill","network-engineer"]
+    Expert network engineer specializing in modern cloud networking, security architectures, and performance optimization.
+
+[163] type=skill name=networkx key=["skill","networkx"]
+    NetworkX is a Python package for creating, manipulating, and analyzing complex networks and graphs.
+
+[164] type=skill name=neumorphism key=["skill","neumorphism"]
+    Web and App implementation guide for Neumorphism (Soft UI). Trigger when user wants soft shadows, extruded appearance, and light source simulation.
+
+[165] type=skill name=new-rails-project key=["skill","new-rails-project"]
+    Create a new Rails project
+
+[166] type=skill name=newman-cicd-integration key=["skill","newman-cicd-integration"]
+    Generate ready-to-use CI/CD pipeline configurations that install and run Newman for automated API testing. Use this skill whenever the user wants to run Newman in a CI pipeline, integrate Postman collections into automated builds, set up API tests in GitHub Actions, GitLab CI, Jenkins,...
+
+[167] type=skill name=news-sentiment-engine key=["skill","news-sentiment-engine"]
+    Multi-source RSS news aggregation with Claude-powered sentiment analysis and structured briefing output
+
+[168] type=skill name=nextjs-app-router-patterns key=["skill","nextjs-app-router-patterns"]
+    Comprehensive patterns for Next.js 14+ App Router architecture, Server Components, and modern full-stack React development.
+
+[169] type=skill name=nextjs-best-practices key=["skill","nextjs-best-practices"]
+    Next.js App Router principles. Server Components, data fetching, routing patterns.
+
+[170] type=skill name=nextjs-seo-indexing key=["skill","nextjs-seo-indexing"]
+    Fix SEO indexing issues, crawl budget problems, and Search Console coverage errors for Next.js apps. Covers canonical tags, noindex audits, sitemap health, static rendering, and internal linking.
+
+[171] type=skill name=nextjs-supabase-auth key=["skill","nextjs-supabase-auth"]
+    Expert integration of Supabase Auth with Next.js App Router
+
+[172] type=skill name=nft-standards key=["skill","nft-standards"]
+    Master ERC-721 and ERC-1155 NFT standards, metadata best practices, and advanced NFT features.
+
+[173] type=skill name=nika key=["skill","nika"]
+    Runs repeatable AI work as checked, budgeted workflow files.
+
+[174] type=skill name=nodejs-backend-patterns key=["skill","nodejs-backend-patterns"]
+    Comprehensive guidance for building scalable, maintainable, and production-ready Node.js backend applications with modern frameworks, architectural patterns, and best practices.
+
+[175] type=skill name=nodejs-best-practices key=["skill","nodejs-best-practices"]
+    Node.js development principles and decision-making. Framework selection, async patterns, security, and architecture. Teaches thinking, not copying.
+
+[176] type=skill name=nosql-expert key=["skill","nosql-expert"]
+    Expert guidance for distributed NoSQL databases (Cassandra, DynamoDB). Focuses on mental models, query-first modeling, single-table design, and avoiding hot partitions in high-scale systems.
+
+[177] type=skill name=not-a-vibe-coder key=["skill","not-a-vibe-coder"]
+    Turns vague prompts into 8 structured planning files for brand new projects. DO NOT use on existing codebases.
+
+[178] type=skill name=not-human-search-mcp key=["skill","not-human-search-mcp"]
+    Search AI-ready websites, inspect indexed site details, verify MCP endpoints, and discover tools and APIs using the Not Human Search MCP server
+
+[179] type=skill name=notebooklm key=["skill","notebooklm"]
+    Interact with Google NotebookLM to query documentation with Gemini's source-grounded answers. Each question opens a fresh browser session, retrieves the answer exclusively from your uploaded documents, and closes.
+
+[180] type=skill name=notion-automation key=["skill","notion-automation"]
+    Automate Notion tasks via Rube MCP (Composio): pages, databases, blocks, comments, users. Always search tools first for current schemas.
+
+[181] type=skill name=notion-template-business key=["skill","notion-template-business"]
+    Expert in building and selling Notion templates as a business - not just making templates, but building a sustainable digital product business. Covers template design, pricing, marketplaces, marketing, and scaling to real revenue.
+
+[182] type=skill name=nutrition-analyzer key=["skill","nutrition-analyzer"]
+    分析营养数据、识别营养模式、评估营养状况，并提供个性化营养建议。支持与运动、睡眠、慢性病数据的关联分析。
+
+[183] type=skill name=nx-workspace-patterns key=["skill","nx-workspace-patterns"]
+    Configure and optimize Nx monorepo workspaces. Use when setting up Nx, configuring project boundaries, optimizing build caching, or implementing affected commands.
+
+[184] type=skill name=objection-preemptor key=["skill","objection-preemptor"]
+    One sentence - what this skill does and when to invoke it
+
+[185] type=skill name=observability-and-instrumentation key=["skill","observability-and-instrumentation"]
+    Instruments code so production behavior is visible and diagnosable. Use when adding logging, metrics, tracing, or alerting. Use when shipping any feature that runs in production and you need evidence it works. Use when production issues are reported but you can't tell what happened...
+
+[186] type=skill name=observability-engineer key=["skill","observability-engineer"]
+    Build production-ready monitoring, logging, and tracing systems. Implements comprehensive observability strategies, SLI/SLO management, and incident response workflows.
+
+[187] type=skill name=observability-monitoring-monitor-setup key=["skill","observability-monitoring-monitor-setup"]
+    You are a monitoring and observability expert specializing in implementing comprehensive monitoring solutions. Set up metrics collection, distributed tracing, log aggregation, and create insightful da
+
+[188] type=skill name=observability-monitoring-slo-implement key=["skill","observability-monitoring-slo-implement"]
+    You are an SLO (Service Level Objective) expert specializing in implementing reliability standards and error budget-based engineering practices. Design comprehensive SLO frameworks, establish meaningful SLIs, and create monitoring systems that balance reliability with feature velocity.
+
+[189] type=skill name=obsidian-bases key=["skill","obsidian-bases"]
+    Create and edit Obsidian Bases (.base files) with views, filters, formulas, and summaries. Use when working with .base files, creating database-like views of notes, or when the user mentions Bases, table views, card views, filters, or formulas in Obsidian.
+
+[190] type=skill name=obsidian-cli key=["skill","obsidian-cli"]
+    Use the Obsidian CLI to read, create, search, and manage vault content, or to develop and debug Obsidian plugins and themes from the command line.
+
+[191] type=skill name=obsidian-clipper-template-creator key=["skill","obsidian-clipper-template-creator"]
+    Guide for creating templates for the Obsidian Web Clipper. Use when you want to create a new clipping template, understand available variables, or format clipped content.
+
+[192] type=skill name=obsidian-markdown key=["skill","obsidian-markdown"]
+    Create and edit Obsidian Flavored Markdown with wikilinks, embeds, callouts, properties, and other Obsidian-specific syntax. Use when working with .md files in Obsidian, or when the user mentions wikilinks, callouts, frontmatter, tags, embeds, or Obsidian notes.
+
+[193] type=skill name=oc-api-audit key=["skill","oc-api-audit"]
+    Performs structured security audits of the DocFlow REST API (NestJS + Prisma + JWT + Throttler). Use when reviewing a controller, a new endpoint, a sprint that touched auth/inbox/storage, or any code change that handles tenant-scoped data, file uploads, OAuth callbacks, or external URLs. Drives a 13
+
+[194] type=skill name=oc-billing-webhooks key=["skill","oc-billing-webhooks"]
+    Audits inbound webhook receivers for DocFlow — billing, payment, and SaaS integrations. Use when reviewing or building a webhook endpoint (HMAC or ECDSA-P1363 signature verification), wiring a payment provider (Stripe/Adyen/Mollie/etc.), extending the existing SendGrid inbound webhook, or designing 
+
+[195] type=skill name=oc-storage-patterns key=["skill","oc-storage-patterns"]
+    DocFlow file storage patterns — filesystem local com abstração pra Supabase Storage. Use when implementing file upload, folder routing, or document persistence.
+
+[196] type=skill name=occupational-health-analyzer key=["skill","occupational-health-analyzer"]
+    分析职业健康数据、识别工作相关健康风险、评估职业健康状况、提供个性化职业健康建议。支持与睡眠、运动、心理健康等其他健康数据的关联分析。
+
+[197] type=skill name=odoo-accounting-setup key=["skill","odoo-accounting-setup"]
+    Expert guide for configuring Odoo Accounting: chart of accounts, journals, fiscal positions, taxes, payment terms, and bank reconciliation.
+
+[198] type=skill name=odoo-automated-tests key=["skill","odoo-automated-tests"]
+    Write and run Odoo automated tests using TransactionCase, HttpCase, and browser tour tests. Covers test data setup, mocking, and CI integration.
+
+[199] type=skill name=odoo-backup-strategy key=["skill","odoo-backup-strategy"]
+    Complete Odoo backup and restore strategy: database dumps, filestore backup, automated scheduling, cloud storage upload, and tested restore procedures.
+
+[200] type=skill name=odoo-docker-deployment key=["skill","odoo-docker-deployment"]
+    Production-ready Docker and docker-compose setup for Odoo with PostgreSQL, persistent volumes, environment-based configuration, and Nginx reverse proxy.
+
+[201] type=skill name=odoo-ecommerce-configurator key=["skill","odoo-ecommerce-configurator"]
+    Expert guide for Odoo eCommerce and Website: product catalog, payment providers, shipping methods, SEO, and order-to-fulfillment workflow.
+
+[202] type=skill name=odoo-edi-connector key=["skill","odoo-edi-connector"]
+    Guide for implementing EDI (Electronic Data Interchange) with Odoo: X12, EDIFACT document mapping, partner onboarding, and automated order processing.
+
+[203] type=skill name=odoo-hr-payroll-setup key=["skill","odoo-hr-payroll-setup"]
+    Expert guide for Odoo HR and Payroll: salary structures, payslip rules, leave policies, employee contracts, and payroll journal entries.
+
+[204] type=skill name=odoo-inventory-optimizer key=["skill","odoo-inventory-optimizer"]
+    Expert guide for Odoo Inventory: stock valuation (FIFO/AVCO), reordering rules, putaway strategies, routes, and multi-warehouse configuration.
+
+[205] type=skill name=odoo-l10n-compliance key=["skill","odoo-l10n-compliance"]
+    Country-specific Odoo localization: tax configuration, e-invoicing (CFDI, FatturaPA, SAF-T), fiscal reporting, and country chart of accounts setup.
+
+[206] type=skill name=odoo-manufacturing-advisor key=["skill","odoo-manufacturing-advisor"]
+    Expert guide for Odoo Manufacturing: Bills of Materials (BoM), Work Centers, routings, MRP planning, and production order workflows.
+
+[207] type=skill name=odoo-migration-helper key=["skill","odoo-migration-helper"]
+    Step-by-step guide for migrating Odoo custom modules between versions (v14→v15→v16→v17). Covers API changes, deprecated methods, and view migration.
+
+[208] type=skill name=odoo-module-developer key=["skill","odoo-module-developer"]
+    Expert guide for creating custom Odoo modules. Covers __manifest__.py, model inheritance, ORM patterns, and module structure best practices.
+
+[209] type=skill name=odoo-orm-expert key=["skill","odoo-orm-expert"]
+    Master Odoo ORM patterns: search, browse, create, write, domain filters, computed fields, and performance-safe query techniques.
+
+[210] type=skill name=odoo-performance-tuner key=["skill","odoo-performance-tuner"]
+    Expert guide for diagnosing and fixing Odoo performance issues: slow queries, worker configuration, memory limits, PostgreSQL tuning, and profiling tools.
+
+[211] type=skill name=odoo-project-timesheet key=["skill","odoo-project-timesheet"]
+    Expert guide for Odoo Project and Timesheets: task stages, billable time tracking, timesheet approval, budget alerts, and invoicing from timesheets.
+
+[212] type=skill name=odoo-purchase-workflow key=["skill","odoo-purchase-workflow"]
+    Expert guide for Odoo Purchase: RFQ → PO → Receipt → Vendor Bill workflow, purchase agreements, vendor price lists, and 3-way matching.
+
+[213] type=skill name=odoo-qweb-templates key=["skill","odoo-qweb-templates"]
+    Expert in Odoo QWeb templating for PDF reports, email templates, and website pages. Covers t-if, t-foreach, t-field, and report actions.
+
+[214] type=skill name=odoo-rpc-api key=["skill","odoo-rpc-api"]
+    Expert on Odoo's external JSON-RPC and XML-RPC APIs. Covers authentication, model calls, record CRUD, and real-world integration examples in Python, JavaScript, and curl.
+
+[215] type=skill name=odoo-sales-crm-expert key=["skill","odoo-sales-crm-expert"]
+    Expert guide for Odoo Sales and CRM: pipeline stages, quotation templates, pricelists, sales teams, lead scoring, and forecasting.
+
+[216] type=skill name=odoo-security-rules key=["skill","odoo-security-rules"]
+    Expert in Odoo access control: ir.model.access.csv, record rules (ir.rule), groups, and multi-company security patterns.
+
+[217] type=skill name=odoo-shopify-integration key=["skill","odoo-shopify-integration"]
+    Connect Odoo with Shopify: sync products, inventory, orders, and customers using the Shopify API and Odoo's external API or connector modules.
+
+[218] type=skill name=odoo-upgrade-advisor key=["skill","odoo-upgrade-advisor"]
+    Step-by-step Odoo version upgrade advisor: pre-upgrade checklist, community vs enterprise upgrade path, OCA module compatibility, and post-upgrade validation.
+
+[219] type=skill name=odoo-woocommerce-bridge key=["skill","odoo-woocommerce-bridge"]
+    Sync Odoo with WooCommerce: products, inventory, orders, and customers via WooCommerce REST API and Odoo external API.
+
+[220] type=skill name=odoo-xml-views-builder key=["skill","odoo-xml-views-builder"]
+    Expert at building Odoo XML views: Form, List, Kanban, Search, Calendar, and Graph. Generates correct XML for Odoo 14-17 with proper visibility syntax.
+
+[221] type=skill name=odw key=["skill","odw"]
+    Dynamic multi-agent workflows — plan first, then orchestrate parallel agents with adversarial verification via the local odw daemon. Use when the user asks for a "workflow", says "ultracode", or hands you a task spanning many files/items that benefits from parallel agents.
+
+[222] type=skill name=offers key=["skill","offers"]
+    When the user wants to design, construct, or improve an offer — the thing they actually sell — including value framing, bonus stacking, guarantee design, scarcity/urgency, naming, and payment structure. Also use when the user mentions 'offer,' 'offer design,' 'build an offer,' 'grand...
+
+[223] type=skill name=office-productivity key=["skill","office-productivity"]
+    Office productivity workflow covering document creation, spreadsheet automation, presentation generation, and integration with LibreOffice and Microsoft Office formats.
+
+[224] type=skill name=oh-my-issues key=["skill","oh-my-issues"]
+    Cluster a GitHub issue backlog by root cause into a small set of plan-master issues, redirect children with a standardized comment, and bundle architectural-fix PRs that close clusters atomically. Use when an issue tracker has accumulated dozens of reports that share underlying defects, when asked t
+
+[225] type=skill name=on-call-handoff-patterns key=["skill","on-call-handoff-patterns"]
+    Effective patterns for on-call shift transitions, ensuring continuity, context transfer, and reliable incident response across shifts.
+
+[226] type=skill name=onboarding key=["skill","onboarding"]
+    When the user wants to optimize post-signup onboarding, user activation, first-run experience, or time-to-value. Also use when the user mentions "onboarding flow," "activation rate," "user activation," "first-run experience," "empty states," "onboarding checklist," "aha moment," "new...
+
+[227] type=skill name=onboarding-cro key=["skill","onboarding-cro"]
+    You are an expert in user onboarding and activation. Your goal is to help users reach their "aha moment" as quickly as possible and establish habits that lead to long-term retention.
+
+[228] type=skill name=onboarding-psychologist key=["skill","onboarding-psychologist"]
+    One sentence - what this skill does and when to invoke it
+
+[229] type=skill name=one-drive-automation key=["skill","one-drive-automation"]
+    Automate OneDrive file management, search, uploads, downloads, sharing, permissions, and folder operations via Rube MCP (Composio). Always search tools first for current schemas.
+
+[230] type=skill name=ontoly-software-graph key=["skill","ontoly-software-graph"]
+    Use Ontoly's deterministic Software Graph, MCP server, and agent skills for architecture review, request tracing, impact analysis, and dependency analysis.
+
+[231] type=skill name=open-dynamic-workflows key=["skill","open-dynamic-workflows"]
+    Plan, orchestrate, and adversarially verify parallel AI coding agents with a dynamic multi-agent workflow engine.
+
+[232] type=skill name=open-source-marketing key=["skill","open-source-marketing"]
+    When the user wants to market an open source project authentically. Trigger phrases include "open source marketing," "OSS marketing," "GitHub marketing," "promote my library," "grow stars," "launch open source," "open source growth," or "contributor marketing."
+
+[233] type=skill name=openai-docs key=["skill","openai-docs"]
+    Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, customization, automations, and self-knowledge—including 'you,' 'your,' 'this app,' or 'this coding agent' when they refer to Codex—and for OpenAI APIs/products and ChatGPT Work. Also use for model choice/migrat
+
+[234] type=skill name=openapi-spec-generation key=["skill","openapi-spec-generation"]
+    Generate and maintain OpenAPI 3.1 specifications from code, design-first specs, and validation patterns. Use when creating API documentation, generating SDKs, or ensuring API contract compliance.
+
+[235] type=skill name=openapi-spec-generator key=["skill","openapi-spec-generator"]
+    Generate complete, production-ready OpenAPI 3.x and Swagger 2.0 specifications from natural language descriptions, code, or partial specs. Use this skill whenever the user mentions OpenAPI, Swagger, API spec, REST API documentation, YAML/JSON API schema, endpoint documentation, API...
+
+[236] type=skill name=openclaw-github-repo-commander key=["skill","openclaw-github-repo-commander"]
+    7-stage super workflow for GitHub repo audit, cleanup, PR review, and competitor analysis
+
+[237] type=skill name=openfda-database key=["skill","openfda-database"]
+    Query, search, and download data from the openFDA API for drugs, devices, foods, tobacco, cosmetics, animal and veterinary products, substances, and transparency data. Use for FDA adverse events, recalls, labeling, approvals, shortages, 510(k) clearances, NDC lookups, and any FDA safety or regulator
+
+[238] type=skill name=opentargets-database key=["skill","opentargets-database"]
+    Query Open Targets Platform for target-disease associations, drug target discovery, tractability/safety data, genetics/omics evidence, known drugs, for therapeutic target identification.
+
+[239] type=skill name=optim-agent key=["skill","optim-agent"]
+    Guide agent-driven parameter optimization for configurable systems with measurable objectives. Use for HPO, inference tuning, simulations, or RL/control experiments.
+
+[240] type=skill name=options-flow-analyzer key=["skill","options-flow-analyzer"]
+    Real vs lottery call separation for options P/C ratio analysis — prevents signal inversion from deep OTM noise
+
+[241] type=skill name=oral-health-analyzer key=["skill","oral-health-analyzer"]
+    分析口腔健康数据、识别口腔问题模式、评估口腔健康状况、提供个性化口腔健康建议。支持与营养、慢性病、用药等其他健康数据的关联分析。
+
+[242] type=skill name=orchestrate-batch-refactor key=["skill","orchestrate-batch-refactor"]
+    Plan and execute large refactors with dependency-aware work packets and parallel analysis.
+
+[243] type=skill name=os-scripting key=["skill","os-scripting"]
+    Operating system and shell scripting troubleshooting workflow for Linux, macOS, and Windows. Covers bash scripting, system administration, debugging, and automation.
+
+[244] type=skill name=oss-hunter key=["skill","oss-hunter"]
+    Automatically hunt for high-impact OSS contribution opportunities in trending repositories.
+
+[245] type=skill name=osterwalder-canvas-architect key=["skill","osterwalder-canvas-architect"]
+    Iterative consultant agent for building and validating logically consistent 9-block Business Model Canvases.
+
+[246] type=skill name=outlook-automation key=["skill","outlook-automation"]
+    Automate Outlook tasks via Rube MCP (Composio): emails, calendar, contacts, folders, attachments. Always search tools first for current schemas.
+
+[247] type=skill name=outlook-calendar-automation key=["skill","outlook-calendar-automation"]
+    Automate Outlook Calendar tasks via Rube MCP (Composio): create events, manage attendees, find meeting times, and handle invitations. Always search tools first for current schemas.
+
+[248] type=skill name=page-cro key=["skill","page-cro"]
+    Analyze and optimize individual pages for conversion performance.
+
+[249] type=skill name=pagerduty-automation key=["skill","pagerduty-automation"]
+    Automate PagerDuty tasks via Rube MCP (Composio): manage incidents, services, schedules, escalation policies, and on-call rotations. Always search tools first for current schemas.
+
+[250] type=skill name=pagespeed-enhancer key=["skill","pagespeed-enhancer"]
+    Scan, audit, and fix web performance issues across all four Lighthouse/PageSpeed Insights pillars — Performance, Accessibility, Best Practices, and SEO — in structured batches.
+
+[251] type=skill name=paid-ads key=["skill","paid-ads"]
+    You are an expert performance marketer with direct access to ad platform accounts. Your goal is to help create, optimize, and scale paid advertising campaigns that drive efficient customer acquisition.
+
+[252] type=skill name=pakistan-payments-stack key=["skill","pakistan-payments-stack"]
+    Design and implement production-grade Pakistani payment integrations (JazzCash, Easypaisa, bank/PSP rails, optional Raast) for SaaS with PKR billing, webhook reliability, and reconciliation.
+
+[253] type=skill name=papers-skill key=["skill","papers-skill"]
+    Skill for academic research workflows: search Semantic Scholar (200M+ papers), inspect citations, download arXiv PDFs, and extract PDF text. Bundles a self-contained Python CLI.
+
+[254] type=skill name=parallel-agents key=["skill","parallel-agents"]
+    Multi-agent orchestration patterns. Use when multiple independent tasks can run with different domain expertise or when comprehensive analysis requires multiple perspectives.
+
+[255] type=skill name=pathfinder key=["skill","pathfinder"]
+    Map a codebase into feature-grouped flowcharts, identify duplicated concerns across features, and propose a unified architecture. Use when asked to "find the ideal path," unify duplicated systems, or audit architecture before a refactor. Emits a proposed unified flowchart plus per-system /make-plan 
+
+[256] type=skill name=patterns key=["skill","patterns"]
+    Reference document for monopoly patterns.
+
+[257] type=skill name=payment-integration key=["skill","payment-integration"]
+    Integrate Stripe, PayPal, and payment processors. Handles checkout flows, subscriptions, webhooks, and PCI compliance. Use PROACTIVELY when implementing payments, billing, or subscription features.
+
+[258] type=skill name=paypal-integration key=["skill","paypal-integration"]
+    Master PayPal payment integration including Express Checkout, IPN handling, recurring billing, and refund workflows.
+
+[259] type=skill name=paywall-upgrade-cro key=["skill","paywall-upgrade-cro"]
+    You are an expert in in-app paywalls and upgrade flows. Your goal is to convert free users to paid, or upgrade users to higher tiers, at moments when they've experienced enough value to justify the commitment.
+
+[260] type=skill name=pc-games key=["skill","pc-games"]
+    PC and console game development principles. Engine selection, platform features, optimization strategies.
+
+[261] type=skill name=pci-compliance key=["skill","pci-compliance"]
+    Master PCI DSS (Payment Card Industry Data Security Standard) compliance for secure payment processing and handling of cardholder data.
+
+[262] type=skill name=pdb-database key=["skill","pdb-database"]
+    Use when you want to search for or download experimentally-determined 3D structures for biomolecules (proteins, nucleic acids, bound ligands). Supports searching by sequence similarity, structure similarity, chemical and other attributes. Also use to get metadata about biomolecular structure experim
+
+[263] type=skill name=pdf key=["skill","pdf"]
+    Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rotating pages, adding watermarks, creating new PDFs, filling PDF forms, encrypting/decrypting PDFs, ext
+
+[264] type=skill name=pdf-conversion-router key=["skill","pdf-conversion-router"]
+    Use when converting a PDF into another format such as Markdown, HTML, text, JSON, DOCX, or structured notes and the agent must choose the best extraction route, settings, and cleanup strategy for maximum fidelity and readability.
+
+[265] type=skill name=pdf-official key=["skill","pdf-official"]
+    This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see reference.md. If you need to fill out a PDF form, read forms.md and follow its instructions.
+
+[266] type=skill name=pentest-checklist key=["skill","pentest-checklist"]
+    Provide a comprehensive checklist for planning, executing, and following up on penetration tests. Ensure thorough preparation, proper scoping, and effective remediation of discovered vulnerabilities.
+
+[267] type=skill name=pentest-commands key=["skill","pentest-commands"]
+    Provide a comprehensive command reference for penetration testing tools including network scanning, exploitation, password cracking, and web application testing. Enable quick command lookup during security assessments.
+
+[268] type=skill name=performance-engineer key=["skill","performance-engineer"]
+    Expert performance engineer specializing in modern observability,
+
+[269] type=skill name=performance-optimization key=["skill","performance-optimization"]
+    Optimizes application performance. Use when performance requirements exist, when you suspect performance regressions, or when Core Web Vitals or load times need improvement. Use when profiling reveals bottlenecks that need fixing.
+
+[270] type=skill name=performance-optimizer key=["skill","performance-optimizer"]
+    Identifies and fixes performance bottlenecks in code, databases, and APIs. Measures before and after to prove improvements.
+
+[271] type=skill name=performance-profiling key=["skill","performance-profiling"]
+    Performance profiling principles. Measurement, analysis, and optimization techniques.
+
+[272] type=skill name=performance-testing-review-ai-review key=["skill","performance-testing-review-ai-review"]
+    You are an expert AI-powered code review specialist combining automated static analysis, intelligent pattern recognition, and modern DevOps practices. Leverage AI tools (GitHub Copilot, Qodo, GPT-5, C
+
+[273] type=skill name=performance-testing-review-multi-agent-review key=["skill","performance-testing-review-multi-agent-review"]
+    Use when working with performance testing review multi agent review
+
+[274] type=skill name=permission-manager key=["skill","permission-manager"]
+    Manage opencode permissions: review always-allow lists, suggest safe read-only commands, configure permission patterns
+
+[275] type=skill name=personal-tool-builder key=["skill","personal-tool-builder"]
+    Expert in building custom tools that solve your own problems first. The best products often start as personal tools - scratch your own itch, build for yourself, then discover others have the same itch.
+
+[276] type=skill name=phase-gated-debugging key=["skill","phase-gated-debugging"]
+    Use when debugging any bug. Enforces a 5-phase protocol where code edits are blocked until root cause is confirmed. Prevents premature fix attempts.
+
+[277] type=skill name=photopea-embedded-editor key=["skill","photopea-embedded-editor"]
+    Embed Photopea in web apps using photopea.js. Covers embedding, file I/O, scripting, exporting, layers, text, filters, and the full Photoshop-compatible API.
+
+[278] type=skill name=php key=["skill","php"]
+    Language-specific super-code guidelines for php.
+
+[279] type=skill name=php-pro key=["skill","php-pro"]
+    Write idiomatic PHP code with generators, iterators, SPL data structures, and modern OOP features. Use PROACTIVELY for high-performance PHP applications.
+
+[280] type=skill name=pi-custom-model key=["skill","pi-custom-model"]
+    Register custom Pi Agent model slugs so saved OpenRouter variants resolve correctly.
+
+[281] type=skill name=pi-web-search key=["skill","pi-web-search"]
+    Give Pi Agents a safe web-search and fetch workflow using the installed pi-web-access package.
+
+[282] type=skill name=pilot-protocol key=["skill","pilot-protocol"]
+    Give an AI agent a permanent network address, encrypted P2P messaging, and an installable app store via Pilot Protocol
+
+[283] type=skill name=pipecat-friday-agent key=["skill","pipecat-friday-agent"]
+    Build a low-latency, Iron Man-inspired tactical voice assistant (F.R.I.D.A.Y.) using Pipecat, Gemini, and OpenAI.
+
+[284] type=skill name=pipedrive-automation key=["skill","pipedrive-automation"]
+    Automate Pipedrive CRM operations including deals, contacts, organizations, activities, notes, and pipeline management via Rube MCP (Composio). Always search tools first for current schemas.
+
+[285] type=skill name=pitch-psychologist key=["skill","pitch-psychologist"]
+    One sentence - what this skill does and when to invoke it
+
+[286] type=skill name=plaid-fintech key=["skill","plaid-fintech"]
+    Expert patterns for Plaid API integration including Link token flows, transactions sync, identity verification, Auth for ACH, balance checks, webhook handling, and fintech compliance best practices.
+
+[287] type=skill name=plan-writing key=["skill","plan-writing"]
+    Structured task planning with clear breakdowns, dependencies, and verification criteria. Use when implementing features, refactoring, or any multi-step work.
+
+[288] type=skill name=planejar-integracao-backlog key=["skill","planejar-integracao-backlog"]
+    Analisar backlog e arquitetura para planejar integração com sistemas existentes
+
+[289] type=skill name=planning-and-task-breakdown key=["skill","planning-and-task-breakdown"]
+    Breaks work into ordered tasks. Use when you have a spec or clear requirements and need to break work into implementable tasks. Use when a task feels too large to start, when you need to estimate scope, or when parallel work is possible.
+
+[290] type=skill name=planning-with-files key=["skill","planning-with-files"]
+    Work like Manus: Use persistent markdown files as your "working memory on disk."
+
+[291] type=skill name=playwright-java key=["skill","playwright-java"]
+    Scaffold, write, debug, and enhance enterprise-grade Playwright E2E tests in Java using Page Object Model, JUnit 5, Allure reporting, and parallel execution.
+
+[292] type=skill name=playwright-skill key=["skill","playwright-skill"]
+    IMPORTANT - Path Resolution: This skill can be installed in different locations (plugin system, manual installation, global, or project-specific). Before executing any commands, determine the skill directory based on where you loaded this SKILL.md file, and use that path in all commands below.
+
+[293] type=skill name=plotly key=["skill","plotly"]
+    Interactive visualization library. Use when you need hover info, zoom, pan, or web-embeddable charts. Best for dashboards, exploratory analysis, and presentations. For static publication figures use matplotlib or scientific-visualization.
+
+[294] type=skill name=plugin-creator key=["skill","plugin-creator"]
+    Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update m
+

@@ -40,6 +40,7 @@ WORKDIR /repo
 
 # Carry the install from the previous stage
 COPY --from=deps /repo/ ./
+COPY . .
 
 # Generate the Prisma client against the committed schema.
 # `prisma generate` runs the postinstall hooks that pnpm --ignore-scripts skipped.

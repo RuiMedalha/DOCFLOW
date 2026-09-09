@@ -1771,6 +1771,8 @@ export class DocumentsService {
         fileSize: true,
         metadata: true,
         supplierVerifiedAt: true,
+        supplierNameConfidence: true,
+        supplierAddressConfidence: true,
       },
     });
     if (!existing) throw new NotFoundException('Document not found');

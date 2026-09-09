@@ -15,6 +15,7 @@ import { ExtractionProcessor } from './extraction.processor';
 import { ExtractionService } from './extraction.service';
 import { SupplierResolver } from './supplier-resolver';
 import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constants';
+import { QueueModule } from '../../common/queue/queue.module';
 
 /**
  * ExtractionModule — owns the AT-QR decode + OCR + IBAN anti-fraud flow.
@@ -43,6 +44,16 @@ import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constan
     PrismaModule,
     StorageModule,
     AiModule,
+    // QueueModule.forRoot() returns a DynamicModule with `global: true`,
+    // so the QUEUE_ADAPTER provider is reachable from any module in the
+    // app — including ExtractionService, which @Injects the symbol to
+    // publish `document.extracted` at the end of a successful
+    // processDocumentAsync. We import it here explicitly so that the
+    // extraction pipeline can publish pipeline events regardless of the
+    // order in which app.module.ts composes the feature modules, and
+    // so this module's wiring is self-contained — an operator reading
+    // extraction.module.ts can see all of its dependencies at a glance.
+    QueueModule.forRoot(),
     forwardRef(() => DocumentsModule),
     BullModule.registerQueueAsync({
       name: EXTRACTION_QUEUE,

@@ -3,10 +3,15 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Save, Loader2 } from 'lucide-react';
-import { useCreateParty, useUpdateParty, useSeedAccounts } from './use-parties';
-import type { PartyInput, Account } from '../_lib/types';
+import {
+  useCreateParty,
+  useUpdateParty,
+  useSeedAccounts,
+  usePartyCategories,
+} from './use-parties';
+import type { PartyInput, Account, PartyCategory } from '../_lib/types';
 
-export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?: string }) {
+export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput; partyId?: string; isAdmin?: boolean }) {
   const router = useRouter();
   const create = useCreateParty();
   const update = useUpdateParty();
@@ -14,6 +19,7 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
   const seedAccounts: Account[] = Array.isArray(seedAccountsData)
     ? seedAccountsData
     : (seedAccountsData && (seedAccountsData as any).items) || [];
+  const partyCategories = usePartyCategories().data ?? [];
   const [form, setForm] = useState<PartyInput>(initial ?? {
     type: 'FORNECEDOR',
     name: '',
@@ -27,6 +33,9 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
     city: '',
     postalCode: '',
     country: 'Portugal',
+    partyCategoryId: '',
+    isRecurring: false,
+    isRecurringManualOverride: false,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +57,12 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
         country: form.country?.trim() || undefined,
         defaultDebitAccountId: form.defaultDebitAccountId,
         defaultCreditAccountId: form.defaultCreditAccountId,
+        // Sprint E: empty string clears the category — server treats it
+        // as null in the Prisma update path.
+        partyCategoryId: form.partyCategoryId || undefined,
+        // ADMIN-only fields: server rejects (403) if non-ADMIN tries to send these.
+        isRecurring: isAdmin ? form.isRecurring : undefined,
+        isRecurringManualOverride: isAdmin ? form.isRecurringManualOverride : undefined,
       };
       const res = partyId
         ? await update.mutateAsync({ id: partyId, ...cleaned })
@@ -70,6 +85,18 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
         </Field>
         <Field label="Nome *">
           <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label="Categoria">
+          <select
+            className="select"
+            value={form.partyCategoryId ?? ''}
+            onChange={(e) => setForm({ ...form, partyCategoryId: e.target.value })}
+          >
+            <option value="">— Sem categoria —</option>
+            {partyCategories.map((c: PartyCategory) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </Field>
         <Field label="NIF (9 dígitos)">
           <input className="input font-mono" maxLength={9} value={form.nif ?? ''} onChange={(e) => setForm({ ...form, nif: e.target.value })} />
@@ -114,6 +141,49 @@ export function PartyForm({ initial, partyId }: { initial?: PartyInput; partyId?
           </select>
         </Field>
       </div>
+
+      {isAdmin === true && (
+        <div className="sm:col-span-2 mt-4 pt-4 border-t space-y-2" style={{ borderColor: 'var(--border)' }}>
+          <div className="text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            Flags de recorrência (ADMIN)
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.isRecurring === true}
+              disabled={!isAdmin}
+              onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium">Recorrente</span>
+              <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                Marca esta entidade como fornecedor recorrente. A flag é normalmente
+                atualizada pelo auto-flip quando ≥3 faturas estão associadas.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.isRecurringManualOverride === true}
+              disabled={!isAdmin}
+              onChange={(e) =>
+                setForm({ ...form, isRecurringManualOverride: e.target.checked })
+              }
+            />
+            <span>
+              <span className="font-medium">Override ADMIN</span>
+              <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                Quando ativo, pausa o auto-flip em supplier-resolver — o valor de
+                <code className="mx-1 px-1 rounded" style={{ background: 'var(--surface-2)' }}>isRecurring</code>
+                permanece travado até ser desligado.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md p-3 text-xs" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.30)', color: 'var(--danger-fg)' }}>

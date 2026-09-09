@@ -9,6 +9,7 @@ import {
 import {
   AuditAction,
   DocumentOrigin,
+  DocumentProcessingStatus,
   DocumentStatus,
   DocumentType,
   Prisma,
@@ -19,7 +20,26 @@ import { AuditService } from '../audit/audit.service';
 import {
   DocumentQueryDto,
   UpdateDocumentDto,
+  CorrectSupplierDto,
 } from './dto/document.dto';
+import { UpdateSupplierDto } from './dto/supplier.dto';
+import {
+  ConfirmAllDto,
+  ConfirmFieldDto,
+  ExtractionConfidenceResponseDto,
+  FIELD_COLUMN,
+  FieldConfidenceDto,
+  REVIEWABLE_FIELDS,
+  ReviewableField,
+} from './dto/extraction-confidence.dto';
+import {
+  summariseConfidence,
+  type FieldInput,
+} from './extraction-confidence';
+import {
+  isValidIban,
+  isValidPortugueseNif,
+} from '../../common/validation/tax-id.validator';
 import {
   FolderRulesEngine,
 } from './folder-rules/folder-rules.engine';
@@ -35,8 +55,17 @@ import {
   VAT_DEDUCTIBILITY_HINTS,
 } from './folder-rules/folder-rules.types';
 import { StorageService } from './storage/storage-service.interface';
+import { buildDocumentPath } from './storage/path-builder';
+import { slugify } from '../../common/storage/slug';
+import { docLockKey } from '../../common/locks';
+import {
+  QUEUE_ADAPTER,
+  type QueueAdapter,
+} from '../../common/queue/queue-adapter.interface';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
+import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
+import { NifLookupService } from '../nif-lookup/nif-lookup.service';
 
 export interface UploadedFile {
   fieldname: string;
@@ -89,6 +118,17 @@ export class DocumentsService {
     // resolved to null.
     private readonly extraction: ExtractionService,
     private readonly imageToPdf: ImageToPdfService,
+    // Sprint 1.C — Portal das Finanças enrichment after a
+    // supplier re-extract. Optional because we never want the
+    // re-extract to hard-fail when the base is unreachable —
+    // the service falls back to mod-11-only automatically.
+    private readonly nifLookup: NifLookupService,
+    // Sprint H — publish `document.uploaded` to the queue so the
+    // ProcessingService pipeline picks the doc up. The QueueAdapter is
+    // supplied by QueueModule.forRoot() (eventemitter in dev, BullMQ in
+    // prod). Injecting here avoids the previous static accessor pattern
+    // (security-audit H-5) that broke cross-pod delivery.
+    @Inject(QUEUE_ADAPTER) private readonly queue: QueueAdapter,
   ) {
     if (!extraction) {
       this.logger.error(
@@ -118,6 +158,25 @@ export class DocumentsService {
       );
     }
 
+    // Magic-bytes check — defence-in-depth against MIME confusion attacks
+    // (e.g. attacker sends `Content-Type: application/pdf` in the multipart
+    // part but the bytes are an HTML polyglot or a binary that would be
+    // served back as `Content-Disposition: inline` and trigger stored XSS
+    // when opened in a new tab). We refuse ANY mismatch between the
+    // client-declared MIME and the buffer's actual signature. Audit finding
+    // §4.8 of `audit-and-ui-overhaul/AUDIT-REPORT.md` (MEDIUM).
+    try {
+      assertMimeMatchesSignature(file.buffer, file.mimetype);
+    } catch (err) {
+      this.logger.warn(
+        `[upload] magic-bytes mismatch for tenant=${tenantId} ` +
+          `declared=${file.mimetype}: ${(err as Error).message}`,
+      );
+      throw new BadRequestException(
+        `Invalid file signature — declared ${file.mimetype} does not match file content`,
+      );
+    }
+
     const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
 
     // H-06 dedup strategy:
@@ -139,8 +198,10 @@ export class DocumentsService {
       });
     }
 
-    // Key shape: <tenantId>/<yyyy>/<mm>/<random>.<ext>
-    // Year/month groups keep directory listings manageable even at scale.
+    // Key shape: _inbox/<tenantId>/<yyyy>/<mm>/<random>.<ext>
+    // Every upload lands in `_inbox/`; `relocateAfterApprove()` moves the
+    // bytes into the deterministic party/category folder once the row is
+    // approved. Year/month groups keep the inbox listings manageable at scale.
     const now = new Date();
     const fileKey = this.buildStorageKey(tenantId, file.originalname, now);
 
@@ -201,6 +262,13 @@ export class DocumentsService {
           type: this.coerceType(preType),
           suggestedFolder,
           finalFolder: suggestedFolder,
+          // Sprint H — seed processingStatus so the pipeline can pick
+          // up the doc via the `document.uploaded` queue event. Without
+          // this, the ProcessingService handleReceived idempotency
+          // guard (which checks `processingStatus !== RECEIVED`) would
+          // skip the doc entirely and the pipeline would never advance.
+          processingStatus: DocumentProcessingStatus.RECEIVED,
+          processingStartedAt: new Date(),
           // Keep the human-facing filename the user uploaded as
           // `fileName` for now — extraction hasn't run, so we don't yet
           // know supplier/docNumber. After extraction populates those
@@ -240,70 +308,62 @@ export class DocumentsService {
       metadata: { fileName: file.originalname, size: file.size, mimeType: file.mimetype },
     });
 
-    // Auto-trigger extraction — fires-and-forgets so the upload
-    // response isn't blocked by OCR/QR decode. The worker (or the
-    // service's sync fallback) owns the resulting writes.
+    // Auto-trigger the processing pipeline — publishes
+    // `document.uploaded` on the queue. The ProcessingService picks the
+    // event up via `subscribeBatch` and runs handleReceived (RECEIVED
+    // → EXTRACTING → enqueue extraction → ... → COMPLETED).
+    //
+    // Why a queue publish instead of calling extraction.enqueue
+    // directly: the new pipeline is responsible for the WHOLE 4-stage
+    // flow. Bypassing it via direct extraction.enqueue would leave the
+    // SSE controller and the doc's `processingStatus` column out of
+    // sync with reality.
     //
     // HARDENED 2026-09-01: the previous fire-and-forget had two silent
-    // failure modes that left Documents stuck in NOVO:
-    //   1) If `this.extraction` was somehow null/undefined the call
-    //      threw synchronously, the .catch swallowed it, and the
-    //      document was never updated.
-    //   2) If the enqueue Promise was lost (e.g. last fire-and-forget
-    //      promise after the response already went out) the .catch never
-    //      attached and the rejection became an unhandled rejection.
-    // We now:
-    //   - Log "auto-extract trigger" BEFORE invoking enqueue so we can
-    //     see in the API log that the trigger fired.
-    //   - Wrap the synchronous part in try/catch so a TypeError on a
-    //     null extraction (defensive) becomes a logged error.
+    // failure modes that left Documents stuck in NOVO. We now:
+    //   - Log "pipeline trigger" BEFORE invoking publish so the API log
+    //     records the trigger fire.
+    //   - Wrap in try/catch so a TypeError on a null queue (defensive)
+    //     becomes a logged error.
     //   - Attach .then() AND .catch() to the Promise to log outcome
     //     regardless of which path it takes.
-    //   - Write a `metadata.extraction.trigger` audit entry even if the
-    //     enqueue fails — so the row never ends up silent.
     const triggerAt = new Date().toISOString();
     this.logger.log(
-      `[upload] auto-extract trigger for document=${doc.id} ` +
+      `[upload] pipeline trigger for document=${doc.id} ` +
         `tenant=${tenantId} at=${triggerAt}`,
     );
     try {
-      const enqueuePromise = this.extraction.enqueue({
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: doc.id,
         tenantId,
         userId,
-        documentId: doc.id,
+        fileKey: doc.fileKey,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        originalFilename: file.originalname,
+        uploadedAt: triggerAt,
       });
-      // Log the eventual outcome (success or rejection). This runs
-      // AFTER the upload response goes out — that's fine, fire-and-forget
-      // is the contract — but the operator can now ALWAYS see whether
-      // extraction started and what its final disposition was.
-      enqueuePromise
-        .then((result) => {
+      publishPromise
+        .then(() => {
           const elapsed = Date.now() - new Date(triggerAt).getTime();
           this.logger.log(
-            `[upload] auto-extract finished for document=${doc.id} ` +
-              `tenant=${tenantId} in ${elapsed}ms (ok=${result.ok}, ` +
-              `source=${result.source ?? "?"}, confidence=${result.confidence ?? "?"}, ` +
-              `reason=${(result as { reason?: string }).reason ?? "n/a"})`,
+            `[upload] pipeline trigger queued for document=${doc.id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
           );
         })
         .catch((err) => {
           this.logger.error(
-            `[upload] auto-extract FAILED for document=${doc.id} ` +
+            `[upload] pipeline trigger FAILED for document=${doc.id} ` +
               `tenant=${tenantId}. Reason: ${(err as Error).message}`,
-          );
-          this.logger.error(
-            `[upload] auto-extract stack: ${(err as Error).stack ?? "(no stack)"}`,
           );
         });
     } catch (err) {
-      // Synchronous throw — e.g. this.extraction is null in a mis-wired
+      // Synchronous throw — e.g. this.queue is null in a mis-wired
       // module setup. Log loud so the operator sees it.
       this.logger.error(
-        `[upload] auto-extract SYNC THROW for document=${doc.id} ` +
+        `[upload] pipeline trigger SYNC THROW for document=${doc.id} ` +
           `tenant=${tenantId}. Reason: ${(err as Error).message}`,
-      );
-      this.logger.error(
-        `[upload] auto-extract sync stack: ${(err as Error).stack ?? "(no stack)"}`,
       );
     }
 
@@ -365,6 +425,9 @@ export class DocumentsService {
     const contains = `%${search}%`;
     const filters: Prisma.Sql[] = [
       Prisma.sql`d."tenantId" = ${tenantId}`,
+      // Hide soft-deleted rows from the search results; the trash
+      // listing is served by `findInTrash()`, not this raw SQL path.
+      Prisma.sql`d."deletedAt" IS NULL`,
       Prisma.sql`d.status <> 'ARQUIVADO'::"DocumentStatus"`,
     ];
 
@@ -378,6 +441,9 @@ export class DocumentsService {
       const end = new Date(query.dateTo);
       end.setUTCHours(23, 59, 59, 999);
       filters.push(Prisma.sql`d."createdAt" <= ${end}`);
+    }
+    if (query.origin && query.origin.length > 0) {
+      filters.push(Prisma.sql`d.origin = ANY(${query.origin})::"DocumentOrigin"`);
     }
 
     const tsquery = Prisma.sql`websearch_to_tsquery('simple', ${search})`;
@@ -428,6 +494,77 @@ export class DocumentsService {
   }
 
   /**
+   * Documents linked to a given party (supplier/customer) — powers the
+   * "Faturas recentes" section on `/parties/:id`. Same shape as
+   * `findAll` so the UI can reuse its list component. We DO NOT use
+   * the Prisma relation (`Party.documents`) on purpose: that would
+   * bypass pagination/limit and explode for recurring suppliers with
+   * 500+ docs. The party-scoped query is fed through `buildWhere` so
+   * status/date filters stay consistent with the inbox.
+   *
+   * Soft-deleted rows (`deletedAt != null`) are excluded so the party
+   * detail page only shows live docs; trash recovery happens on the
+   * dedicated `/documents/trash` endpoint.
+   */
+  async findByParty(
+    tenantId: string,
+    partyId: string,
+    limit = 10,
+    dateFrom?: string,
+    dateTo?: string,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const [items, total] = await Promise.all([
+      this.prisma.document.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          status: { not: DocumentStatus.ARQUIVADO },
+          OR: [{ partyId }, { crmContactId: partyId }],
+          ...(dateFrom || dateTo
+            ? {
+                createdAt: {
+                  ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+                  ...(dateTo
+                    ? (() => {
+                        const end = new Date(dateTo);
+                        end.setUTCHours(23, 59, 59, 999);
+                        return { lte: end };
+                      })()
+                    : {}),
+                },
+              }
+            : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: safeLimit,
+        include: {
+          uploadedBy: { select: { id: true, name: true, email: true } },
+          folder: { select: { id: true, name: true, pattern: true } },
+          party: { select: { id: true, name: true, country: true, isRecurring: true } },
+        },
+      }),
+      this.prisma.document.count({
+        where: {
+          tenantId,
+          deletedAt: null,
+          status: { not: DocumentStatus.ARQUIVADO },
+          OR: [{ partyId }, { crmContactId: partyId }],
+        },
+      }),
+    ]);
+    return {
+      items: items.map((d) => this.sanitize(d)),
+      meta: {
+        total,
+        page: 1,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  /**
    * Folders scoped to the current tenant — powers the inbox sidebar /
    * bulk-move target. Sorted by name asc, empty list when no folders
    * exist (the UI degrades to showing only the inbox tab).
@@ -452,6 +589,24 @@ export class DocumentsService {
     });
     if (!doc) throw new NotFoundException('Document not found');
     return this.sanitize(doc);
+  }
+
+  /**
+   * GET /documents/:id/iban-history — convenience wrapper used by the document
+   * detail page. Resolves the document → linked party, then returns that
+   * party's IBAN change rows. Returns `{ items: [] }` when the document has
+   * no party yet (so the UI shows the empty state instead of a 404).
+   */
+  async listIbanHistoryForDocument(tenantId: string, documentId: string) {
+    const doc = await this.prisma.document.findFirst({
+      where: { id: documentId, tenantId },
+      select: { partyId: true },
+    });
+    if (!doc?.partyId) return { items: [] };
+    return { items: await this.prisma.ibanHistory.findMany({
+      where: { tenantId, partyId: doc.partyId },
+      orderBy: { createdAt: 'desc' },
+    }) };
   }
 
   // ─────────────────────────────────────────── update ───────────────────
@@ -716,38 +871,263 @@ export class DocumentsService {
       select: { id: true, fileName: true, mimeType: true, fileKey: true, pdfKey: true },
     });
     if (!doc) throw new NotFoundException('Document not found');
-    const url = await this.storage.getSignedUrl(doc.fileKey, 300);
+    // Sprint H security-audit M-14 — local driver returns an empty
+    // string (with a WARN log inside the driver) because no signed URL
+    // exists. We fall back to the controller's download route. S3/
+    // MinIO drivers will return a real presigned URL here.
+    const signedUrl = await this.storage.getSignedUrl(doc.fileKey, 300);
+    const url = signedUrl || `/api/v1/documents/${doc.id}/download`;
     return { url, fileName: doc.fileName, mimeType: doc.mimeType };
   }
 
   // ─────────────────────────────────────────── soft delete ──────────────
 
+  /**
+   * Soft-delete (trash) a document. Writes `deletedAt = now()` so the row
+   * disappears from the inbox / search / party lookups (every listing
+   * path filters `deletedAt: null`) but stays on disk + in the audit
+   * chain. The ADMIN can restore via `restore()` which zeroes the flag.
+   *
+   * Distinct from the legacy `status: ARQUIVADO` flow — the new soft-
+   * delete is reversible, the legacy ARQUIVADO state is kept only for
+   * back-compat with rows pre-dating the trash column. Hard delete
+   * (`hardDelete`) stays ADMIN-only and physically removes the row +
+   * storage bytes; soft delete is available to every authenticated user
+   * of the tenant (controller gates the role).
+   *
+   * The audit row uses `EDIT` so the row's prior lifecycle (upload →
+   * approve) is preserved as `EDIT subAction=document.soft_deleted` rather
+   * than mixed in with the irreversible `DELETE` chain.
+   */
   async softDelete(tenantId: string, userId: string, id: string) {
     const existing = await this.prisma.document.findFirst({
       where: { id, tenantId },
-      select: { id: true },
+      select: { id: true, deletedAt: true },
     });
     if (!existing) throw new NotFoundException('Document not found');
 
-    // The Prisma schema doesn't have a `deletedAt` column on Document
-    // (we keep it intentionally minimal). We model soft-delete via status
-    // = ARQUIVADO so the row stays queryable for audit but disappears
-    // from default lists (status != ARQUIVADO).
-    await this.prisma.document.update({
-      where: { id },
-      data: { status: DocumentStatus.ARQUIVADO },
+    const deletedAt = new Date();
+    // Atomic guard: only flip when the row is currently NOT trashed.
+    // The legacy `status = ARQUIVADO` flag is preserved (front-end
+    // inbox views still hide ARQUIVADO rows); the trash flag is the
+    // authoritative tombstone and is what the restore path resets.
+    const updated = await this.prisma.document.update({
+      where: { id, tenantId },
+      data: {
+        deletedAt,
+      },
     });
 
     await this.audit.log({
       tenantId,
       userId,
-      action: AuditAction.DELETE,
+      action: AuditAction.EDIT,
       entityType: 'document',
       entityId: id,
-      metadata: { reason: 'soft-delete (arquivado)' },
+      metadata: {
+        subAction: 'document.soft_deleted',
+        deletedAt: deletedAt.toISOString(),
+        previousDeletedAt: existing.deletedAt?.toISOString() ?? null,
+      } as Prisma.InputJsonValue,
     });
 
-    return { id, status: DocumentStatus.ARQUIVADO };
+    return { id: updated.id, deletedAt: updated.deletedAt };
+  }
+
+  /**
+   * Restore a soft-deleted document (ADMIN-only). Clears `deletedAt` so
+   * the row is once again visible to the inbox / search / party
+   * listings. Idempotent: a row already `deletedAt = null` returns the
+   * current state without rewriting the column or emitting a duplicate
+   * audit row.
+   *
+   * If the row never existed (or belongs to another tenant) we surface
+   * 404 — same response shape as the other document endpoints.
+   */
+  async restore(tenantId: string, userId: string, id: string) {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true, deletedAt: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+    if (existing.deletedAt === null) {
+      // Already live — idempotent no-op, no audit row.
+      return { id, deletedAt: null, restored: false };
+    }
+
+    const updated = await this.prisma.document.update({
+      where: { id, tenantId },
+      data: { deletedAt: null },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: 'document.restored',
+        previousDeletedAt: existing.deletedAt!.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    return { id: updated.id, deletedAt: updated.deletedAt, restored: true };
+  }
+
+  /**
+   * List soft-deleted documents for the trash page. Tenant-scoped,
+   * paginated. Returns the same `{ items, meta }` envelope as `findAll`
+   * so the UI can reuse its list component.
+   */
+  async findInTrash(tenantId: string, query: DocumentQueryDto) {
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 20, 100);
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.DocumentWhereInput = {
+      tenantId,
+      // `not: null` is the canonical "tombstoned" predicate. `findAll`
+      // and friends filter `deletedAt: null`, so the trash listing is
+      // the symmetric inverse — never overlap.
+      deletedAt: { not: null },
+    };
+    if (query.type) where.type = query.type;
+    if (query.partyId) {
+      where.OR = [
+        { partyId: query.partyId },
+        { crmContactId: query.partyId },
+      ];
+    }
+    if (query.dateFrom || query.dateTo) {
+      const range: Record<string, Date> = {};
+      if (query.dateFrom) range.gte = new Date(query.dateFrom);
+      if (query.dateTo) {
+        const end = new Date(query.dateTo);
+        end.setUTCHours(23, 59, 59, 999);
+        range.lte = end;
+      }
+      where.deletedAt = range;
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.document.findMany({
+        where,
+        orderBy: { deletedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          uploadedBy: { select: { id: true, name: true, email: true } },
+          folder: { select: { id: true, name: true, pattern: true } },
+          party: { select: { id: true, name: true, country: true, isRecurring: true } },
+        },
+      }),
+      this.prisma.document.count({ where }),
+    ]);
+
+    return {
+      items: items.map((d) => this.sanitize(d)),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ─────────────────────────────────────────── hard-delete ──────────────
+
+  /**
+   * Destructive delete. ADMIN-only because it's irreversible: the
+   * underlying file bytes are removed from storage AND the DB row is
+   * physically removed (not soft-archived). Used by the "🗑️ Apagar"
+   * button on the detail page when the operator wants the document
+   * gone — typically after a wrong upload or a duplicate that slipped
+   * past dedup.
+   *
+   * Order of operations matters:
+   *   1. Fetch the row under tenant scope. 404 if cross-tenant / missing
+   *      — never reveal whether the id exists in another tenant.
+   *   2. Best-effort remove of the original fileKey + pdfKey from
+   *      storage. Storage.remove is idempotent (a missing key is NOT
+   *      an error) — failures are logged but do NOT block the delete.
+   *   3. Audit row BEFORE the DB delete so the forensic trail proves
+   *      who pulled the trigger even if the subsequent delete raises.
+   *      Audit rows are write-once and independent of the Document row
+   *      (AuditLog only links to Tenant, never to Document) — so we
+   *      deliberately do NOT delete existing audit history.
+   *   4. prisma.document.delete — cascades to DocumentItem, PaymentEvent
+   *      and any other FK with onDelete: Cascade (see prisma schema).
+   *
+   * Race: a concurrent relocator could be moving the same fileKey
+   * right now. Because storage.remove is idempotent and the file is
+   * one-way gone after this call, the worst case is the relocator
+   * moves TO a path we just vacated (orphan) — the fileKey on the
+   * row is already deleted in step 4, so the relocator's update will
+   * silently fail on a row that no longer exists (P2025 caught by
+   * relocateAfterApprove's lock-based read). No data corruption.
+   */
+  async hardDelete(tenantId: string, userId: string, id: string): Promise<void> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        fileKey: true,
+        pdfKey: true,
+        fileName: true,
+        supplier: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    // Best-effort storage cleanup. We wrap each remove in its own
+    // try/catch so a failure on one key doesn't block the other —
+    // the DB delete is the commit point regardless.
+    if (existing.fileKey) {
+      try {
+        await this.storage.remove(existing.fileKey);
+      } catch (err) {
+        this.logger.warn(
+          `[hardDelete] storage.remove failed for fileKey=${existing.fileKey} ` +
+            `document=${existing.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    if (existing.pdfKey) {
+      try {
+        await this.storage.remove(existing.pdfKey);
+      } catch (err) {
+        this.logger.warn(
+          `[hardDelete] storage.remove failed for pdfKey=${existing.pdfKey} ` +
+            `document=${existing.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Forensic row BEFORE delete so the chain proves the action even
+    // if step 4 raises (Prisma row-missing FK would surface as P2003,
+    // but it's much cleaner to have the audit row committed first).
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.DELETE,
+      entityType: 'document',
+      entityId: existing.id,
+      metadata: {
+        subAction: 'document.hard_deleted',
+        fileName: existing.fileName,
+        supplier: existing.supplier,
+        fileKey: existing.fileKey,
+        pdfKey: existing.pdfKey,
+      } as Prisma.InputJsonValue,
+    });
+
+    // DocumentItem + PaymentEvent cascade-delete via FK onDelete:Cascade.
+    // AuditLog rows for this document survive intentionally (write-once
+    // forensic chain; they link to Tenant, not to Document, so they are
+    // unaffected by the document removal).
+    await this.prisma.document.delete({ where: { id: existing.id } });
   }
 
   // ─────────────────────────────────────────── approve ──────────────────
@@ -820,7 +1200,1254 @@ export class DocumentsService {
 
     await this.createPaymentEventIfMissing(tenantId, existing);
 
+    // Sprint E: now that the row is APPROVADO, move the bytes from the
+    // `_inbox/` staging path into the deterministic party/category folder.
+    // Skip silently when the document has no linked party — operator
+    // decides manually through a separate classification flow.
+    await this.relocateAfterApprove(tenantId, id, userId);
+
     return this.sanitize(updated);
+  }
+
+  // ─────────────────────────────────────────── re-extract ────────────────
+
+  /**
+   * Force a re-run of the extraction + enrichment pipeline for a document
+   * that already exists. Resets `processingStatus` to RECEIVED so the
+   * pipeline idempotency guard allows the doc to be picked up again, and
+   * publishes `document.uploaded` — the same event the upload path uses.
+   * The ProcessingService.handleReceived handler is responsible for the
+   * EXTRACTING → ENRICHING → COMPLETED transition.
+   *
+   * Used by the "Re-extrair dados" UI button when the AI missed fields or
+   * produced a low-confidence payload. The endpoint is the canonical
+   * surface; the previous /extraction/documents/:id queue trigger is
+   * kept for direct QR/OCR reprompts.
+   */
+  async reExtract(tenantId: string, userId: string, id: string) {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        status: true,
+        fileKey: true,
+        mimeType: true,
+        fileName: true,
+        fileSize: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const triggerAt = new Date().toISOString();
+
+    // Reset processingStatus — the pipeline's handleReceived idempotency
+    // guard skips docs whose status !== RECEIVED. Bumping `startedAt`
+    // also gives the UI's "stuck on EXTRACTING" SSE consumer a fresh
+    // signal to refresh.
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        processingStatus: DocumentProcessingStatus.RECEIVED,
+        processingStartedAt: new Date(triggerAt),
+        processingCompletedAt: null,
+        processingError: null,
+      },
+    });
+
+    this.logger.log(
+      `[reExtract] pipeline trigger for document=${existing.id} ` +
+        `tenant=${tenantId} at=${triggerAt}`,
+    );
+
+    // Same payload shape as upload() — handling is identical from the
+    // pipeline's perspective. Publishing `document.uploaded` (not
+    // `document.received`) routes through ProcessingService.handleReceived
+    // which owns the 4-stage state machine.
+    try {
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: existing.id,
+        tenantId,
+        userId,
+        fileKey: existing.fileKey,
+        mimeType: existing.mimeType,
+        fileSize: existing.fileSize,
+        originalFilename: existing.fileName,
+        uploadedAt: triggerAt,
+      });
+      publishPromise
+        .then(() => {
+          const elapsed = Date.now() - new Date(triggerAt).getTime();
+          this.logger.log(
+            `[reExtract] pipeline trigger queued for document=${existing.id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
+          );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `[reExtract] pipeline trigger FAILED for document=${existing.id} ` +
+              `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+          );
+        });
+    } catch (err) {
+      this.logger.error(
+        `[reExtract] pipeline trigger SYNC THROW for document=${existing.id} ` +
+          `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: { subAction: 're-extraction.triggered' } as Prisma.InputJsonValue,
+    });
+
+    return existing;
+  }
+
+  // ───────────────────────────────────────── correct-supplier ─────────────
+
+  /**
+   * Manual correction of the supplier (and customer) the AI/OCR captured.
+   *
+   * Use case: the extraction picked the wrong side as the supplier (e.g.
+   * extracted the customer name into `supplier`). The user provides the
+   * correct supplier + customer + NIFs + IBAN; we update the Document,
+   * write a forensic audit row carrying the BEFORE/AFTER diff, and re-
+   * publish `document.uploaded` so the 4-stage pipeline re-runs the
+   * enrichment (party link resolution, category routing) against the
+   * corrected fields.
+   *
+   * Tenant scoping: `findFirst({ where: { id, tenantId } })` — a cross-
+   * tenant id surfaces as `null` → 404. We never trust a body-supplied
+   * tenantId.
+   *
+   * Optional partyId: when supplied, the link is replaced atomically
+   * (the FK lives on Document.partyId). Passing `null` clears the link
+   * so the next pipeline run can re-resolve it from the corrected
+   * supplier NIF. Omitting the field keeps the existing partyId.
+   *
+   * The processingStatus reset mirrors `reExtract()` so the pipeline's
+   * idempotency guard picks the doc up again. The user sees the SSE
+   * stage transitions (RECEIVED → EXTRACTING → … → COMPLETED) as it
+   * re-runs.
+   */
+  async correctSupplier(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: CorrectSupplierDto,
+  ): Promise<{ ok: true; supplier: string; partyId: string | null }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        customer: true,
+        customerNif: true,
+        iban: true,
+        partyId: true,
+        fileKey: true,
+        mimeType: true,
+        fileName: true,
+        fileSize: true,
+        metadata: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    // Validate partyId belongs to the same tenant when supplied. An empty
+    // string clears the link; an explicit null also clears; a non-empty
+    // string MUST resolve to a row in this tenant — otherwise we refuse
+    // the write so a cross-tenant partyId can never slip in.
+    let partyIdToWrite: string | null | undefined;
+    if (dto.partyId === null || dto.partyId === '') {
+      partyIdToWrite = null;
+    } else if (dto.partyId !== undefined) {
+      const party = await this.prisma.party.findFirst({
+        where: { id: dto.partyId, tenantId },
+        select: { id: true },
+      });
+      if (!party) throw new NotFoundException('Party not found');
+      partyIdToWrite = party.id;
+    }
+    // else: dto.partyId === undefined → keep existing partyId (write below)
+
+    const triggerAt = new Date().toISOString();
+
+    // Sprint H+ Part 2 — supplierAddress / supplierCountry are NOT in the
+    // Document schema, so when the operator supplies them we write them
+    // under `metadata.supplierAddress` / `metadata.supplierCountry`.
+    // The existing metadata block is preserved (deep-merged via spread)
+    // so other extraction outputs (lineItems, totals, AI provider, etc.)
+    // are not disturbed. When the operator omits both fields, the
+    // metadata column is left untouched.
+    let metadataUpdate: Prisma.InputJsonValue | undefined;
+    if (
+      dto.supplierAddress !== undefined ||
+      dto.supplierCountry !== undefined
+    ) {
+      const baseMeta =
+        existing.metadata &&
+        typeof existing.metadata === 'object' &&
+        !Array.isArray(existing.metadata)
+          ? (existing.metadata as Record<string, unknown>)
+          : {};
+      metadataUpdate = {
+        ...baseMeta,
+        ...(dto.supplierAddress !== undefined
+          ? { supplierAddress: dto.supplierAddress }
+          : {}),
+        ...(dto.supplierCountry !== undefined
+          ? { supplierCountry: dto.supplierCountry }
+          : {}),
+      } as Prisma.InputJsonValue;
+    }
+
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplier: dto.supplier,
+        supplierNif: dto.supplierNif,
+        // Empty IBAN is intentionally coerced to null so the FraudWarning
+        // banner doesn't render an empty chip.
+        iban: dto.iban && dto.iban.trim() !== '' ? dto.iban : null,
+        customer: dto.customer,
+        customerNif: dto.customerNif,
+        // Only write partyId when the caller actually passed one (or null).
+        // Undefined means "leave the link untouched".
+        ...(partyIdToWrite !== undefined ? { partyId: partyIdToWrite } : {}),
+        // Optional address/country slots live in metadata (see block above).
+        ...(metadataUpdate !== undefined ? { metadata: metadataUpdate } : {}),
+        // Reset the pipeline state so the idempotency guard lets the
+        // doc back in. Same pattern as reExtract().
+        processingStatus: DocumentProcessingStatus.RECEIVED,
+        processingStartedAt: new Date(triggerAt),
+        processingCompletedAt: null,
+        processingError: null,
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        // Forensic trail for "who changed what, when, why". Keep the
+        // BEFORE values so the audit log is replayable without needing
+        // a separate "documentHistory" table. The reason field carries
+        // the operator-supplied note (free text, ≤ 500 chars).
+        subAction: 'document.correct_supplier',
+        oldSupplier: existing.supplier,
+        oldSupplierNif: existing.supplierNif,
+        oldCustomer: existing.customer,
+        oldCustomerNif: existing.customerNif,
+        oldIban: existing.iban,
+        oldPartyId: existing.partyId,
+        oldSupplierAddress:
+          (existing.metadata &&
+            typeof existing.metadata === 'object' &&
+            'supplierAddress' in (existing.metadata as Record<string, unknown>))
+            ? ((existing.metadata as Record<string, unknown>).supplierAddress ?? null)
+            : null,
+        oldSupplierCountry:
+          (existing.metadata &&
+            typeof existing.metadata === 'object' &&
+            'supplierCountry' in (existing.metadata as Record<string, unknown>))
+            ? ((existing.metadata as Record<string, unknown>).supplierCountry ?? null)
+            : null,
+        newSupplier: dto.supplier,
+        newSupplierNif: dto.supplierNif,
+        newCustomer: dto.customer,
+        newCustomerNif: dto.customerNif,
+        newIban: dto.iban && dto.iban.trim() !== '' ? dto.iban : null,
+        newPartyId: partyIdToWrite === undefined ? existing.partyId : partyIdToWrite,
+        newSupplierAddress: dto.supplierAddress ?? null,
+        newSupplierCountry: dto.supplierCountry ?? null,
+        reason: dto.reason ?? null,
+      } as Prisma.InputJsonValue,
+    });
+
+    this.logger.log(
+      `[correctSupplier] pipeline re-trigger for document=${id} ` +
+        `tenant=${tenantId} at=${triggerAt}`,
+    );
+
+    // Same payload shape as upload()/reExtract() — ProcessingService.handleReceived
+    // is the downstream consumer and treats all three identically.
+    try {
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: id,
+        tenantId,
+        userId,
+        fileKey: existing.fileKey,
+        mimeType: existing.mimeType,
+        fileSize: existing.fileSize,
+        originalFilename: existing.fileName,
+        uploadedAt: triggerAt,
+      });
+      publishPromise
+        .then(() => {
+          const elapsed = Date.now() - new Date(triggerAt).getTime();
+          this.logger.log(
+            `[correctSupplier] pipeline re-trigger queued for document=${id} ` +
+              `tenant=${tenantId} in ${elapsed}ms`,
+          );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `[correctSupplier] pipeline re-trigger FAILED for document=${id} ` +
+              `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+          );
+        });
+    } catch (err) {
+      this.logger.error(
+        `[correctSupplier] pipeline re-trigger SYNC THROW for document=${id} ` +
+          `tenant=${tenantId}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    return {
+      ok: true,
+      supplier: dto.supplier,
+      partyId: partyIdToWrite === undefined ? existing.partyId : partyIdToWrite,
+    };
+  }
+
+  // ───────────────────────────────────────── update-supplier (Part 2) ──────
+
+  /**
+   * Strict-validation manual edit of the supplier block.
+   *
+   * Companion to `correctSupplier()` (which uses regex-only validation
+   * for NIF/IBAN to preserve legacy test fixtures with seed-data NIFs
+   * that fail the mod-11 checksum, e.g. EDENOX `502782160`). This
+   * method uses `UpdateSupplierDto` which runs the structural mod-11
+   * + mod-97 validators from `common/validation/tax-id.validator.ts`.
+   *
+   * All fields are OPTIONAL — at least one must be provided (the
+   * controller enforces this with a `BadRequestException`). The
+   * Document row is updated, a forensic audit row is emitted
+   * (subAction `document.update_supplier`) carrying the BEFORE/AFTER
+   * diff for every field the operator touched, and the 4-stage
+   * pipeline is re-triggered via `document.uploaded` so enrichment
+   * re-runs against the corrected fields.
+   *
+   * Tenant scoping mirrors `correctSupplier` — a cross-tenant id
+   * surfaces as `null` → 404.
+   */
+  async updateSupplier(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: UpdateSupplierDto,
+  ): Promise<{
+    ok: true;
+    supplier: {
+      name: string | null;
+      nif: string | null;
+      iban: string | null;
+      address: string | null;
+      country: string | null;
+    };
+  }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        fileKey: true,
+        mimeType: true,
+        fileName: true,
+        fileSize: true,
+        metadata: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const triggerAt = new Date().toISOString();
+
+    // Build the metadata merge ONLY when the operator touches
+    // address/country. supplier / nif / iban live in dedicated columns
+    // so the metadata column is left untouched when those are the only
+    // changes — avoids clobbering existing extraction outputs.
+    let metadataUpdate: Prisma.InputJsonValue | undefined;
+    if (dto.address !== undefined || dto.country !== undefined) {
+      const baseMeta =
+        existing.metadata &&
+        typeof existing.metadata === 'object' &&
+        !Array.isArray(existing.metadata)
+          ? (existing.metadata as Record<string, unknown>)
+          : {};
+      metadataUpdate = {
+        ...baseMeta,
+        ...(dto.address !== undefined ? { supplierAddress: dto.address } : {}),
+        ...(dto.country !== undefined ? { supplierCountry: dto.country } : {}),
+      } as Prisma.InputJsonValue;
+    }
+
+    // Conditional update payload — only include fields the operator
+    // actually supplied (undefined means "leave unchanged"). Mirrors the
+    // UpdateDocumentDto pattern used in `update()`.
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { supplier: dto.name } : {}),
+        ...(dto.nif !== undefined ? { supplierNif: dto.nif } : {}),
+        ...(dto.iban !== undefined
+          ? { iban: dto.iban.trim() === '' ? null : dto.iban }
+          : {}),
+        ...(metadataUpdate !== undefined ? { metadata: metadataUpdate } : {}),
+        // Pipeline re-trigger — same pattern as `correctSupplier` /
+        // `reExtract` so the operator sees the SSE stage progression.
+        processingStatus: DocumentProcessingStatus.RECEIVED,
+        processingStartedAt: new Date(triggerAt),
+        processingCompletedAt: null,
+        processingError: null,
+      },
+    });
+
+    // Compute the post-write snapshot (post-write values for fields the
+    // operator touched, pre-write values for the others). The
+    // before/after diff in the audit log captures every changed field.
+    const newName = dto.name !== undefined ? dto.name : existing.supplier;
+    const newNif =
+      dto.nif !== undefined ? dto.nif : existing.supplierNif;
+    const newIban =
+      dto.iban !== undefined
+        ? dto.iban.trim() === ''
+          ? null
+          : dto.iban
+        : existing.iban;
+    const newAddress =
+      dto.address !== undefined
+        ? dto.address
+        : this.readMetadataString(existing.metadata, 'supplierAddress');
+    const newCountry =
+      dto.country !== undefined
+        ? dto.country
+        : this.readMetadataString(existing.metadata, 'supplierCountry');
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: 'document.update_supplier',
+        oldSupplier: existing.supplier,
+        oldSupplierNif: existing.supplierNif,
+        oldIban: existing.iban,
+        oldSupplierAddress: this.readMetadataString(
+          existing.metadata,
+          'supplierAddress',
+        ),
+        oldSupplierCountry: this.readMetadataString(
+          existing.metadata,
+          'supplierCountry',
+        ),
+        newSupplier: newName,
+        newSupplierNif: newNif,
+        newIban: newIban,
+        newSupplierAddress: newAddress,
+        newSupplierCountry: newCountry,
+        // The fields the operator actually touched — useful when the
+        // audit consumer needs to skip no-op rows. ISO timestamp of the
+        // pipeline trigger so re-trigger ordering is replayable.
+        changedFields: [
+          ...(dto.name !== undefined ? ['name'] : []),
+          ...(dto.nif !== undefined ? ['nif'] : []),
+          ...(dto.iban !== undefined ? ['iban'] : []),
+          ...(dto.address !== undefined ? ['address'] : []),
+          ...(dto.country !== undefined ? ['country'] : []),
+        ],
+      } as Prisma.InputJsonValue,
+    });
+
+    this.logger.log(
+      `[updateSupplier] pipeline re-trigger for document=${id} tenant=${tenantId} at=${triggerAt}`,
+    );
+
+    try {
+      const publishPromise = this.queue.publish('document.uploaded', {
+        topic: 'document.uploaded',
+        documentId: id,
+        tenantId,
+        userId,
+        fileKey: existing.fileKey,
+        mimeType: existing.mimeType,
+        fileSize: existing.fileSize,
+        originalFilename: existing.fileName,
+        uploadedAt: triggerAt,
+      });
+      publishPromise
+        .then(() => {
+          this.logger.log(
+            `[updateSupplier] pipeline re-trigger queued for document=${id} tenant=${tenantId}`,
+          );
+        })
+        .catch((err) => {
+          this.logger.error(
+            `[updateSupplier] pipeline re-trigger FAILED for document=${id} tenant=${tenantId}. Reason: ${(err as Error).message}`,
+          );
+        });
+    } catch (err) {
+      this.logger.error(
+        `[updateSupplier] pipeline re-trigger SYNC THROW for document=${id} tenant=${tenantId}. Reason: ${(err as Error).message}`,
+      );
+    }
+
+    return {
+      ok: true,
+      supplier: {
+        name: newName ?? null,
+        nif: newNif ?? null,
+        iban: newIban ?? null,
+        address: newAddress ?? null,
+        country: newCountry ?? null,
+      },
+    };
+  }
+
+  // ─────────────────────────────────────── extract-supplier-from-doc ────────
+
+  /**
+   * Re-run the AI vision + regex extraction FOCUSED on the supplier
+   * block. Distinct from the full `processDocumentAsync()` pipeline
+   * re-trigger (`POST /:id/re-extract`) which re-publishes the entire
+   * `document.uploaded` event and re-walks the 4-stage state machine.
+   *
+   * Use case: the AI extracted the wrong supplier on first upload,
+   * the operator has NOT yet verified the row, and the fix needs to
+   * happen at the extraction level rather than via manual edit. This
+   * method re-reads the file bytes from storage, runs vision +
+   * regex, pulls just the supplier fields, and persists them.
+   *
+   * Operator-Verified Guard (Sprint H+ extraction-fix-3): when
+   * `Document.supplierVerifiedAt` is set, the call refuses UNLESS
+   * `opts.force === true`. This prevents a silent AI hallucination
+   * (the 2026-09-06 cmtoag5il bug) from overwriting an operator's
+   * explicit confirmation. The controller surfaces the 409.
+   *
+   * Audit: emits `document.extract_supplier` (CREATE on first run, or
+   * EDIT when fields actually changed) carrying the BEFORE/AFTER diff.
+   */
+  async extractSupplierFromDocument(
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts: { force?: boolean } = {},
+  ): Promise<{
+    ok: true;
+    reExtracted: boolean;
+    supplier: {
+      name: string | null;
+      nif: string | null;
+      iban: string | null;
+      address: string | null;
+      country: string | null;
+    };
+  }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        fileKey: true,
+        fileName: true,
+        mimeType: true,
+        fileSize: true,
+        metadata: true,
+        supplierVerifiedAt: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    // Operator-Verified Guard — refuses overwrite unless the caller
+    // explicitly passes `force=true`. Same logic as the inline guard in
+    // `ExtractionService.processDocumentAsync` (line 505+) so the
+    // re-extract and the full-pipeline re-trigger behave consistently.
+    if (existing.supplierVerifiedAt && opts.force !== true) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message:
+          'supplierVerifiedAt is set; pass ?force=true to overwrite the operator-verified supplier block',
+        verifiedAt: existing.supplierVerifiedAt.toISOString(),
+      });
+    }
+
+    // Delegate the heavy lifting (vision + OCR + regex) to the
+    // extraction service. The service already owns the VisionService
+    // + StoragePort + tenant-identity plumbing — re-implementing it
+    // here would duplicate the provider-fallback chain.
+    const extractedRaw = await this.extraction.extractSupplierFromDocument(
+      tenantId,
+      userId,
+      id,
+    );
+    // Local mutable copy so the public-base enrichment below
+    // can overwrite fields without violating the read-only
+    // shape of the extraction return type.
+    const extracted = { ...extractedRaw };
+
+    // Persist only the supplier-shaped fields — leave customer /
+    // totals / line items untouched so a supplier-only re-run is
+    // truly scoped. Address / country land in metadata, mirroring
+    // `updateSupplier()`.
+    const baseMeta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+    const nextMeta: Record<string, unknown> = { ...baseMeta };
+    if (extracted.address !== undefined && extracted.address !== null) {
+      nextMeta.supplierAddress = extracted.address;
+    }
+    if (extracted.country !== undefined && extracted.country !== null) {
+      nextMeta.supplierCountry = extracted.country;
+    }
+
+    // Sprint 1.C — Portal das Finanças enrichment. When the
+    // re-extracted NIF differs from the stored one, ask the
+    // public base for the canonical name + address. We only
+    // overwrite when the AI's confidence was low (so we don't
+    // churn good data) and the base returned a hit. Cache + rate
+    // limit live in NifLookupService.
+    const aiNameConf = existing.supplierNameConfidence ?? 1;
+    const aiAddressConf = existing.supplierAddressConfidence ?? 1;
+    const newNif = extracted.supplierNif ?? existing.supplierNif ?? null;
+    const nifChanged = (newNif ?? null) !== (existing.supplierNif ?? null);
+    if (
+      opts.force === true &&
+      newNif &&
+      nifChanged &&
+      (aiNameConf < 0.7 || aiAddressConf < 0.7)
+    ) {
+      try {
+        const lookup = await this.nifLookup.lookup(tenantId, userId, newNif);
+        if (lookup.baseVerified) {
+          if (lookup.name && aiNameConf < 0.7 && !extracted.supplierName) {
+            extracted.supplierName = lookup.name;
+          }
+          if (lookup.address && aiAddressConf < 0.7) {
+            nextMeta.supplierAddress = lookup.address;
+          }
+          this.logger.log(
+            `[extractSupplier] enriched supplier ${newNif} from public base (source=${lookup.source})`,
+          );
+        }
+      } catch (err) {
+        // We never want a base-side failure to fail the re-extract.
+        // Audit row still goes through (the lookup service logged
+        // its own). Move on.
+        this.logger.warn(
+          `[extractSupplier] public base lookup failed for ${newNif}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplier: extracted.supplierName ?? existing.supplier ?? null,
+        supplierNif: extracted.supplierNif ?? existing.supplierNif ?? null,
+        iban: extracted.supplierIban ?? existing.iban ?? null,
+        metadata: nextMeta as Prisma.InputJsonValue,
+      },
+    });
+
+    // Audit: subAction `document.extract_supplier`. We use EDIT when
+    // ANY field actually changed (so the operator can filter audit
+    // logs to "real" re-extractions), and CREATE only on the first
+    // extraction (supplier was null before). In practice the AI path
+    // runs after upload so most calls land on EDIT.
+    const fieldsChanged =
+      (extracted.supplierName ?? null) !== (existing.supplier ?? null) ||
+      (extracted.supplierNif ?? null) !== (existing.supplierNif ?? null) ||
+      (extracted.supplierIban ?? null) !== (existing.iban ?? null);
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: fieldsChanged ? AuditAction.EDIT : AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: 'document.extract_supplier',
+        oldSupplier: existing.supplier,
+        oldSupplierNif: existing.supplierNif,
+        oldIban: existing.iban,
+        oldSupplierAddress: this.readMetadataString(
+          existing.metadata,
+          'supplierAddress',
+        ),
+        oldSupplierCountry: this.readMetadataString(
+          existing.metadata,
+          'supplierCountry',
+        ),
+        newSupplier: extracted.supplierName ?? existing.supplier ?? null,
+        newSupplierNif: extracted.supplierNif ?? existing.supplierNif ?? null,
+        newIban: extracted.supplierIban ?? existing.iban ?? null,
+        newSupplierAddress: extracted.address ?? null,
+        newSupplierCountry: extracted.country ?? null,
+        forced: opts.force === true,
+        fieldsChanged,
+      } as Prisma.InputJsonValue,
+    });
+
+    return {
+      ok: true,
+      reExtracted: true,
+      supplier: {
+        name: extracted.supplierName ?? existing.supplier ?? null,
+        nif: extracted.supplierNif ?? existing.supplierNif ?? null,
+        iban: extracted.supplierIban ?? existing.iban ?? null,
+        address: extracted.address ?? null,
+        country: extracted.country ?? null,
+      },
+    };
+  }
+
+  // ───────────────────────────────────────── verify-supplier ──────────────
+
+  /**
+   * Operator explicitly confirms the AI-extracted supplier block is
+   * correct AS-IS — i.e. they reviewed the row and decided no field
+   * edit is needed. Distinct from `correctSupplier` (which overwrites
+   * fields) and from `approve` (which is a downstream approval gate).
+   *
+   * Use case (Sprint H+ UX feedback): the "Corrigir fornecedor" dialog
+   * previously forced the operator to type corrections even when the AI
+   * extraction was right. The dialog now exposes three actions — edit,
+   * re-extract, or just confirm — and `verifySupplier` is the third one.
+   *
+   * Writes `Document.supplierVerifiedAt = now()` (UTC) and emits an
+   * audit row tagged `document.verify_supplier` so the
+   * "operator reviewed this row" decision is replayable from audit logs
+   * alone.
+   *
+   * Tenant scoping: `findFirst({ where: { id, tenantId } })` — a cross-
+   * tenant id surfaces as `null` → 404; we never trust a body-supplied
+   * tenantId.
+   */
+  async verifySupplier(
+    tenantId: string,
+    userId: string,
+    id: string,
+  ): Promise<{ ok: true; verifiedAt: string }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const verifiedAt = new Date();
+
+    // Sprint 1.B — setting supplierVerifiedAt moves the doc into
+    // PENDING_APPROVAL when it was still in NOVO. We never regress
+    // past PENDING_APPROVAL/APROVADO/REJEITADO/CHANGES_REQUESTED so
+    // a verifySupplier click on an already-decided doc does not
+    // undo the operator's earlier decision.
+    const flipStatus =
+      existing.status === DocumentStatus.NOVO
+        ? DocumentStatus.PENDING_APPROVAL
+        : undefined;
+
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplierVerifiedAt: verifiedAt,
+        ...(flipStatus ? { status: flipStatus } : {}),
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        // Forensic trail: who confirmed the supplier block, when, and
+        // against which document. The supplier fields themselves are
+        // not changed — we just record the confirmation decision.
+        subAction: 'document.verify_supplier',
+        verifiedAt: verifiedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    this.logger.log(
+      `[verifySupplier] supplier confirmed for document=${id} tenant=${tenantId} at=${verifiedAt.toISOString()}`,
+    );
+
+    return { ok: true, verifiedAt: verifiedAt.toISOString() };
+  }
+
+  // ─────────────────────────────────────────── extraction confidence ─────
+
+  /**
+   * GET /documents/:id/extraction-confidence.
+   *
+   * Returns one `FieldConfidenceDto` per reviewable field + a top-level
+   * summary. The UI renders the summary header ("X/Y alta confiança ·
+   * 1 inválido · 1 pendente") and the per-field chips for the table.
+   *
+   * Source of truth:
+   *   - `value`     : the persisted column (or metadata slot for
+   *                    address / country / category).
+   *   - `confidence`: the per-field `*Confidence` column written by the
+   *                    extraction service. `null` means "no provider
+   *                    score returned for this field".
+   *   - `valid`     : structural validator result. Only NIF + IBAN
+   *                    have validators; the other fields return `null`.
+   *   - `confirmedAt`: latest `DocumentFieldConfirmation.confirmedAt`
+   *                    for the field. `null` until the operator
+   *                    confirms.
+   *
+   * Tenant scoping mirrors every other Document endpoint —
+   * `findFirst({ where: { id, tenantId } })` so a cross-tenant id
+   * surfaces as 404.
+   */
+  async getExtractionConfidence(
+    tenantId: string,
+    id: string,
+  ): Promise<ExtractionConfidenceResponseDto> {
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        // Header columns + the new confidence columns.
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        total: true,
+        docDate: true,
+        dueDate: true,
+        ocrConfidence: true,
+        supplierNameConfidence: true,
+        supplierNifConfidence: true,
+        supplierIbanConfidence: true,
+        supplierAddressConfidence: true,
+        supplierCountryConfidence: true,
+        totalAmountConfidence: true,
+        issueDateConfidence: true,
+        dueDateConfidence: true,
+        categoryConfidence: true,
+        nifValid: true,
+        ibanValid: true,
+        supplierVerifiedAt: true,
+        metadata: true,
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    // Pull the AI provenance out of metadata.extraction so the review
+    // screen can show "extraído por Gemini · gemini-2.5-flash".
+    const extraction = this.getNestedObject(doc.metadata, 'extraction');
+    const aiProvider =
+      typeof extraction?.aiProvider === 'string' ? extraction.aiProvider : null;
+    const aiModel = typeof extraction?.aiModel === 'string' ? extraction.aiModel : null;
+
+    const supplierAddress = this.readMetadataString(doc.metadata, 'supplierAddress');
+    const supplierCountry = this.readMetadataString(doc.metadata, 'supplierCountry');
+    const filing = this.getNestedObject(doc.metadata, 'filing');
+    const category =
+      filing && typeof filing.expenseCategory === 'string'
+        ? filing.expenseCategory
+        : null;
+
+    // Latest confirmation per field — single query, grouped client-side.
+    const confirmations = await this.prisma.documentFieldConfirmation.findMany({
+      where: { tenantId, documentId: id },
+      orderBy: { confirmedAt: 'desc' },
+      select: { field: true, confirmedAt: true },
+    });
+    const lastConfirmedAt = new Map<string, Date>();
+    for (const c of confirmations) {
+      if (!lastConfirmedAt.has(c.field)) lastConfirmedAt.set(c.field, c.confirmedAt);
+    }
+
+    const pick = (
+      field: ReviewableField,
+      value: unknown,
+      confidence: number | null | undefined,
+      valid: boolean | null | undefined,
+    ): FieldConfidenceDto => {
+      const confirmed = lastConfirmedAt.get(field) ?? null;
+      return {
+        value: value === null || value === undefined ? null : String(value),
+        confidence: confidence ?? null,
+        valid: valid ?? null,
+        confirmedAt: confirmed ? confirmed.toISOString() : null,
+      };
+    };
+
+    const fields: Record<ReviewableField, FieldConfidenceDto> = {
+      supplierName: pick('supplierName', doc.supplier, doc.supplierNameConfidence, null),
+      supplierNif: pick('supplierNif', doc.supplierNif, doc.supplierNifConfidence, doc.nifValid),
+      supplierIban: pick('supplierIban', doc.iban, doc.supplierIbanConfidence, doc.ibanValid),
+      supplierAddress: pick(
+        'supplierAddress',
+        supplierAddress,
+        doc.supplierAddressConfidence,
+        null,
+      ),
+      supplierCountry: pick(
+        'supplierCountry',
+        supplierCountry,
+        doc.supplierCountryConfidence,
+        null,
+      ),
+      totalAmount: pick('totalAmount', doc.total, doc.totalAmountConfidence, null),
+      issueDate: pick(
+        'issueDate',
+        doc.docDate ? doc.docDate.toISOString().slice(0, 10) : null,
+        doc.issueDateConfidence,
+        null,
+      ),
+      dueDate: pick(
+        'dueDate',
+        doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : null,
+        doc.dueDateConfidence,
+        null,
+      ),
+      category: pick('category', category, doc.categoryConfidence, null),
+    };
+
+    const summary = summariseConfidence(
+      REVIEWABLE_FIELDS.map((f) => ({
+        confidence: fields[f].confidence,
+        valid: fields[f].valid,
+        confirmedAt: fields[f].confirmedAt,
+      } satisfies FieldInput)),
+    );
+
+    return {
+      summary,
+      supplierName: fields.supplierName,
+      supplierNif: fields.supplierNif,
+      supplierIban: fields.supplierIban,
+      supplierAddress: fields.supplierAddress,
+      supplierCountry: fields.supplierCountry,
+      totalAmount: fields.totalAmount,
+      issueDate: fields.issueDate,
+      dueDate: fields.dueDate,
+      category: fields.category,
+      aiProvider,
+      aiModel,
+      ocrConfidence: doc.ocrConfidence ?? null,
+      supplierVerifiedAt: doc.supplierVerifiedAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * PATCH /documents/:id/confirm-field.
+   *
+   * Operator confirms a single field. Two behaviours:
+   *   - If `dto.value` is supplied: write the value to the
+   *     corresponding Document column (or metadata slot for the fields
+   *     that don't have a dedicated column), record the change in
+   *     `DocumentFieldConfirmation`, and emit an `AuditAction.EDIT`
+   *     row carrying the BEFORE/AFTER diff.
+   *   - If `dto.value` is omitted: the operator is acknowledging the
+   *     AI's extraction without changing the value. Still records a
+   *     confirmation row (so the review screen's "pendente" chip flips
+   *     to "confirmado") and emits a lighter audit row tagged
+   *     `document.confirm_field_no_change`.
+   *
+   * Tenant scoping + 404 path mirrors the rest of the surface.
+   */
+  async confirmField(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: ConfirmFieldDto,
+  ): Promise<{ ok: true; field: ReviewableField; confirmedAt: string }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        supplier: true,
+        supplierNif: true,
+        iban: true,
+        total: true,
+        docDate: true,
+        dueDate: true,
+        nifValid: true,
+        ibanValid: true,
+        supplierNameConfidence: true,
+        supplierNifConfidence: true,
+        supplierIbanConfidence: true,
+        totalAmountConfidence: true,
+        issueDateConfidence: true,
+        dueDateConfidence: true,
+        metadata: true,
+      },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const columnRef = FIELD_COLUMN[dto.field];
+    const isMetadataField = columnRef.startsWith('__metadata');
+
+    // Capture the pre-write value for the audit diff. Metadata fields
+    // live inside the JSON column — fall through to the metadata
+    // reader so we get the actual stored string.
+    let previousValue: string | null = null;
+    if (dto.field === 'supplierName') previousValue = existing.supplier ?? null;
+    else if (dto.field === 'supplierNif') previousValue = existing.supplierNif ?? null;
+    else if (dto.field === 'supplierIban') previousValue = existing.iban ?? null;
+    else if (dto.field === 'totalAmount') {
+      previousValue = existing.total != null ? String(existing.total) : null;
+    } else if (dto.field === 'issueDate') {
+      previousValue = existing.docDate ? existing.docDate.toISOString().slice(0, 10) : null;
+    } else if (dto.field === 'dueDate') {
+      previousValue = existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : null;
+    } else if (dto.field === 'category' || dto.field === 'supplierAddress' || dto.field === 'supplierCountry') {
+      const metaKey =
+        dto.field === 'supplierAddress'
+          ? 'supplierAddress'
+          : dto.field === 'supplierCountry'
+          ? 'supplierCountry'
+          : 'filing';
+      if (dto.field === 'category') {
+        const filing = this.getNestedObject(existing.metadata, 'filing');
+        previousValue =
+          filing && typeof filing.expenseCategory === 'string' ? filing.expenseCategory : null;
+      } else {
+        previousValue = this.readMetadataString(existing.metadata, metaKey);
+      }
+    }
+
+    // Build the column-level update payload (only when the operator
+    // supplied a value). Empty-string and null are both valid "clear"
+    // semantics — we coerce "" → null so the column stays nullable.
+    let nextMetadata: Prisma.InputJsonValue | undefined;
+    let updateData: Prisma.DocumentUpdateInput = {};
+    let storedValue: string | null = dto.value ?? null;
+
+    if (dto.value !== undefined && !isMetadataField) {
+      if (dto.field === 'totalAmount') {
+        const decimal = this.parseDecimalOrThrow(dto.value);
+        updateData.total = decimal;
+        storedValue = decimal.toString();
+      } else if (dto.field === 'issueDate') {
+        updateData.docDate = new Date(dto.value);
+      } else if (dto.field === 'dueDate') {
+        updateData.dueDate = new Date(dto.value);
+      } else if (dto.field === 'supplierName') {
+        updateData.supplier = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierNif') {
+        updateData.supplierNif = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierIban') {
+        updateData.iban = dto.value === '' ? null : dto.value;
+      }
+    }
+
+    if (dto.value !== undefined && isMetadataField) {
+      const baseMeta =
+        existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+          ? (existing.metadata as Record<string, unknown>)
+          : {};
+      const nextMeta: Record<string, unknown> = { ...baseMeta };
+      if (dto.field === 'supplierAddress') {
+        nextMeta.supplierAddress = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'supplierCountry') {
+        nextMeta.supplierCountry = dto.value === '' ? null : dto.value;
+      } else if (dto.field === 'category') {
+        const filing =
+          baseMeta.filing && typeof baseMeta.filing === 'object' && !Array.isArray(baseMeta.filing)
+            ? { ...(baseMeta.filing as Record<string, unknown>) }
+            : {};
+        if (dto.value === '') {
+          delete filing.expenseCategory;
+        } else {
+          filing.expenseCategory = dto.value;
+        }
+        filing.source = 'user';
+        nextMeta.filing = filing;
+      }
+      nextMetadata = nextMeta as Prisma.InputJsonValue;
+      updateData.metadata = nextMetadata;
+    }
+
+    // Write the column update (when applicable) + record the
+    // confirmation in the same call. Two operations, but Prisma does
+    // not expose a portable cross-table tx for an upsert + update
+    // without raw SQL, so we serialise them. A failure between the
+    // two leaves a stale "value set, no confirmation" row — the next
+    // confirm-field call still works (idempotent) and the operator
+    // can re-verify.
+    if (Object.keys(updateData).length > 0) {
+      await this.prisma.document.update({ where: { id }, data: updateData });
+    }
+
+    // Recompute nifValid / ibanValid when the corresponding column
+    // changed so the chip reflects the new value, not the stale one.
+    // Cheap (mod-11 / mod-97 are constant time) and the row is in
+    // memory already after the update.
+    if (
+      (dto.field === 'supplierNif' && dto.value !== undefined) ||
+      (dto.field === 'supplierIban' && dto.value !== undefined)
+    ) {
+      const nifValue =
+        dto.field === 'supplierNif'
+          ? dto.value
+          : (await this.prisma.document.findFirst({
+              where: { id, tenantId },
+              select: { supplierNif: true },
+            }))?.supplierNif ?? null;
+      const ibanValue =
+        dto.field === 'supplierIban'
+          ? dto.value
+          : (await this.prisma.document.findFirst({
+              where: { id, tenantId },
+              select: { iban: true },
+            }))?.iban ?? null;
+      await this.prisma.document.update({
+        where: { id },
+        data: {
+          nifValid: nifValue ? isValidPortugueseNif(nifValue) : null,
+          ibanValid: ibanValue ? isValidIban(ibanValue) : null,
+        },
+      });
+    }
+
+    const confirmedAt = new Date();
+    await this.prisma.documentFieldConfirmation.create({
+      data: {
+        tenantId,
+        documentId: id,
+        field: dto.field,
+        value: storedValue ?? '',
+        previousValue,
+        confirmedById: userId,
+        confirmedAt,
+      },
+    });
+
+    // Audit row: EDIT for value changes, lighter "no change" row for
+    // pure acknowledgements. Carries BEFORE/AFTER diff so the forensic
+    // trail survives even if the confirmation row is purged later.
+    //
+    // `dto.value` is optional — the operator may confirm the AI's
+    // read without overriding the value (a "looks good, move on"
+    // gesture). Treat undefined as "no change intent" so the audit
+    // row gets the no-change subAction; null vs a string is still
+    // considered a change because the operator explicitly cleared
+    // the column.
+    const valueChanged =
+      dto.value !== undefined && (dto.value ?? null) !== previousValue;
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: valueChanged
+          ? 'document.confirm_field'
+          : 'document.confirm_field_no_change',
+        field: dto.field,
+        previousValue,
+        newValue: storedValue,
+        valueChanged,
+        confirmedAt: confirmedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    return { ok: true, field: dto.field, confirmedAt: confirmedAt.toISOString() };
+  }
+
+  /**
+   * POST /documents/:id/confirm-all.
+   *
+   * Bulk confirm: write `supplierVerifiedAt = now()` and emit a single
+   * `AuditAction.CONFIRM` row carrying the list of confirmed fields.
+   * The individual field overrides (if any) should have been written
+   * ahead of time via `PATCH /confirm-field` — this endpoint just
+   * closes the loop and marks the supplier block verified.
+   *
+   * Idempotent: calling it twice is allowed and emits a second audit
+   * row tagged with `previousVerifiedAt` so the trail still reflects
+   * the operator's decision timeline.
+   */
+  async confirmAll(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: ConfirmAllDto,
+  ): Promise<{ ok: true; verifiedAt: string; confirmedFields: ReviewableField[] }> {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true, supplierVerifiedAt: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const verifiedAt = new Date();
+    // Sprint 1.B — flip status to PENDING_APPROVAL when the
+    // confirm-all action lands on a NOVO doc (mirrors verifySupplier
+    // so the workflow stays consistent regardless of which
+    // confirmation path the operator took).
+    const flipStatus =
+      existing.status === DocumentStatus.NOVO
+        ? DocumentStatus.PENDING_APPROVAL
+        : undefined;
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        supplierVerifiedAt: verifiedAt,
+        ...(flipStatus ? { status: flipStatus } : {}),
+      },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.CONFIRM,
+      entityType: 'document',
+      entityId: id,
+      metadata: {
+        subAction: 'document.confirm_all',
+        confirmedFields: dto.confirmedFields,
+        previousVerifiedAt: existing.supplierVerifiedAt?.toISOString() ?? null,
+        verifiedAt: verifiedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+    });
+
+    return {
+      ok: true,
+      verifiedAt: verifiedAt.toISOString(),
+      confirmedFields: dto.confirmedFields ?? [],
+    };
+  }
+
+  /**
+   * Coerce a decimal string into a Prisma.Decimal. Throws a
+   * `BadRequestException` when the input is malformed so the
+   * controller returns a clean 400 instead of leaking a Prisma error.
+   */
+  private parseDecimalOrThrow(input: string): Prisma.Decimal {
+    if (typeof input !== 'string' || input.trim() === '') {
+      throw new BadRequestException('totalAmount must be a decimal string');
+    }
+    try {
+      return new Prisma.Decimal(input.trim());
+    } catch {
+      throw new BadRequestException(`totalAmount is not a valid decimal: ${input}`);
+    }
   }
 
   private async createPaymentEventIfMissing(
@@ -838,6 +2465,186 @@ export class DocumentsService {
       update: {},
     });
   }
+
+  /**
+   * Sprint E — auto-routing: after a document is APPROVADO, move its bytes
+   * from the `_inbox/` staging path to the deterministic party/category
+   * folder computed by `buildDocumentPath`. Idempotent: skipping is fine
+   * when the document was already moved (no `_inbox/` segment in
+   * `fileKey`) or when it has no linked party yet.
+   *
+   * PDF sibling (`pdfKey`) is moved alongside the original so the
+   * previews stay co-located. DB rows + audit log are written AFTER the
+   * byte move succeeds — a partial filesystem write is recoverable by
+   * re-approving; a partial DB write would orphan the file.
+   *
+   * TOCTOU hardening (audit §5 MEDIUM-3): the previous flow read
+   * `fileKey`, decided to move, then moved bytes, then updated the DB.
+   * Two concurrent approves on the same doc could both pass the
+   * `includes('/_inbox/')` check and race the byte move — on POSIX
+   * `rename` is atomic, on Windows the destination could be silently
+   * overwritten with a fresh atime/mtime. We now take a Postgres
+   * advisory transaction lock keyed off the document id so the read +
+   * update are serialized. The second caller blocks on the lock until
+   * the first transaction commits; by then the row's `fileKey` no longer
+   * carries `/_inbox/` and the second caller short-circuits at the guard
+   * (idempotent skip). The filesystem move itself happens AFTER the
+   * transaction releases the lock — the second caller's read sees the
+   * post-update `fileKey` and won't attempt a second move.
+   */
+  private async relocateAfterApprove(
+    tenantId: string,
+    documentId: string,
+    userId: string,
+  ): Promise<void> {
+    // Derive a stable 63-bit signed bigint from the document id. SHA-256
+    // truncated to 8 bytes (bit 63 zeroed to keep it positive — Postgres
+    // advisory locks are bigint).
+    const lockKey = docLockKey(documentId);
+
+    // Serialise the DB-side read + update for this document. The tx body
+    // is short (one read, one update, one audit row) so the lock hold
+    // time stays well below 100 ms in the happy path.
+    const plan = await this.prisma.$transaction(async (tx) => {
+      // `pg_advisory_xact_lock` auto-releases at COMMIT/ROLLBACK — no
+      // risk of leaking the lock on exception. Concurrent callers block
+      // here until the winner commits, then re-read the fresh row.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+      const doc = await tx.document.findFirst({
+        where: { id: documentId, tenantId },
+        select: {
+          id: true,
+          fileKey: true,
+          pdfKey: true,
+          docDate: true,
+          docNumber: true,
+          partyId: true,
+          party: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true,
+              partyCategory: { select: { slug: true } },
+            },
+          },
+        },
+      });
+
+      if (!doc) return null; // approve() already 404s; nothing to relocate.
+      if (!doc.party) return null; // No party linked — leave in _inbox/.
+      if (!doc.fileKey) return null;
+      // Already routed by a concurrent caller — idempotent skip.
+      // Matches BOTH shapes: `_inbox/<tenant>/...` (Sprint E upload-time
+      // shape) AND `<tenant>/_inbox/...` (legacy test fixture shape from
+      // the original Sprint E branch). The path-builder never emits a
+      // destination containing `_inbox/` so once fileKey has been
+      // refreshed to the deterministic party folder this guard correctly
+      // short-circuits.
+      if (!this.isInboxKey(doc.fileKey)) return null;
+
+      const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
+      const extension = this.extractExtension(doc.fileKey) || 'pdf';
+      const newPath = buildDocumentPath({
+        partyType: doc.party.type,
+        partySlug,
+        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+        documentDate: doc.docDate ?? new Date(),
+        documentNumber: doc.docNumber ?? 'unnumbered',
+        fileId: doc.id,
+        extension,
+      });
+
+      // Destination equals source — defensive no-op (slug already encodes
+      // the bucket but `_inbox/` was missing). Don't move, don't audit.
+      if (newPath === doc.fileKey) return null;
+
+      await tx.document.update({
+        where: { id: documentId },
+        data: { fileKey: newPath, pdfKey: null }, // pdfKey set after move below
+      });
+
+      return {
+        from: doc.fileKey,
+        to: newPath,
+        pdfFrom: doc.pdfKey ?? null,
+        partyType: doc.party.type,
+        partySlug,
+        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+      };
+    });
+
+    if (!plan) return;
+
+    // The filesystem move happens AFTER the DB transaction so the byte
+    // move is the only step outside the lock. We do it here (not inside
+    // the tx) because Prisma transactions don't cover filesystem I/O —
+    // holding the advisory lock across the bytes move would be wasteful
+    // and the row's `fileKey` is already pointing at the new path, so a
+    // second concurrent caller reads the post-update value and short-
+    // circuits at the `_inbox/` guard above (lock-free fast path).
+    await this.storage.move(plan.from, plan.to);
+
+    let newPdfKey: string | null = null;
+    if (plan.pdfFrom) {
+      newPdfKey = plan.to.replace(/\.[^.]+$/, '.pdf');
+      try {
+        await this.storage.move(plan.pdfFrom, newPdfKey);
+      } catch (err) {
+        // PDF sibling failed (rare) — don't roll back the main move; the
+        // UI's PDF preview will be missing but the original is intact.
+        this.logger.warn(
+          `[relocateAfterApprove] pdfKey move failed for doc=${documentId}: ${(err as Error).message}`,
+        );
+        newPdfKey = null;
+      }
+    }
+
+    // Persist the final pdfKey AFTER the byte move. We update outside the
+    // tx because the value depends on I/O that we don't want to hold the
+    // advisory lock across. A concurrent approve that reaches this point
+    // would re-read, see `fileKey` already updated, and skip via the
+    // guard. The pdfKey update is idempotent (same destination → same
+    // value on retries).
+    if (newPdfKey !== null) {
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { pdfKey: newPdfKey },
+      });
+    }
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: documentId,
+      metadata: {
+        subAction: 'storage.relocate',
+        from: plan.from,
+        to: plan.to,
+        pdfFrom: plan.pdfFrom,
+        pdfTo: newPdfKey,
+        partyType: plan.partyType,
+        partySlug: plan.partySlug,
+        partyCategorySlug: plan.partyCategorySlug,
+      } as Prisma.InputJsonValue,
+    });
+  }
+
+  /**
+   * Deterministic 63-bit positive bigint derived from a SHA-256 of the
+   * document id. Used as the key for `pg_advisory_xact_lock` so concurrent
+   * approves on the same document serialize on the same lock. The hash
+   * is truncated to 8 bytes and bit 63 is cleared (Postgres bigint is
+   * signed; an advisory lock key outside the int64 range errors).
+   *
+   * NOTE: this method now delegates to the centralised helper in
+   * `common/locks.ts`. Previously `processing.service.ts` had its own
+   * derivation that produced DIFFERENT keys for the same docId — see
+   * security-audit finding M-3.
+   */
 
   // ─────────────────────────────────────────── items ─────────────────────
 
@@ -961,11 +2768,22 @@ export class DocumentsService {
   /**
    * Centralised WHERE-clause builder so findAll / findInbox / future
    * exports share the same filter semantics.
+   *
+   * Sprint I+ soft-delete: every listing defaults to `deletedAt: null`
+   * so trashed rows are hidden from the inbox / search / inbox filter
+   * pages. The trash listing (`findInTrash`) intentionally bypasses
+   * this helper to apply the symmetric `deletedAt: { not: null }`
+   * predicate.
    */
   private buildWhere(tenantId: string, query: DocumentQueryDto): Record<string, unknown> {
     const where: Record<string, unknown> = {
       tenantId,
-      // Hide soft-deleted rows from the inbox/list by default.
+      // Hide soft-deleted (trash) rows from the inbox / list by default.
+      // The dedicated `/documents/trash` endpoint uses `findInTrash()`,
+      // not this helper, so its `deletedAt: { not: null }` predicate
+      // stays orthogonal.
+      deletedAt: null,
+      // Hide soft-archived rows (legacy ARQUIVADO state) from default lists.
       status: { not: DocumentStatus.ARQUIVADO },
     };
     if (query.status) where.status = query.status;
@@ -996,6 +2814,9 @@ export class DocumentsService {
         { supplierNif: { contains: search } },
         { customerNif: { contains: search } },
       ];
+    }
+    if (query.origin && query.origin.length > 0) {
+      where.origin = { in: query.origin };
     }
     return where;
   }
@@ -1260,14 +3081,39 @@ export class DocumentsService {
   }
 
   /**
+   * True when `fileKey` still sits in the `_inbox/` staging area — i.e. the
+   * bytes haven't been routed to a party/category folder yet. Both shapes
+   * are accepted so the guard stays correct across the Sprint E migration
+   * (new uploads use `_inbox/<tenant>/...`; pre-fix fixtures in older
+   * tests used `<tenant>/_inbox/...`).
+   */
+  private isInboxKey(fileKey: string): boolean {
+    return fileKey.startsWith('_inbox/') || fileKey.includes('/_inbox/');
+  }
+
+  /**
    * Build the on-disk storage key. Extracted so upload + tests share the
    * shape and the random suffix doesn't drift across paths.
+   *
+   * Sprint E (fix-up 2026-09-04): every new upload lands in `_inbox/`
+   * so that `relocateAfterApprove()` (which keys off `fileKey.includes('/_inbox/')`)
+   * can move the bytes into the deterministic party/category folder
+   * after the operator approves the row. Without the `_inbox/` prefix the
+   * guard fired on every approve and the file was never routed — folder
+   * routing was dead in production. See commit message for context.
+   *
+   * Key shape: `_inbox/<tenantId>/<yyyy>/<mm>/<ts>-<rand>.<ext>`
+   *   - `_inbox/` is a single POSIX segment, not absolute; `LocalFilesystemStorage.resolveSafe()`
+   *     normalises and joins it under `UPLOADS_DIR` the same way the old
+   *     tenant-prefixed path did.
+   *   - The `_<tenantId>/<yyyy>/<mm>/` sub-tree under `_inbox/` keeps the
+   *     inbox listings manageable per-tenant and per-month at scale.
    */
   private buildStorageKey(tenantId: string, fileName: string, now: Date): string {
     const yyyy = String(now.getUTCFullYear());
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const ext = this.extractExtension(fileName);
-    return `${tenantId}/${yyyy}/${mm}/${Date.now()}-${crypto
+    return `_inbox/${tenantId}/${yyyy}/${mm}/${Date.now()}-${crypto
       .randomBytes(8)
       .toString('hex')}${ext}`;
   }
@@ -1276,8 +3122,8 @@ export class DocumentsService {
    * Derive the PDF sibling key from an image key by stripping the
    * extension (`.jpg` / `.png` / `.jpeg`) and appending `.pdf`.
    * Examples:
-   *   <tenant>/2026/08/1234-abcd.jpg → <tenant>/2026/08/1234-abcd.pdf
-   *   <tenant>/2026/08/1234-abcd.png → <tenant>/2026/08/1234-abcd.pdf
+   *   _inbox/<tenant>/2026/08/1234-abcd.jpg → _inbox/<tenant>/2026/08/1234-abcd.pdf
+   *   _inbox/<tenant>/2026/08/1234-abcd.png → _inbox/<tenant>/2026/08/1234-abcd.pdf
    * Keeps the random suffix identical so the two files are obviously
    * the same document on disk.
    */
@@ -1547,5 +3393,24 @@ export class DocumentsService {
       where: { id: documentId },
       data: { netAmount: net, taxAmount: Math.round(tax * 100) / 100, total },
     });
+  }
+
+  /**
+   * Read a string-typed slot out of a Document.metadata JSON column.
+   * Returns `null` when the metadata is missing, not a plain object,
+   * or the slot is missing / not a string. Used by the supplier edit
+   * path (address / country) — both fields are stored in metadata,
+   * not in dedicated schema columns, so the read needs to handle the
+   * JSON-shape variance safely.
+   */
+  private readMetadataString(
+    metadata: Prisma.JsonValue | null | undefined,
+    key: string,
+  ): string | null {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return null;
+    }
+    const slot = (metadata as Record<string, unknown>)[key];
+    return typeof slot === 'string' ? slot : null;
   }
 }

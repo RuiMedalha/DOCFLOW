@@ -5,10 +5,37 @@
 export type PartyType = 'FORNECEDOR' | 'CLIENTE' | 'AMBOS';
 export type AccountType = 'ATIVO' | 'PASSIVO' | 'CAPITAL_PROPRIO' | 'RECEITA' | 'CUSTO' | 'OUTRO';
 
+/**
+ * Sprint E: operator-defined buckets that segment the master Party list.
+ * Drives the on-disk folder layout in `fornecedores/<slug>/<category>/...`.
+ * Distinct from the `Category` model which classifies a Document by
+ * expense type.
+ */
+export interface PartyCategory {
+  id: string;
+  slug: string;
+  name: string;
+  color?: string | null;
+  sortOrder?: number;
+}
+
 export interface Party {
   id: string;
   type: PartyType;
   name: string;
+  /**
+   * Sprint E: kebab-case ASCII of `name`, persisted by the backend on
+   * create / PATCH (with `<slug>-<id4>` suffix on collision). Stable
+   * across renames — used in the on-disk folder path so a party rename
+   * does NOT move existing files.
+   */
+  slug?: string | null;
+  /**
+   * Sprint E: PartyCategory.id — operator-assigned bucket (Estratégico,
+   * Operacional, Consultor / Serviços, Recorrente). Null ⇒ unclassified.
+   */
+  partyCategoryId?: string | null;
+  partyCategory?: PartyCategory | null;
   nif?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -25,7 +52,21 @@ export interface Party {
   ibanFlaggedReason?: string | null;
   ibanLastCheckedAt?: string | null;
   ibanRiskScore?: number | null;
+  ibanMasked?: string | null;
   isActive: boolean;
+  /**
+    * Backend flips this true when the supplier has >=3 linked documents
+    * (SupplierResolver.refreshRecurringFlag). The party page surfaces
+    * it as a "Recorrente / Ocasional" badge — no UI override, the value
+    * is always derived from the document count.
+    */
+  isRecurring?: boolean | null;
+  /**
+   * ADMIN-only flag that freezes `isRecurring` so the auto-flip in
+   * supplier-resolver pauses. Set via PATCH /parties/:id; rendered as
+   * an amber "Override ADMIN" badge in the list and header.
+   */
+  isRecurringManualOverride?: boolean | null;
   defaultDebitAccount?: { id: string; code: string; name: string } | null;
   defaultCreditAccount?: { id: string; code: string; name: string } | null;
   createdAt: string;
@@ -93,6 +134,40 @@ export interface IbanBlacklistEntry {
   createdAt: string;
 }
 
+/**
+ * Document projected onto the party-detail page (the "Faturas recentes"
+ * section). Mirrors a subset of the Document DTO so we don't have to
+ * fetch the full inbox item. Status enum matches DocumentStatus on the
+ * backend; the UI maps it to a coloured badge.
+ */
+export interface PartyDocument {
+  id: string;
+  docNumber?: string | null;
+  supplier?: string | null;
+  customer?: string | null;
+  supplierNif?: string | null;
+  customerNif?: string | null;
+  docDate?: string | null;
+  total?: number | null;
+  netAmount?: number | null;
+  taxAmount?: number | null;
+  currency?: string | null;
+  status:
+    | 'NOVO'
+    | 'EM_REVISAO'
+    | 'APROVADO'
+    | 'REJEITADO'
+    | 'CONCILIADO'
+    | 'PAGO'
+    | 'ARQUIVADO';
+  type?: string | null;
+  fileName?: string | null;
+  partyId?: string | null;
+  folder?: { id: string; name: string; pattern: string } | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface PartyInput {
   type: PartyType;
   name: string;
@@ -108,4 +183,128 @@ export interface PartyInput {
   country?: string;
   defaultDebitAccountId?: string;
   defaultCreditAccountId?: string;
+  /** Sprint E: PartyCategory.id, or empty string to clear. */
+  partyCategoryId?: string;
+  isRecurring?: boolean;
+  isRecurringManualOverride?: boolean;
+}
+
+// =============================================================================
+// Sprint G — Party 360° file add-ons (contacts, addresses, payments, timeline)
+// =============================================================================
+
+/**
+ * Named contact on a Party. Independent of the legacy `Party.email` /
+ * `Party.phone` / `Party.mobile` flatten columns — admin populates the
+ * new list manually via UI (no automatic data migration in Sprint G.1).
+ */
+export interface PartyContact {
+  id: string;
+  partyId: string;
+  name: string;
+  role?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PartyAddressType =
+  | 'BILLING'
+  | 'CORRESPONDENCE'
+  | 'OPERATIONAL'
+  | 'OTHER';
+
+export interface PartyAddress {
+  id: string;
+  partyId: string;
+  type: PartyAddressType;
+  line1: string;
+  line2?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  country: string;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Single payment event tied to a party's documents. */
+export interface PartyPaymentEvent {
+  id: string;
+  documentId: string;
+  /**
+   * Sprint G review §A1 fix-up: `fileKey` intentionally OMITTED. fileKey
+   * is the on-disk storage path (`tenants/<id>/<year>/<month>/<id>.pdf`)
+   * — exposing it leaks the tenant's folder layout. UI uses `docNumber`
+   * as the human-readable label (see payments-tab.tsx).
+   */
+  document: { id: string; docNumber: string | null } | null;
+  dueDate: string;
+  amount: string | null;
+  status: 'PENDING' | 'PAID' | 'OVERDUE';
+  paidAt: string | null;
+  paidAmount: string | null;
+  paymentMethod?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Discriminated union of timeline events. */
+export type TimelineEventType =
+  | 'audit'
+  | 'payment'
+  | 'iban_change'
+  | 'document_approved';
+
+export type TimelineEvent =
+  | {
+      id: string;
+      type: 'audit';
+      at: string;
+      action: string;
+      userId: string | null;
+      metadata: unknown;
+    }
+  | {
+      id: string;
+      type: 'payment';
+      at: string;
+      amount: string | null;
+      status: string;
+      documentId: string;
+      // Sprint G review §A1 fix-up: fileKey intentionally OMITTED — see
+      // PartyPaymentEvent above for the rationale.
+      document: { id: string; docNumber: string | null } | null;
+    }
+  | {
+      id: string;
+      type: 'iban_change';
+      at: string;
+      oldIban: string | null;
+      newIban: string;
+      verified: boolean;
+      changedById: string | null;
+    }
+  | {
+      id: string;
+      type: 'document_approved';
+      at: string;
+      documentId: string;
+      fileName: string;
+      docNumber: string | null;
+      approvedById: string | null;
+    };
+
+export interface TimelineListResponse {
+  items: TimelineEvent[];
+  nextCursor: string | null;
+}
+
+/** Attach to Party payload for the 360° file. */
+export interface PartyExtras {
+  contacts?: PartyContact[];
+  addresses?: PartyAddress[];
 }

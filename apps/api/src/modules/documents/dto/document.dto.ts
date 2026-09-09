@@ -4,10 +4,12 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -234,6 +236,40 @@ export class DocumentQueryDto {
   })
   @IsOptional()
   inbox?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by inbound channel. Accepts a single value (?origin=GMAIL), ' +
+      'repeated params (?origin=GMAIL&origin=OUTLOOK), or a CSV string ' +
+      '(?origin=GMAIL,OUTLOOK). Unknown values are rejected by validation.',
+    type: String,
+    isArray: true,
+    example: ['GMAIL', 'OUTLOOK'],
+    enum: DocumentOrigin,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    // Express may deliver repeated query params as an array OR a single
+    // string. Normalise to an array of trimmed strings so class-validator
+    // can iterate it with `each: true`. CSV strings are split here too so
+    // a single `?origin=GMAIL,OUTLOOK` is treated the same as two params.
+    if (Array.isArray(value)) {
+      return value
+        .flatMap((v) => (typeof v === 'string' ? v.split(',') : v))
+        .map((v) => (typeof v === 'string' ? v.trim() : v))
+        .filter((v) => v !== '');
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((v) => v.trim())
+        .filter((v) => v !== '');
+    }
+    return value;
+  })
+  @IsArray()
+  @IsEnum(DocumentOrigin, { each: true })
+  origin?: DocumentOrigin[];
 }
 
 /**
@@ -261,4 +297,111 @@ export class AssignFolderDto {
   @IsOptional()
   @IsUUID()
   folderId?: string;
+}
+
+/**
+ * Request shape for POST /documents/:id/correct-supplier.
+ *
+ * Used when the AI extracted the wrong supplier (or the OCR picked the
+ * customer side as the supplier). The user provides the correct name +
+ * NIF + IBAN for the supplier and a customer correction as well, with an
+ * optional reason recorded in the audit log. The Document is updated and
+ * the processing pipeline is re-triggered via `document.uploaded` so the
+ * downstream enrichment (party linking, category routing) re-runs with
+ * the corrected fields.
+ *
+ * NIF regex mirrors the practical PT/EU surface:
+ *   - PT prefix is optional (`PT` + 9 digits) or 9 raw digits.
+ *   - Foreign NIFs (when extracted from non-PT invoices) are 5–15 chars
+ *     uppercase alnum with optional 2-letter country prefix.
+ *
+ * IBAN regex is permissive: 2 letter country + 2 check digits + 1–30 alnum
+ * body. Strict ISO 13616 mod-97 verification is intentionally NOT done
+ * here — the goal is to catch obvious typos before persistence, not to
+ * reject legitimate IBANs whose check-digit encoding differs by country.
+ */
+export class CorrectSupplierDto {
+  @ApiProperty({ example: 'EDENOX', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  supplier!: string;
+
+  @ApiProperty({ example: '502782160', maxLength: 20 })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[A-Z]{0,2}[A-Z0-9]{5,15}$/, {
+    message: 'supplierNif must be 5–15 uppercase alnum with optional 2-letter country prefix',
+  })
+  @MaxLength(20)
+  supplierNif!: string;
+
+  @ApiPropertyOptional({ example: 'PT50003300004531296655007' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{2}\d{2}[A-Z0-9]{1,30}$/, {
+    message: 'iban must start with 2-letter country code + 2 check digits + alnum body',
+  })
+  @MaxLength(34)
+  iban?: string;
+
+  @ApiProperty({ example: 'NOV OUSADO LDA', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  customer!: string;
+
+  @ApiProperty({ example: '515208566', maxLength: 20 })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[A-Z]{0,2}[A-Z0-9]{5,15}$/, {
+    message: 'customerNif must be 5–15 uppercase alnum with optional 2-letter country prefix',
+  })
+  @MaxLength(20)
+  customerNif!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Party.id to link the document to (replaces the existing partyId when present). Pass null to leave the existing party link untouched.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  partyId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Free-text reason recorded in the audit log (e.g. "AI extracted wrong supplier")',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+
+  // Sprint H+ Part 2 — optional address/country slots that complement the
+  // supplier/customer block. Address + country are NOT in the Document
+  // schema, so we persist them under `metadata.supplierAddress` /
+  // `metadata.supplierCountry` rather than as dedicated columns. Pure
+  // metadata snapshots — they do not affect folder routing or party
+  // resolution. Marked optional so existing payloads keep working.
+
+  @ApiPropertyOptional({
+    description:
+      'Supplier postal address (NOT in Document schema — stored in metadata.supplierAddress).',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  supplierAddress?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Supplier country code (ISO 3166-1 alpha-2). NOT in Document schema — stored in metadata.supplierCountry.',
+    maxLength: 2,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  supplierCountry?: string;
 }

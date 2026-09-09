@@ -17,6 +17,7 @@ type PartyRow = {
   country: string;
   isActive: boolean;
   isRecurring: boolean;
+  isRecurringManualOverride: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -70,6 +71,8 @@ function buildPrismaStub() {
         country: data.country ?? "PT",
         isActive: data.isActive ?? true,
         isRecurring: data.isRecurring ?? false,
+        isRecurringManualOverride:
+          data.isRecurringManualOverride ?? false,
         createdAt: now,
         updatedAt: now,
       };
@@ -82,6 +85,28 @@ function buildPrismaStub() {
       Object.assign(row, data);
       row.updatedAt = new Date();
       return { ...row };
+    }),
+    /**
+     * Audit §3 TOCTOU fix: refreshRecurringFlag now uses updateMany keyed
+     * on `isRecurringManualOverride: false` for an atomic conditional
+     * write. The in-memory stub mirrors real semantics — only update rows
+     * that match ALL where-clause predicates, return { count }.
+     */
+    updateMany: jest.fn(async ({ where, data }: any) => {
+      let count = 0;
+      for (const p of dbParties.values()) {
+        if (
+          (!where?.id || p.id === where.id) &&
+          (where?.isRecurringManualOverride === undefined ||
+            (p as any).isRecurringManualOverride ===
+              where.isRecurringManualOverride)
+        ) {
+          Object.assign(p, data);
+          p.updatedAt = new Date();
+          count++;
+        }
+      }
+      return { count };
     }),
   };
 
@@ -215,12 +240,20 @@ describe("SupplierResolver", () => {
     expect(ids[1]).toBe(ids[2]);
     const party = Array.from(prisma.dbParties.values())[0];
     expect(party.isRecurring).toBe(true);
-    expect(prisma.party.update).toHaveBeenCalledWith(
+    // Audit §3 TOCTOU fix: the auto-flip now uses updateMany keyed on
+    // `isRecurringManualOverride: false` — NOT a naive party.update. A
+    // regression to the old SELECT+UPDATE pair would re-open the TOCTOU
+    // window audited 2026-09-03.
+    expect(prisma.party.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: party.id },
+        where: {
+          id: party.id,
+          isRecurringManualOverride: false,
+        },
         data: { isRecurring: true },
       }),
     );
+    expect(prisma.party.update).not.toHaveBeenCalled();
   });
 
   it("sets supplierReview=true and still creates the Party when AI confidence < 0.8", async () => {

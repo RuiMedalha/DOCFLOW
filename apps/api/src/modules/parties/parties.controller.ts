@@ -22,7 +22,10 @@ import {
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/guards/rbac.guard';
 import { PartiesService } from './parties.service';
+import { DocumentsService } from '../documents/documents.service';
 import {
   AccountQueryDto,
   CreateAccountDto,
@@ -74,7 +77,10 @@ import {
 @ApiBearerAuth()
 @Controller()
 export class PartiesController {
-  constructor(private readonly parties: PartiesService) {}
+  constructor(
+    private readonly parties: PartiesService,
+    private readonly documents: DocumentsService,
+  ) {}
 
   // ─────────────────────────────────────────── parties CRUD ───────────────
 
@@ -149,7 +155,49 @@ export class PartiesController {
     return this.parties.findOne(user.tenantId, id);
   }
 
+  /**
+   * Recent documents linked to a party. Powers the "Faturas recentes"
+   * section on `/parties/:id`. Same shape as `GET /documents` so the
+   * UI can reuse its list primitives — and so the "Ver todas" button
+   * just redirects to `/documents?partyId=...` (which the documents
+   * controller already accepts).
+   */
+  @Get('parties/:id/documents')
+  @ApiOperation({
+    summary: 'List documents linked to this party (supplier/customer)',
+    description:
+      'Paginates by limit (default 10, capped at 50). Optional from/to ' +
+      'filter the createdAt range. Returns the same { items, meta } shape ' +
+      'as GET /documents so the UI list primitive is shared.',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: '1..50 (default 10)' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date — inclusive' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date — inclusive' })
+  @ApiResponse({ status: 200, description: 'Paginated documents for the party' })
+  @ApiResponse({ status: 404, description: 'Party not found' })
+  async findPartyDocuments(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    // Validate the party exists in this tenant before returning an
+    // empty list — keeps 404 vs empty-list semantics predictable for
+    // the UI (which renders a "no docs" card vs an error toast).
+    await this.parties.findOne(user.tenantId, id);
+    const parsedLimit = limit ? Number(limit) : 10;
+    return this.documents.findByParty(
+      user.tenantId,
+      id,
+      Number.isFinite(parsedLimit) ? parsedLimit : 10,
+      from,
+      to,
+    );
+  }
+
   @Patch('parties/:id')
+  @Roles(Role.ADMIN)
   @ApiOperation({
     summary: 'Update a party',
     description:
@@ -157,12 +205,16 @@ export class PartiesController {
   })
   @ApiResponse({ status: 404, description: 'Party not found' })
   @ApiResponse({ status: 400, description: 'Invalid NIF / IBAN' })
+  @ApiResponse({
+    status: 403,
+    description: 'Only ADMIN may set isRecurring / isRecurringManualOverride',
+  })
   update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdatePartyDto,
   ) {
-    return this.parties.update(user.tenantId, user.id, id, dto);
+    return this.parties.update(user.tenantId, user.id, id, dto, user.role);
   }
 
   @Delete('parties/:id')

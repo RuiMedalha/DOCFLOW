@@ -33,11 +33,11 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 # ───────────────────────── Stage 2: build ────────────────────────
 FROM node:22-alpine AS build
-
 WORKDIR /repo
-
-# Pull installed deps from the previous stage
-COPY --from=deps /repo/ ./
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+COPY --from=deps /repo ./
 
 WORKDIR /repo/apps/web
 

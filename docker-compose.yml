@@ -30,11 +30,20 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      PORT: 4000
       DATABASE_URL: postgresql://docflow:${POSTGRES_PASSWORD}@postgres:5432/docflow?schema=public
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ISSUER: docflow
+      JWT_AUDIENCE: docflow-api
+      JWT_ACCESS_TTL: 15m
+      CRON_SECRET: ${CRON_SECRET}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_VISION_MODEL: google/gemini-2.5-flash
+      UPLOADS_DIR: /repo/apps/api/uploads
+    volumes:
+      - docflow_uploads:/repo/apps/api/uploads
     ports:
       - "4000"
 
@@ -42,15 +51,17 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     restart: unless-stopped
     depends_on:
       - api
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     ports:
       - "3000"
 
 volumes:
   docflow_pgdata:
   docflow_redisdata:
+  docflow_uploads:

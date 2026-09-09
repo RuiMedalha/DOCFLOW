@@ -74,9 +74,9 @@ export class SaftExportController {
   @ApiResponse({ status: 403, description: 'Caller lacks ADMIN/ACCOUNTANT role' })
   async export(
     @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: false }) res: Response,
     @Query('from') fromRaw?: string,
     @Query('to') toRaw?: string,
-    @Res({ passthrough: false }) res: Response,
   ): Promise<void> {
     const range = this.parseRange(fromRaw, toRaw);
     const tenantSlug = await this.saft.tenantSlug(user.tenantId);

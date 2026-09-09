@@ -38,6 +38,7 @@ WORKDIR /repo
 
 # Pull installed deps from the previous stage
 COPY --from=deps /repo/ ./
+COPY . .
 
 WORKDIR /repo/apps/web
 

@@ -54,8 +54,8 @@ RUN addgroup -g 10001 -S docflow \
  && adduser  -u 10001 -S docflow -G docflow -h /app -s /sbin/nologin
 WORKDIR /app
 COPY --from=build --chown=docflow:docflow /repo/apps/web/.next/standalone ./
-COPY --from=build --chown=docflow:docflow /repo/apps/web/.next/static    ./apps/web/.next/static
-COPY --from=build --chown=docflow:docflow /repo/apps/web/public         ./apps/web/public
+COPY --from=build --chown=docflow:docflow /repo/apps/web/.next/static ./.next/static
+COPY --from=build --chown=docflow:docflow /repo/apps/web/public       ./public
 USER docflow
 EXPOSE 3000
 
@@ -63,4 +63,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "server.js"]

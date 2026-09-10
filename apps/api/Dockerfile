@@ -73,3 +73,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/v1/health | grep -q '"status":"ok"' || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--", "./entrypoint.sh"]
+CMD ["node", "dist/src/main.js"]

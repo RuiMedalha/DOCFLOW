@@ -1,7 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma, PartyType } from "@prisma/client";
 import { isValidNif, normalizeNif, normalizeIban } from "@docflow/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { NifLookupService } from "../nif-lookup/nif-lookup.service";
+import { ViesProvider } from "../enrichment/providers/vies.provider";
 
 /**
  * Inputs the extractor feeds into the supplier auto-resolve step.
@@ -80,7 +82,11 @@ export class SupplierResolver {
   /** Confidence floor — below this, supplierReview is set. */
   static readonly CONFIDENCE_FLOOR = 0.8;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly nifLookup?: NifLookupService,
+    @Optional() private readonly viesProvider?: ViesProvider,
+  ) {}
 
   /**
    * Resolve + link the supplier for a Document extraction.
@@ -131,14 +137,26 @@ export class SupplierResolver {
       // but we re-check so the helper is safe to call directly).
       const supplierReview = !(confidenceOk && taxIdValid);
 
-      let partyRow: { id: string; isRecurring: boolean; name: string; nif: string | null } | null = existing;
+      // Consulta imediata aos serviços oficiais (nif-lookup para PT / VIES para comunitário)
+      const officialData = await this.queryOfficialData({
+        tenantId,
+        countryCode,
+        normalizedNif,
+        normalizedVat,
+        taxIdValid,
+        iban,
+      });
+
+      let partyRow: { id: string; isRecurring: boolean; name: string; nif: string | null; address?: string | null; city?: string | null; postalCode?: string | null; country?: string | null } | null = existing;
 
       if (!partyRow) {
-        // Create the Party row. The validators in PartiesService would
-        // throw on bad NIFs/IBANs, so we pick what we can store and let
-        // the rest pass as null — the supplierReview flag covers the gap.
+        // Create the Party row. Preenchemos com os dados oficiais validados caso obtidos,
+        // ou fallback para o nome extraído.
         const ibanToStore = iban && this.isIbanValid(iban) ? normalizeIban(iban) : null;
-        const nameToStore = supplierName?.trim()?.slice(0, 200) || "Fornecedor por identificar";
+        const nameToStore =
+          officialData?.officialName?.trim()?.slice(0, 200) ||
+          supplierName?.trim()?.slice(0, 200) ||
+          "Fornecedor por identificar";
 
         try {
           partyRow = await this.prisma.party.create({
@@ -148,10 +166,15 @@ export class SupplierResolver {
               name: nameToStore,
               nif: taxIdToStore,
               iban: ibanToStore,
-              country: countryCode,
+              address: officialData?.address ?? null,
+              city: officialData?.city ?? null,
+              postalCode: officialData?.postalCode ?? null,
+              country: officialData?.country ?? countryCode,
+              enrichedAt: officialData?.source ? new Date() : null,
+              enrichmentSource: officialData?.source ?? null,
               isActive: true,
             },
-            select: { id: true, name: true, nif: true, isRecurring: true },
+            select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true },
           });
         } catch (err) {
           // Race with a parallel upload that just created the same row —
@@ -177,6 +200,47 @@ export class SupplierResolver {
               reason: `party_create_failed:${(err as Error).message?.slice(0, 120)}`,
             };
           }
+        }
+      } else if (officialData && partyRow) {
+        // Se a entidade já existir, atualizar os campos vazios ou enriquecer com os dados oficiais validados
+        try {
+          const updates: Record<string, any> = {};
+          if (!partyRow.address && officialData.address) {
+            updates.address = officialData.address;
+          }
+          if (!partyRow.city && officialData.city) {
+            updates.city = officialData.city;
+          }
+          if (!partyRow.postalCode && officialData.postalCode) {
+            updates.postalCode = officialData.postalCode;
+          }
+          if ((!partyRow.country || partyRow.country === 'PT') && officialData.country) {
+            updates.country = officialData.country;
+          }
+          if (
+            officialData.officialName &&
+            (partyRow.name === 'Fornecedor por identificar' ||
+              partyRow.name.toLowerCase().startsWith('fornecedor') ||
+              partyRow.name === partyRow.nif)
+          ) {
+            updates.name = officialData.officialName.slice(0, 200);
+          }
+          if (officialData.source) {
+            updates.enrichedAt = new Date();
+            updates.enrichmentSource = officialData.source;
+            updates.enrichmentError = null;
+          }
+          if (Object.keys(updates).length > 0) {
+            await this.prisma.party.update({
+              where: { id: partyRow.id },
+              data: updates,
+            });
+            this.logger.log(
+              `[resolve] enriched existing party=${partyRow.id} with official fields: ${Object.keys(updates).join(', ')}`,
+            );
+          }
+        } catch (updateErr) {
+          this.logger.warn(`[resolve] failed to update existing party=${partyRow.id}: ${(updateErr as Error).message}`);
         }
       }
 
@@ -387,6 +451,122 @@ export class SupplierResolver {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Consulta imediata aos serviços oficiais (nif-lookup para PT ou VIES para comunitário).
+   */
+  private async queryOfficialData(args: {
+    tenantId: string;
+    countryCode: string;
+    normalizedNif: string;
+    normalizedVat: string;
+    taxIdValid: boolean;
+    iban?: string;
+  }): Promise<{
+    officialName?: string | null;
+    address?: string | null;
+    city?: string | null;
+    postalCode?: string | null;
+    country?: string | null;
+    source: string | null;
+  } | null> {
+    const { tenantId, countryCode, normalizedNif, normalizedVat, taxIdValid, iban } = args;
+
+    // Caso 1: NIF Português (mod-11 válido)
+    if (countryCode === 'PT' && normalizedNif && taxIdValid) {
+      let officialName: string | null = null;
+      let address: string | null = null;
+      let city: string | null = null;
+      let postalCode: string | null = null;
+      let source: string | null = null;
+
+      if (this.nifLookup) {
+        try {
+          const lookup = await this.nifLookup.lookup(tenantId, 'system', normalizedNif);
+          if (lookup.baseVerified || lookup.name || lookup.address) {
+            officialName = lookup.name ?? null;
+            address = lookup.address ?? null;
+            if (address) {
+              postalCode = address.match(/\b(\d{4}-\d{3})\b/)?.[1] ?? null;
+              city = this.guessCity(address);
+            }
+            source = 'nif-lookup';
+          }
+        } catch (err) {
+          this.logger.warn(`[queryOfficialData] nifLookup failed for ${normalizedNif}: ${(err as Error).message}`);
+        }
+      }
+
+      // Se o lookup não trouxe morada completa, tenta VIES para PT
+      if ((!address || !officialName) && this.viesProvider) {
+        try {
+          const viesRes = await this.viesProvider.fetch({
+            country: 'PT',
+            nif: normalizedNif,
+            iban: iban ?? null,
+          });
+          if (viesRes.ok) {
+            officialName = officialName ?? viesRes.fields.name ?? null;
+            address = address ?? viesRes.fields.address ?? null;
+            city = city ?? viesRes.fields.city ?? null;
+            postalCode = postalCode ?? viesRes.fields.postalCode ?? null;
+            source = source ?? 'vies';
+          }
+        } catch (err) {
+          this.logger.warn(`[queryOfficialData] vies PT lookup failed for ${normalizedNif}: ${(err as Error).message}`);
+        }
+      }
+
+      if (officialName || address) {
+        return {
+          officialName,
+          address,
+          city,
+          postalCode,
+          country: 'PT',
+          source: source ?? 'nif-lookup',
+        };
+      }
+    }
+
+    // Caso 2: NIF Comunitário / Europeu (país != PT)
+    if (countryCode !== 'PT' && (normalizedVat || normalizedNif) && this.viesProvider) {
+      const rawVat = normalizedVat || normalizedNif;
+      const cleanVat = rawVat.toUpperCase().startsWith(countryCode)
+        ? rawVat.slice(countryCode.length).trim()
+        : rawVat;
+      try {
+        const viesRes = await this.viesProvider.fetch({
+          country: countryCode,
+          nif: cleanVat,
+          iban: iban ?? null,
+        });
+        if (viesRes.ok) {
+          return {
+            officialName: viesRes.fields.name ?? null,
+            address: viesRes.fields.address ?? null,
+            city: viesRes.fields.city ?? null,
+            postalCode: viesRes.fields.postalCode ?? null,
+            country: countryCode,
+            source: 'vies',
+          };
+        }
+      } catch (err) {
+        this.logger.warn(`[queryOfficialData] vies EU lookup failed for ${countryCode}-${cleanVat}: ${(err as Error).message}`);
+      }
+    }
+
+    return null;
+  }
+
+  private guessCity(address: string | null): string | null {
+    if (!address) return null;
+    const parts = address.split(/[,\n]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return null;
+    const last = parts[parts.length - 1];
+    const cityMatch = last.replace(/\b\d{4,5}-?\d{0,3}\b/g, '').trim();
+    return cityMatch || null;
   }
 }
 

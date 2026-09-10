@@ -14,8 +14,8 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
  *   - 'no_data'    — provider called, no fields returned
  */
 export class EnrichmentResponseDto {
-  @ApiProperty({ example: 'sabi-pt', enum: ['sabi-pt', 'vies', 'manual', 'cached', 'no_data'] })
-  source!: 'sabi-pt' | 'vies' | 'manual' | 'cached' | 'no_data';
+  @ApiProperty({ example: 'vies', enum: ['sabi-pt', 'vies', 'nif-lookup', 'invoices', 'manual', 'cached', 'no_data'] })
+  source!: 'sabi-pt' | 'vies' | 'nif-lookup' | 'invoices' | 'manual' | 'cached' | 'no_data';
 
   @ApiProperty({ example: ['email', 'address', 'city'], type: [String] })
   fieldsPopulated!: string[];
@@ -29,8 +29,7 @@ export class EnrichmentResponseDto {
 
 /**
  * Path params for `/parties/:id/enrich` and `/parties/:id/enrichment`.
- * `id` is the Party cuid. RBAC enforced at the controller (ADMIN only
- * for the manual trigger; any authenticated user for the GET status).
+ * `id` is the Party cuid.
  */
 export class EnrichmentPathDto {
   @ApiProperty({ description: 'Party cuid' })
@@ -40,17 +39,20 @@ export class EnrichmentPathDto {
 
 /**
  * Optional body for POST /parties/:id/enrich — caller can force a
- * provider override (e.g. a tool that wants to test VIES against a
- * PT NIF without going through the factory). When omitted, the
- * factory picks based on country/iban.
+ * provider override. When omitted, the service consults VIES / NIF PT
+ * e as melhores faturas para deixar a ficha 100% preenchida.
  */
 export class EnrichPartyDto {
   @ApiPropertyOptional({
-    enum: ['sabi-pt', 'vies', 'manual'],
+    enum: ['sabi-pt', 'vies', 'nif-lookup', 'invoices', 'manual', 'auto'],
     description:
-      'Force a specific provider. When omitted the factory picks based on Party.country/iban.',
+      'Force a specific provider or auto.',
   })
   @IsOptional()
-  @IsIn(['sabi-pt', 'vies', 'manual'])
-  forceProvider?: 'sabi-pt' | 'vies' | 'manual';
+  @IsIn(['sabi-pt', 'vies', 'nif-lookup', 'invoices', 'manual', 'auto'])
+  forceProvider?: 'sabi-pt' | 'vies' | 'nif-lookup' | 'invoices' | 'manual' | 'auto';
+
+  @ApiPropertyOptional({ description: 'Skip the 30-day cache check and force fresh enrichment' })
+  @IsOptional()
+  skipCache?: boolean;
 }

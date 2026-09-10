@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, RefreshCw, Sparkles, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { authedFetch } from '../../../../_lib/auth-refresh';
 
 /**
  * Sprint I — Party enrichment badge.
@@ -20,6 +21,10 @@ import { Loader2, RefreshCw, Sparkles, AlertCircle, CheckCircle2 } from 'lucide-
  *
  * The button is admin-only and disabled while a request is in flight.
  */
+
+const API_BASE =
+  (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '')) ||
+  'http://localhost:4000/api/v1';
 
 type EnrichmentMetadata = {
   lastEnrichedAt: string | null;
@@ -72,27 +77,35 @@ export function PartyEnrichmentBadge({
   const metadata = useQuery<EnrichmentMetadata>({
     queryKey: ['party', partyId, 'enrichment-metadata'],
     queryFn: async () => {
-      const res = await fetch(`/api/v1/parties/${partyId}/enrichment`);
+      const res = await authedFetch(`${API_BASE}/parties/${partyId}/enrichment`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
-      return res.json();
+      const json = await res.json();
+      return (json?.data ?? json) as EnrichmentMetadata;
     },
     staleTime: 60_000,
   });
 
   const enrich = useMutation<EnrichmentResponse, Error>({
     mutationFn: async () => {
-      const res = await fetch(`/api/v1/parties/${partyId}/enrich`, {
+      const res = await authedFetch(`${API_BASE}/parties/${partyId}/enrich`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ skipCache: true }),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `HTTP ${res.status}`);
+        let text = `HTTP ${res.status}`;
+        try {
+          const json = await res.json();
+          if (json?.message) text = json.message;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(text);
       }
-      return res.json();
+      const json = await res.json();
+      return (json?.data ?? json) as EnrichmentResponse;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['party', partyId] });
@@ -161,23 +174,26 @@ export function PartyEnrichmentBadge({
         {icon}
         {label}
       </span>
-      {isAdmin && (
-        <button
-          type="button"
-          onClick={() => enrich.mutate()}
-          disabled={isMutating}
-          className="text-xs inline-flex items-center gap-1 px-2 py-0.5 rounded border disabled:opacity-50"
-          style={{ borderColor: 'var(--border)', color: 'var(--text)' }}
-          title="Re-extrair dados externos (Sabi PT / VIES / manual)"
-        >
-          {isMutating ? (
-            <Loader2 size={10} className="animate-spin" />
-          ) : (
-            <RefreshCw size={10} />
-          )}
-          Re-extrair dados
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => enrich.mutate()}
+        disabled={isMutating}
+        className="text-xs font-medium inline-flex items-center gap-1.5 px-3 py-1 rounded-md border shadow-sm transition-all hover:bg-amber-500/10 disabled:opacity-50"
+        style={{
+          borderColor: 'var(--ed-accent-gold, #f59e0b)',
+          color: 'var(--text)',
+          background: 'rgba(245, 158, 11, 0.08)',
+        }}
+        title="Consulta as melhores faturas extraídas deste fornecedor e os serviços oficiais VIES/NIF PT para deixar a ficha 100% preenchida"
+        data-testid="party-enrich-ai-button"
+      >
+        {isMutating ? (
+          <Loader2 size={12} className="animate-spin text-amber-500" />
+        ) : (
+          <Sparkles size={12} className="text-amber-500" />
+        )}
+        {isMutating ? 'A enriquecer dados…' : 'Enriquecer dados com IA / Faturas'}
+      </button>
       {enrich.data && enrich.data.fieldsPopulated.length > 0 && (
         <span
           className="text-xs"

@@ -6,6 +6,7 @@ import { SabiPtProvider } from './providers/sabi-pt.provider';
 import { ViesProvider } from './providers/vies.provider';
 import { ManualProvider } from './providers/manual.provider';
 import { EnrichmentProviderFactory } from './providers/provider.factory';
+import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
 
 /**
  * EnrichmentModule — Sprint I.
@@ -15,19 +16,9 @@ import { EnrichmentProviderFactory } from './providers/provider.factory';
  * extra-EU). Wires the provider chain, the service that orchestrates
  * the 30-day TTL cache + only-fill-nulls semantic, and the controller
  * exposing `POST /parties/:id/enrich` (manual trigger from the UI).
- *
- * Wiring notes:
- *   - AuditService is @Global so we don't need to import AuditModule.
- *   - PrismaService is @Global too.
- *   - ConfigModule gives the providers env access for
- *     `SABI_PT_API_KEY`. The providers are `@Injectable` + receive
- *     ConfigService via the constructor — the factory itself is stateless.
- *   - No queue dependency: enrich is a short-running API call (5s
- *     timeout per provider), serialised per-partyId via an in-memory
- *     `Map<string, Promise>` to dedupe concurrent manual clicks.
  */
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, NifLookupModule],
   controllers: [EnrichmentController],
   providers: [
     SabiPtProvider,
@@ -36,6 +27,6 @@ import { EnrichmentProviderFactory } from './providers/provider.factory';
     EnrichmentProviderFactory,
     EnrichmentService,
   ],
-  exports: [EnrichmentService, EnrichmentProviderFactory],
+  exports: [EnrichmentService, EnrichmentProviderFactory, ViesProvider],
 })
 export class EnrichmentModule {}

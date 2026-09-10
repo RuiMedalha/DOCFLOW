@@ -16,6 +16,8 @@ import { ExtractionService } from './extraction.service';
 import { SupplierResolver } from './supplier-resolver';
 import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constants';
 import { QueueModule } from '../../common/queue/queue.module';
+import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
+import { EnrichmentModule } from '../enrichment/enrichment.module';
 
 /**
  * ExtractionModule — owns the AT-QR decode + OCR + IBAN anti-fraud flow.
@@ -44,6 +46,8 @@ import { QueueModule } from '../../common/queue/queue.module';
     PrismaModule,
     StorageModule,
     AiModule,
+    NifLookupModule,
+    EnrichmentModule,
     // QueueModule.forRoot() returns a DynamicModule with `global: true`,
     // so the QUEUE_ADAPTER provider is reachable from any module in the
     // app — including ExtractionService, which @Injects the symbol to

@@ -45,6 +45,10 @@ function buildPrismaStub() {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
+    folder: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'folder-1', name: 'EDP Comercial' }),
+      create: jest.fn().mockResolvedValue({ id: 'folder-1', name: 'EDP Comercial' }),
+    },
     paymentEvent: {
       upsert: jest.fn(),
     },
@@ -52,10 +56,9 @@ function buildPrismaStub() {
   };
   stub.$transaction = jest.fn(async (work: any) => {
     if (typeof work !== 'function') return work;
-    // `tx` exposes the same delegates the production code expects. The
-    // inner code calls `tx.document.findFirst/update` and `tx.$executeRaw`.
     return work({
       document: stub.document,
+      folder: stub.folder,
       $executeRaw: stub.$executeRaw,
     });
   });
@@ -208,14 +211,15 @@ describe('DocumentsService.approve() — Sprint E folder routing', () => {
     expect(storage.move).toHaveBeenCalledTimes(1);
     const [from, to] = (storage.move as jest.Mock).mock.calls[0];
     expect(from).toBe('cmtf1scz20000g5s0n621bzef/_inbox/2026-09-04/abc-1788.pdf');
-    expect(to).toBe('fornecedores/edp-comercial/estrategico/2026-09/ft-2026-123-cm-appro.pdf');
+    expect(to).toBe('fornecedores/edp-comercial/estrategico/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf');
 
-    // DB update carries the new fileKey.
+    // DB update carries the new fileKey and standardized fileName.
     const updateCall = prisma.document.update.mock.calls.find(
       (c: any[]) => c[0]?.data?.fileKey,
     );
     expect(updateCall).toBeDefined();
     expect(updateCall[0].data.fileKey).toBe(to);
+    expect(updateCall[0].data.fileName).toBe('FT_EDPComercial_FT2026-123_2026-09-04.pdf');
 
     // Audit row tagged with subAction.
     const relocateRow = (audit.log as jest.Mock).mock.calls

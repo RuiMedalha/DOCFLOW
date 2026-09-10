@@ -49,16 +49,16 @@ export class EnrichmentController {
   constructor(private readonly enrichment: EnrichmentService) {}
 
   @Post('parties/:id/enrich')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.OPERADOR, Role.APPROVER, Role.ACCOUNTANT, Role.GESTOR_RH)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Enrich a Party from external APIs (Sabi PT / VIES / manual)',
+    summary: 'Enrich a Party from external APIs (VIES / NIF PT / Sabi PT) and extracted invoices',
     description:
-      'Triggers an immediate external-API enrichment. Cache TTL 30 days; pass ' +
-      '{ forceProvider: "sabi-pt" | "vies" | "manual", skipCache: true } to bypass.',
+      'Triggers an immediate enrichment. Cache TTL 30 days; pass ' +
+      '{ skipCache: true } to bypass.',
   })
   @ApiResponse({ status: 200, type: EnrichmentResponseDto })
-  @ApiResponse({ status: 403, description: 'ADMIN role required' })
+  @ApiResponse({ status: 403, description: 'Insufficient permissions' })
   @ApiResponse({ status: 404, description: 'Party not found' })
   async enrich(
     @CurrentUser() user: AuthenticatedUser,
@@ -72,7 +72,7 @@ export class EnrichmentController {
         user.id,
         {
           forceProvider: dto.forceProvider,
-          skipCache: false,
+          skipCache: dto.skipCache ?? true, // Ao clicar no botão, enriquecer de imediato
         },
       );
       return {

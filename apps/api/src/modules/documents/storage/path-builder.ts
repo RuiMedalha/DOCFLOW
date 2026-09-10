@@ -20,6 +20,11 @@
  *     and still collision-resistant in any single tenant.
  */
 
+import {
+  generateStandardFileName,
+  StandardFileNameInput,
+} from './filename-standardizer';
+
 export type PartyTypeInput = 'FORNECEDOR' | 'CLIENTE' | 'AMBOS' | null;
 
 export interface BuildPathInput {
@@ -40,6 +45,19 @@ export interface BuildPathInput {
   fileId: string;
   /** File extension without leading dot, e.g. 'pdf', 'jpg'. */
   extension: string;
+  /** Optional explicit standard filename {TIPO}_{FORNECEDOR}_{NUMERO}_{DATA}.pdf */
+  standardFileName?: string;
+  /** Optional document type to generate standard filename */
+  docType?: string | null;
+  /** Optional supplier name for standard filename */
+  supplierName?: string | null;
+  /** When true, bucket by year only (YYYY) instead of (YYYY-MM) */
+  yearOnly?: boolean;
+}
+
+function formatYear(d: Date): string {
+  const safe = d instanceof Date && !Number.isNaN(d.getTime()) ? d : new Date();
+  return String(safe.getUTCFullYear());
 }
 
 function formatMonth(d: Date): string {
@@ -69,15 +87,31 @@ function sanitizeExtension(input: string | null | undefined): string {
 }
 
 export function buildDocumentPath(input: BuildPathInput): string {
-  const yyyymm = formatMonth(input.documentDate);
-  const uuid8 = (input.fileId ?? '').slice(0, 8) || 'no-id';
-  const docNum = sanitizeDocNumber(input.documentNumber);
-  const ext = sanitizeExtension(input.extension);
-  const filename = ext ? `${docNum}-${uuid8}.${ext}` : `${docNum}-${uuid8}`;
+  const dateFolder = input.yearOnly
+    ? formatYear(input.documentDate)
+    : formatMonth(input.documentDate);
+
+  let filename: string;
+  if (input.standardFileName) {
+    filename = input.standardFileName;
+  } else if (input.docType) {
+    filename = generateStandardFileName({
+      type: input.docType,
+      supplier: input.supplierName ?? input.partySlug,
+      docNumber: input.documentNumber,
+      docDate: input.documentDate,
+      extension: input.extension,
+    });
+  } else {
+    const uuid8 = (input.fileId ?? '').slice(0, 8) || 'no-id';
+    const docNum = sanitizeDocNumber(input.documentNumber);
+    const ext = sanitizeExtension(input.extension);
+    filename = ext ? `${docNum}-${uuid8}.${ext}` : `${docNum}-${uuid8}`;
+  }
 
   // No party OR missing slug ⇒ despesas/ bucket.
   if (!input.partyType || !input.partySlug) {
-    return `despesas/${yyyymm}/${filename}`;
+    return `despesas/${dateFolder}/${filename}`;
   }
 
   // AMBOS routes to fornecedores/ per the Sprint E product decision.
@@ -85,5 +119,5 @@ export function buildDocumentPath(input: BuildPathInput): string {
   const categorySegment = input.partyCategorySlug
     ? `${input.partyCategorySlug}/`
     : '';
-  return `${root}/${input.partySlug}/${categorySegment}${yyyymm}/${filename}`;
+  return `${root}/${input.partySlug}/${categorySegment}${dateFolder}/${filename}`;
 }

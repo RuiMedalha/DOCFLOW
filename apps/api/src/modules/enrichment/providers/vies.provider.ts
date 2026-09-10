@@ -45,6 +45,12 @@ export class ViesProvider implements EnrichmentProvider {
       return { ok: false, source: 'manual', reason: 'no_nif_no_iban' };
     }
 
+    const countryCode = input.country.toUpperCase().trim();
+    const rawNif = input.nif.trim();
+    const cleanVat = rawNif.toUpperCase().startsWith(countryCode)
+      ? rawNif.slice(countryCode.length).trim()
+      : rawNif;
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5_000);
     try {
@@ -52,8 +58,8 @@ export class ViesProvider implements EnrichmentProvider {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          countryCode: input.country.toUpperCase(),
-          vatNumber: input.nif,
+          countryCode,
+          vatNumber: cleanVat,
         }),
         signal: controller.signal,
       });
@@ -107,7 +113,9 @@ export class ViesProvider implements EnrichmentProvider {
       return typeof v === 'string' && v.trim() ? v.trim() : null;
     };
     const address = pick('address');
+    const name = pick('name');
     return {
+      name: name ?? null,
       // VIES does not expose email/phone/mobile/website — leave null.
       email: null,
       phone: null,

@@ -14,14 +14,17 @@ import { ManualProvider } from './manual.provider';
  * filtering out already-set fields.
  */
 export type EnrichmentFields = {
+  name?: string | null;
   email?: string | null;
   phone?: string | null;
   mobile?: string | null;
   address?: string | null;
   city?: string | null;
   postalCode?: string | null;
+  country?: string | null;
   website?: string | null;
   industry?: string | null;
+  iban?: string | null;
 };
 
 export type EnrichmentResult =

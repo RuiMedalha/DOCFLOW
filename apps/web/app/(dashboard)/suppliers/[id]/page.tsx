@@ -21,7 +21,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Building2,
@@ -35,6 +35,7 @@ import {
   MapPin,
   Globe,
   Hash,
+  Sparkles,
 } from 'lucide-react';
 import { authedFetch } from '../../../_lib/auth-refresh';
 import { toastBus } from '../../../_components/ui';
@@ -136,6 +137,8 @@ export default function SupplierDetailPage() {
 
   const nif = fileQuery.data?.party.nif ?? '';
 
+  const queryClient = useQueryClient();
+
   const lookup = useMutation({
     mutationFn: () => fetchNifLookup(nif),
     onSuccess: (data) => {
@@ -147,6 +150,32 @@ export default function SupplierDetailPage() {
     },
     onError: (err: any) => {
       const msg = typeof err?.message === 'string' ? err.message : 'Falha ao validar NIF.';
+      toastBus.error(msg);
+    },
+  });
+
+  const enrich = useMutation({
+    mutationFn: () =>
+      apiFetch<{ source: string; fieldsPopulated: string[]; error?: string | null }>(
+        `/parties/${partyId}/enrich`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skipCache: true }),
+        },
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['supplier-file', partyId] });
+      queryClient.invalidateQueries({ queryKey: ['party', partyId] });
+      const count = data.fieldsPopulated?.length ?? 0;
+      toastBus.success(
+        count > 0
+          ? `Ficha 100% atualizada! ${count} campo(s) enriquecido(s) (${data.fieldsPopulated.join(', ')}).`
+          : `Consulta oficial realizada (${data.source}). Ficha já se encontra totalmente preenchida.`,
+      );
+    },
+    onError: (err: any) => {
+      const msg = typeof err?.message === 'string' ? err.message : 'Falha ao enriquecer dados do fornecedor.';
       toastBus.error(msg);
     },
   });
@@ -213,20 +242,42 @@ export default function SupplierDetailPage() {
           </span>
         </nav>
 
-        <div className="px-2 pt-6 pb-5">
-          <h1
-            className="font-mono font-bold leading-[1] tracking-tight"
-            style={{ fontSize: 'clamp(28px, 3.5vw, 38px)', color: 'var(--ed-ink)', letterSpacing: '-0.02em' }}
+        <div className="px-2 pt-6 pb-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1
+              className="font-mono font-bold leading-[1] tracking-tight"
+              style={{ fontSize: 'clamp(28px, 3.5vw, 38px)', color: 'var(--ed-ink)', letterSpacing: '-0.02em' }}
+            >
+              {party.name}
+            </h1>
+            <p className="mt-3 text-sm" style={{ color: 'var(--ed-ink-soft)' }}>
+              <span className="font-mono">NIF {party.nif ?? '—'}</span>
+              {' · '}
+              <span>{party.country ?? 'PT'}</span>
+              {' · '}
+              <span>{docs.length} documentos</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => enrich.mutate()}
+            disabled={enrich.isPending}
+            aria-busy={enrich.isPending}
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-lg shadow-sm transition-all hover:opacity-90 disabled:opacity-50"
+            style={{
+              background: 'var(--ed-accent-gold, #cba65a)',
+              color: 'var(--ed-ink, #1f2937)',
+            }}
+            data-testid="supplier-enrich-ai-button"
+            title="Consulta as melhores faturas extraídas deste fornecedor e os serviços oficiais VIES/NIF PT para deixar a ficha 100% preenchida"
           >
-            {party.name}
-          </h1>
-          <p className="mt-3 text-sm" style={{ color: 'var(--ed-ink-soft)' }}>
-            <span className="font-mono">NIF {party.nif ?? '—'}</span>
-            {' · '}
-            <span>{party.country ?? 'PT'}</span>
-            {' · '}
-            <span>{docs.length} documentos</span>
-          </p>
+            {enrich.isPending ? (
+              <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={16} aria-hidden="true" />
+            )}
+            {enrich.isPending ? 'A enriquecer ficha…' : 'Enriquecer dados com IA / Faturas'}
+          </button>
         </div>
       </header>
 
@@ -255,19 +306,57 @@ export default function SupplierDetailPage() {
           </div>
         </section>
 
-        {/* NIF validation card */}
-        <aside className="card p-6 space-y-3" style={{ borderColor: 'var(--ed-rule)' }}>
-          <h2
-            className="uppercase tracking-wider font-medium text-sm flex items-center gap-2"
-            style={{
-              fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
-              letterSpacing: '0.08em',
-              color: 'var(--ed-ink-faint)',
-            }}
-          >
-            <ShieldCheck size={14} aria-hidden="true" />
-            Validação NIF
-          </h2>
+        {/* NIF validation & AI Enrichment card */}
+        <aside className="card p-6 space-y-5" style={{ borderColor: 'var(--ed-rule)' }}>
+          <div className="space-y-3">
+            <h2
+              className="uppercase tracking-wider font-medium text-sm flex items-center gap-2"
+              style={{
+                fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                letterSpacing: '0.08em',
+                color: 'var(--ed-ink-faint)',
+              }}
+            >
+              <Sparkles size={14} className="text-amber-500" aria-hidden="true" />
+              Enriquecimento Automático
+            </h2>
+            <p className="text-xs" style={{ color: 'var(--ed-ink-soft)' }}>
+              Consulta VIES / NIF PT oficial e extrai dados das faturas arquivadas para preencher morada, contactos e IBAN.
+            </p>
+            <button
+              type="button"
+              onClick={() => enrich.mutate()}
+              disabled={enrich.isPending}
+              aria-busy={enrich.isPending}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded shadow-sm hover:opacity-85 transition-opacity disabled:opacity-50"
+              style={{
+                background: 'var(--ed-accent-gold, #cba65a)',
+                color: 'var(--ed-ink, #1f2937)',
+              }}
+            >
+              {enrich.isPending ? (
+                <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles size={14} aria-hidden="true" />
+              )}
+              {enrich.isPending ? 'A enriquecer…' : 'Enriquecer dados com IA / Faturas'}
+            </button>
+          </div>
+
+          <hr style={{ borderColor: 'var(--ed-rule)' }} />
+
+          <div className="space-y-3">
+            <h2
+              className="uppercase tracking-wider font-medium text-sm flex items-center gap-2"
+              style={{
+                fontFamily: 'var(--font-editorial), ui-serif, Georgia, serif',
+                letterSpacing: '0.08em',
+                color: 'var(--ed-ink-faint)',
+              }}
+            >
+              <ShieldCheck size={14} aria-hidden="true" />
+              Validação NIF
+            </h2>
           <button
             type="button"
             onClick={() => lookup.mutate()}
@@ -343,6 +432,7 @@ export default function SupplierDetailPage() {
           <p className="text-[10px]" style={{ color: 'var(--ed-ink-faint)' }}>
             Limite: 10 consultas/min. LGPD: dados públicos do Portal das Finanças; DocFlow não persiste o payload além do cache TTL de 7 dias.
           </p>
+          </div>
         </aside>
       </div>
 

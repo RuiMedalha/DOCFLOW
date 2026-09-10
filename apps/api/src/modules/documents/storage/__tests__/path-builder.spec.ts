@@ -143,4 +143,60 @@ describe('buildDocumentPath', () => {
     });
     expect(path).toContain('/2026-01/');
   });
+
+  it('generates standardized filename {TIPO}_{FORNECEDOR}_{NUMERO}_{DATA}.pdf and year folder', () => {
+    const path = buildDocumentPath({
+      ...baseInput,
+      partyType: 'FORNECEDOR',
+      partySlug: 'nome-fornecedor',
+      partyCategorySlug: null,
+      docType: 'FATURA',
+      supplierName: 'Nome Fornecedor',
+      documentNumber: 'FT2026-102',
+      documentDate: new Date('2026-09-09T10:00:00Z'),
+      yearOnly: true,
+    });
+    expect(path).toBe('fornecedores/nome-fornecedor/2026/FT_NomeFornecedor_FT2026-102_2026-09-09.pdf');
+  });
+
+  it('generates standardized acronyms: FR (Fatura-Recibo), NC (Nota Crédito), ND (Nota Débito)', () => {
+    const frPath = buildDocumentPath({
+      ...baseInput,
+      partyType: 'FORNECEDOR',
+      partySlug: 'posto-combustivel',
+      partyCategorySlug: null,
+      docType: 'FATURA_RECIBO',
+      supplierName: 'Galp',
+      documentNumber: 'FR 2026/99',
+      documentDate: new Date('2026-09-09T10:00:00Z'),
+      yearOnly: true,
+    });
+    expect(frPath).toBe('fornecedores/posto-combustivel/2026/FR_Galp_FR2026-99_2026-09-09.pdf');
+
+    const ncPath = buildDocumentPath({
+      ...baseInput,
+      partyType: 'FORNECEDOR',
+      partySlug: 'fornecedor-x',
+      partyCategorySlug: null,
+      docType: 'NOTA_CREDITO',
+      supplierName: 'Fornecedor X',
+      documentNumber: 'NC-10',
+      documentDate: new Date('2026-09-09T10:00:00Z'),
+      yearOnly: true,
+    });
+    expect(ncPath).toBe('fornecedores/fornecedor-x/2026/NC_FornecedorX_NC-10_2026-09-09.pdf');
+
+    const ndPath = buildDocumentPath({
+      ...baseInput,
+      partyType: 'FORNECEDOR',
+      partySlug: 'fornecedor-x',
+      partyCategorySlug: null,
+      docType: 'NOTA_DEBITO',
+      supplierName: 'Fornecedor X',
+      documentNumber: 'ND-20',
+      documentDate: new Date('2026-09-09T10:00:00Z'),
+      yearOnly: true,
+    });
+    expect(ndPath).toBe('fornecedores/fornecedor-x/2026/ND_FornecedorX_ND-20_2026-09-09.pdf');
+  });
 });

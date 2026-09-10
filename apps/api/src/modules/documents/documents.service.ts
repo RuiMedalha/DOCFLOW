@@ -43,6 +43,7 @@ import {
 import {
   FolderRulesEngine,
 } from './folder-rules/folder-rules.engine';
+import { generateStandardFileName } from './storage/filename-standardizer';
 import {
   buildPatternContext,
   decideFilingFolder,
@@ -2517,6 +2518,7 @@ export class DocumentsService {
         where: { id: documentId, tenantId },
         select: {
           id: true,
+          type: true,
           fileKey: true,
           pdfKey: true,
           docDate: true,
@@ -2538,24 +2540,39 @@ export class DocumentsService {
       if (!doc.party) return null; // No party linked — leave in _inbox/.
       if (!doc.fileKey) return null;
       // Already routed by a concurrent caller — idempotent skip.
-      // Matches BOTH shapes: `_inbox/<tenant>/...` (Sprint E upload-time
-      // shape) AND `<tenant>/_inbox/...` (legacy test fixture shape from
-      // the original Sprint E branch). The path-builder never emits a
-      // destination containing `_inbox/` so once fileKey has been
-      // refreshed to the deterministic party folder this guard correctly
-      // short-circuits.
       if (!this.isInboxKey(doc.fileKey)) return null;
 
       const partySlug = doc.party.slug ?? slugify(doc.party.name) ?? 'party';
       const extension = this.extractExtension(doc.fileKey) || 'pdf';
+      const docDateSafe = doc.docDate ?? new Date();
+
+      // Formato de ficheiro padronizado: {TIPO}_{FORNECEDOR}_{NUMERO}_{DATA}.pdf
+      const standardFileName = generateStandardFileName({
+        type: doc.type,
+        supplier: doc.party.name,
+        docNumber: doc.docNumber,
+        docDate: docDateSafe,
+        extension,
+      });
+
+      // Garantir criação e associação da pasta do fornecedor e subpasta do ano de emissão
+      const supplierYearFolder = await this.ensureSupplierYearFolder(
+        tenantId,
+        doc.party.name,
+        docDateSafe,
+        tx,
+      );
+
       const newPath = buildDocumentPath({
         partyType: doc.party.type,
         partySlug,
         partyCategorySlug: doc.party.partyCategory?.slug ?? null,
-        documentDate: doc.docDate ?? new Date(),
+        documentDate: docDateSafe,
         documentNumber: doc.docNumber ?? 'unnumbered',
         fileId: doc.id,
         extension,
+        standardFileName,
+        yearOnly: true,
       });
 
       // Destination equals source — defensive no-op (slug already encodes
@@ -2564,7 +2581,13 @@ export class DocumentsService {
 
       await tx.document.update({
         where: { id: documentId },
-        data: { fileKey: newPath, pdfKey: null }, // pdfKey set after move below
+        data: {
+          fileKey: newPath,
+          pdfKey: null,
+          fileName: standardFileName,
+          folderId: supplierYearFolder?.id ?? undefined,
+          finalFolder: supplierYearFolder?.pattern ?? `/fornecedores/${partySlug}/${docDateSafe.getUTCFullYear()}`,
+        },
       });
 
       return {
@@ -2633,6 +2656,91 @@ export class DocumentsService {
         partyCategorySlug: plan.partyCategorySlug,
       } as Prisma.InputJsonValue,
     });
+  }
+
+  /**
+   * Garante a criação e associação da pasta do fornecedor e subpasta do ano de emissão.
+   * Cria e mantém a hierarquia:
+   *   1. Pasta Pai: Fornecedor (ex: "EDP Comercial")
+   *   2. Subpasta Filho: Ano de emissão (ex: "EDP Comercial - 2026") vinculada via parentId
+   */
+  async ensureSupplierYearFolder(
+    tenantId: string,
+    supplierName: string,
+    docDate: Date = new Date(),
+    txClient?: any,
+  ): Promise<{ id: string; name: string; pattern?: string | null } | null> {
+    const client = txClient ?? this.prisma;
+    try {
+      const cleanSupplier = supplierName.trim() || 'Fornecedor';
+      const year = String(
+        (docDate instanceof Date && !Number.isNaN(docDate.getTime())
+          ? docDate
+          : new Date()
+        ).getUTCFullYear(),
+      );
+
+      // 1. Pasta do Fornecedor
+      let parentFolder = await client.folder.findFirst({
+        where: { tenantId, name: cleanSupplier },
+        select: { id: true, name: true, pattern: true },
+      });
+
+      if (!parentFolder) {
+        try {
+          parentFolder = await client.folder.create({
+            data: {
+              tenantId,
+              name: cleanSupplier,
+              color: '#3b82f6',
+              pattern: `/Fornecedores/${cleanSupplier}`,
+            },
+            select: { id: true, name: true, pattern: true },
+          });
+        } catch {
+          parentFolder = await client.folder.findFirst({
+            where: { tenantId, name: cleanSupplier },
+            select: { id: true, name: true, pattern: true },
+          });
+        }
+      }
+
+      if (!parentFolder) return null;
+
+      // 2. Subpasta do Ano de Emissão (nome único por tenant para respeitar @@unique([tenantId, name]))
+      const yearFolderName = `${cleanSupplier} - ${year}`;
+      let yearFolder = await client.folder.findFirst({
+        where: { tenantId, name: yearFolderName },
+        select: { id: true, name: true, pattern: true },
+      });
+
+      if (!yearFolder) {
+        try {
+          yearFolder = await client.folder.create({
+            data: {
+              tenantId,
+              name: yearFolderName,
+              parentId: parentFolder.id,
+              color: '#10b981',
+              pattern: `/Fornecedores/${cleanSupplier}/${year}`,
+            },
+            select: { id: true, name: true, pattern: true },
+          });
+        } catch {
+          yearFolder = await client.folder.findFirst({
+            where: { tenantId, name: yearFolderName },
+            select: { id: true, name: true, pattern: true },
+          });
+        }
+      }
+
+      return yearFolder ?? parentFolder;
+    } catch (err) {
+      this.logger.warn(
+        `[ensureSupplierYearFolder] failed for supplier=${supplierName}: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   /**

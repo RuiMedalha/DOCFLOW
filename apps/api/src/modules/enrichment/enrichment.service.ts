@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AuditAction, DocumentStatus } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -8,6 +8,7 @@ import {
   type EnrichmentFields,
   type EnrichmentResult,
 } from './providers/provider.factory';
+import { NifLookupService } from '../nif-lookup/nif-lookup.service';
 
 /**
  * EnrichmentService — orchestrates the external-API enrichment flow.
@@ -53,6 +54,7 @@ export class EnrichmentService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly factory: EnrichmentProviderFactory,
+    @Optional() private readonly nifLookup?: NifLookupService,
   ) {}
 
   // ============================================================ public API
@@ -65,7 +67,10 @@ export class EnrichmentService {
     tenantId: string,
     partyId: string,
     userId: string,
-    options: { forceProvider?: 'sabi-pt' | 'vies' | 'manual'; skipCache?: boolean } = {},
+    options: {
+      forceProvider?: 'sabi-pt' | 'vies' | 'nif-lookup' | 'invoices' | 'manual' | 'auto';
+      skipCache?: boolean;
+    } = {},
   ): Promise<EnrichmentOutcome> {
     const cacheKey = `${tenantId}:${partyId}`;
     const existing = this.inFlight.get(cacheKey);
@@ -130,7 +135,10 @@ export class EnrichmentService {
     tenantId: string,
     partyId: string,
     userId: string,
-    options: { forceProvider?: 'sabi-pt' | 'vies' | 'manual'; skipCache?: boolean },
+    options: {
+      forceProvider?: 'sabi-pt' | 'vies' | 'nif-lookup' | 'invoices' | 'manual' | 'auto';
+      skipCache?: boolean;
+    },
   ): Promise<EnrichmentOutcome> {
     const party = await this.prisma.party.findFirst({
       where: { id: partyId, tenantId },
@@ -184,27 +192,78 @@ export class EnrichmentService {
         } provider=${provider.name}`,
     );
 
-    const result = await provider.fetch({
+    let result: EnrichmentResult = await provider.fetch({
       nif: party.nif,
       country: party.country,
       iban: party.iban,
     });
 
-    if (!result.ok) {
-      await this.recordFailure(tenantId, partyId, userId, result.reason);
-      return {
-        source: 'manual',
-        fieldsPopulated: [],
-        error: result.reason,
-        fetchedAt: new Date(),
-      };
+    // Fallback 1: Se o provider falhou ou não retornou dados utilizáveis, e for NIF português, tenta NIF Lookup oficial
+    if ((!result.ok || Object.keys(result.fields ?? {}).length === 0) && this.nifLookup && party.nif && (party.country === 'PT' || !party.country)) {
+      try {
+        const nifRes = await this.nifLookup.lookup(tenantId, userId, party.nif);
+        if (nifRes.baseVerified || nifRes.address || nifRes.name) {
+          const addressStr = nifRes.address ?? null;
+          const postalCode = addressStr ? addressStr.match(/\b(\d{4}-\d{3})\b/)?.[1] ?? null : null;
+          const city = addressStr ? this.guessCity(addressStr) : null;
+
+          result = {
+            ok: true,
+            source: 'vies' as any, // nif-lookup ou vies oficial
+            fields: {
+              name: nifRes.name ?? null,
+              address: addressStr,
+              city,
+              postalCode,
+              country: 'PT',
+            },
+          };
+        }
+      } catch (err) {
+        this.logger.warn(`[enrichParty] nifLookup fallback failed: ${(err as Error).message}`);
+      }
     }
 
-    const merged = this.applyOnlyFillNulls(party, result.fields);
+    // Fallback 2: Tentar VIES diretamente se ainda não tiver dados
+    if (!result.ok && this.factory['vies'] && party.nif && (party.country || 'PT')) {
+      try {
+        const viesRes = await this.factory['vies'].fetch({
+          nif: party.nif,
+          country: party.country || 'PT',
+          iban: party.iban,
+        });
+        if (viesRes.ok) {
+          result = viesRes;
+        }
+      } catch (err) {
+        this.logger.warn(`[enrichParty] vies fallback failed: ${(err as Error).message}`);
+      }
+    }
+
+    // Enriquecimento complementar via melhores faturas extraídas desse fornecedor
+    const combinedFields: EnrichmentFields = result.ok ? { ...result.fields } : {};
+    const invoiceFields = await this.extractFieldsFromInvoices(tenantId, partyId);
+    for (const [key, val] of Object.entries(invoiceFields)) {
+      if (!combinedFields[key as keyof EnrichmentFields] && val) {
+        (combinedFields as any)[key] = val;
+      }
+    }
+
+    const effectiveSource: any =
+      result.ok ? result.source : Object.keys(invoiceFields).length > 0 ? 'invoices' : 'manual';
+
+    const merged = this.applyOnlyFillNulls(party, combinedFields);
     if (merged.length === 0) {
-      // Provider returned nothing we can use. Mark as 'no_data' but
-      // do NOT bump enrichedAt — operator should retry later and the
-      // 30d gate shouldn't lock out the next attempt.
+      if (!result.ok) {
+        await this.recordFailure(tenantId, partyId, userId, result.reason);
+        return {
+          source: 'manual',
+          fieldsPopulated: [],
+          error: result.reason,
+          fetchedAt: new Date(),
+        };
+      }
+      // Provider returned nothing we can use. Mark as 'no_data'
       await this.recordFailure(tenantId, partyId, userId, 'no_data');
       return {
         source: 'no_data',
@@ -218,12 +277,12 @@ export class EnrichmentService {
       tenantId,
       partyId,
       userId,
-      result.source,
+      effectiveSource,
       merged,
-      result.fields,
+      combinedFields,
     );
     return {
-      source: result.source,
+      source: effectiveSource,
       fieldsPopulated: merged,
       error: null,
       fetchedAt: new Date(),
@@ -231,21 +290,66 @@ export class EnrichmentService {
   }
 
   /**
+   * Extrai dados complementares a partir das melhores faturas extraídas deste fornecedor.
+   */
+  private async extractFieldsFromInvoices(
+    tenantId: string,
+    partyId: string,
+  ): Promise<EnrichmentFields> {
+    if (!this.prisma?.document?.findMany) return {};
+    const docs = await this.prisma.document.findMany({
+      where: {
+        tenantId,
+        partyId,
+        status: { not: DocumentStatus.REJEITADO },
+      },
+      select: {
+        iban: true,
+        metadata: true,
+        supplier: true,
+      },
+      orderBy: [{ ocrConfidence: 'desc' }, { createdAt: 'desc' }],
+      take: 10,
+    });
+
+    const extracted: EnrichmentFields = {};
+    for (const doc of docs) {
+      if (!extracted.iban && doc.iban) {
+        extracted.iban = doc.iban;
+      }
+      const meta = doc.metadata as Record<string, any> | null;
+      const ext = meta?.extraction ?? meta;
+      if (!extracted.phone && typeof ext?.supplierPhone === 'string' && ext.supplierPhone.trim()) {
+        extracted.phone = ext.supplierPhone.trim();
+      }
+      if (!extracted.email && typeof ext?.supplierEmail === 'string' && ext.supplierEmail.trim()) {
+        extracted.email = ext.supplierEmail.trim();
+      }
+      if (!extracted.address && typeof ext?.supplierAddress === 'string' && ext.supplierAddress.trim()) {
+        extracted.address = ext.supplierAddress.trim();
+      }
+      if (!extracted.website && typeof ext?.supplierWebsite === 'string' && ext.supplierWebsite.trim()) {
+        extracted.website = ext.supplierWebsite.trim();
+      }
+    }
+    return extracted;
+  }
+
+  private guessCity(address: string | null): string | null {
+    if (!address) return null;
+    const parts = address.split(/[,\n]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return null;
+    const last = parts[parts.length - 1];
+    const cityMatch = last.replace(/\b\d{4,5}-?\d{0,3}\b/g, '').trim();
+    return cityMatch || null;
+  }
+
+  /**
    * Apply the only-fill-nulls rule. Returns the LIST of fields that
-   * were actually populated (so the audit row and the API response
-   * both know what changed).
+   * were actually populated.
    */
   private applyOnlyFillNulls(
-    party: {
-      email: string | null;
-      phone: string | null;
-      mobile: string | null;
-      address: string | null;
-      city: string | null;
-      postalCode: string | null;
-      website: string | null;
-      industry: string | null;
-    },
+    party: Record<string, any>,
     incoming: EnrichmentFields,
   ): string[] {
     const filled: string[] = [];
@@ -258,9 +362,10 @@ export class EnrichmentService {
       'postalCode',
       'website',
       'industry',
+      'iban',
     ] as const) {
       const current = party[field];
-      const candidate = incoming[field];
+      const candidate = incoming[field as keyof EnrichmentFields];
       if (current == null && typeof candidate === 'string' && candidate.length > 0) {
         filled.push(field);
       }
@@ -269,40 +374,16 @@ export class EnrichmentService {
   }
 
   /**
-   * Persist the enrichment: update the Party row with the actual
-   * values from the provider + write the audit log in one
-   * transaction so the trail never falls out of sync with the data.
-   *
-   * We construct a partial `UpdatePartyDto`-shaped object so the
-   * downstream `PartiesService.update` could be used as an alternative
-   * — but since that path runs additional validation that we don't
-   * need (IBAN black-list, slug regen), we go directly through
-   * `prisma.party.update` to keep the write narrowly scoped to
-   * enrichment-time fields. The audit row uses the standard
-   * `subAction: 'party.enrich'` so forensic tooling can grep for it.
+   * Persist the enrichment.
    */
   private async writeEnrichment(
     tenantId: string,
     partyId: string,
     userId: string,
-    source: 'sabi-pt' | 'vies',
+    source: string,
     fieldsPopulated: string[],
     incoming: EnrichmentFields,
   ): Promise<void> {
-    const existing = await this.prisma.party.findFirst({
-      where: { id: partyId, tenantId },
-      select: {
-        email: true,
-        phone: true,
-        mobile: true,
-        address: true,
-        city: true,
-        postalCode: true,
-        website: true,
-        industry: true,
-      },
-    });
-    if (!existing) return;
     const updateData: Record<string, string> = {};
     for (const f of fieldsPopulated) {
       const value = incoming[f as keyof EnrichmentFields];
@@ -377,7 +458,7 @@ export class EnrichmentService {
    * expose the providers as separate injections.
    */
   private providerByName(
-    name: 'sabi-pt' | 'vies' | 'manual',
+    name: 'sabi-pt' | 'vies' | 'nif-lookup' | 'invoices' | 'manual' | 'auto',
   ): import('./providers/provider.factory').EnrichmentProvider {
     switch (name) {
       case 'sabi-pt':
@@ -385,6 +466,10 @@ export class EnrichmentService {
       case 'vies':
         return this.factory['vies'];
       case 'manual':
+      case 'nif-lookup':
+      case 'invoices':
+      case 'auto':
+      default:
         return this.factory['manual'];
     }
   }

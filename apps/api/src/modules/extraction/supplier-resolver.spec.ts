@@ -61,11 +61,9 @@ function buildPrismaStub() {
     create: jest.fn(async ({ data }: any) => {
       const id = `party-${++partyCounter}`;
       const now = new Date();
-      const row: PartyRow = {
+      const row: any = {
         id,
-        tenantId: data.tenantId,
-        type: data.type,
-        name: data.name,
+        ...data,
         nif: data.nif ?? null,
         iban: data.iban ?? null,
         country: data.country ?? "PT",
@@ -364,5 +362,123 @@ describe("SupplierResolver", () => {
     });
     expect(b.party?.id).not.toBe(a.party?.id);
     expect(prisma.dbParties.size).toBe(2);
+  });
+
+  it("auto-enriches PT supplier with official name and address from NifLookupService", async () => {
+    const prisma = buildPrismaStub();
+    const mockNifLookup = {
+      lookup: jest.fn().mockResolvedValue({
+        nif: "500697256",
+        mod11Valid: true,
+        baseVerified: true,
+        name: "EDP Comercial - Comercialização de Energia, S.A.",
+        address: "Av. 24 de Julho 12, 1200-480 Lisboa",
+        source: "upstream",
+        fetchedAt: new Date().toISOString(),
+      }),
+    };
+
+    const resolver = new SupplierResolver(prisma as any, mockNifLookup as any);
+
+    const result = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "EDP",
+      supplierNif: "500697256",
+      aiConfidence: 0.95,
+    });
+
+    expect(mockNifLookup.lookup).toHaveBeenCalledWith(TENANT_ID, "system", "500697256");
+    expect(result.party).toBeDefined();
+    const party = Array.from(prisma.dbParties.values())[0];
+    expect(party.name).toBe("EDP Comercial - Comercialização de Energia, S.A.");
+    expect(party.address).toBe("Av. 24 de Julho 12, 1200-480 Lisboa");
+    expect((party as any).postalCode).toBe("1200-480");
+  });
+
+  it("auto-enriches existing supplier filling empty address and official name", async () => {
+    const prisma = buildPrismaStub();
+    // Existing party with provisional name and empty address
+    await prisma.party.create({
+      data: {
+        tenantId: TENANT_ID,
+        type: "FORNECEDOR",
+        name: "Fornecedor por identificar",
+        nif: "500697256",
+        country: "PT",
+      },
+    });
+
+    const mockNifLookup = {
+      lookup: jest.fn().mockResolvedValue({
+        nif: "500697256",
+        mod11Valid: true,
+        baseVerified: true,
+        name: "Razão Social Oficial Lda",
+        address: "Rua Central 100, 4000-001 Porto",
+        source: "upstream",
+        fetchedAt: new Date().toISOString(),
+      }),
+    };
+
+    const resolver = new SupplierResolver(prisma as any, mockNifLookup as any);
+
+    const result = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "Fornecedor por identificar",
+      supplierNif: "500697256",
+      aiConfidence: 0.9,
+    });
+
+    expect(result.reason).toBe("found");
+    expect(prisma.party.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: "Razão Social Oficial Lda",
+          address: "Rua Central 100, 4000-001 Porto",
+          postalCode: "4000-001",
+        }),
+      }),
+    );
+  });
+
+  it("auto-enriches EU supplier using ViesProvider", async () => {
+    const prisma = buildPrismaStub();
+    const mockVies = {
+      fetch: jest.fn().mockResolvedValue({
+        ok: true,
+        source: "vies",
+        fields: {
+          name: "Acme Europe SL",
+          address: "Calle Mayor 1, 28013 Madrid",
+          city: "Madrid",
+          postalCode: "28013",
+        },
+      }),
+    };
+
+    const resolver = new SupplierResolver(prisma as any, undefined, mockVies as any);
+
+    const result = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "ES",
+      supplierName: "Acme",
+      supplierVatId: "ESB12345678",
+      aiConfidence: 0.95,
+    });
+
+    expect(mockVies.fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        country: "ES",
+        nif: "B12345678",
+      }),
+    );
+    expect(result.party).toBeDefined();
+    const party = Array.from(prisma.dbParties.values())[0];
+    expect(party.name).toBe("Acme Europe SL");
+    expect(party.address).toBe("Calle Mayor 1, 28013 Madrid");
+    expect((party as any).city).toBe("Madrid");
+    expect((party as any).postalCode).toBe("28013");
   });
 });

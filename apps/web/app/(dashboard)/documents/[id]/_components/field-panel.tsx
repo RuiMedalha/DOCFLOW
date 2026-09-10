@@ -1053,7 +1053,7 @@ export function FieldPanel(props: FieldPanelProps) {
                               onCommit={(v) => props.onUpdateLineItem!(li.id, { quantity: v })}
                             />
                           ) : (
-                            li.quantity.toLocaleString('pt-PT')
+                            li.quantity != null ? li.quantity.toLocaleString('pt-PT') : '—'
                           )}
                         </td>
                         <td

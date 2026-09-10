@@ -1684,7 +1684,7 @@ function ApprovalTimeline({
                 className="text-[11px]"
                 style={{ color: 'var(--ed-ink-faint)' }}
               >
-                · {new Date(row.createdAt).toLocaleString('pt-PT')}
+                · {row.createdAt ? new Date(row.createdAt).toLocaleString('pt-PT') : '—'}
               </span>
             </div>
             <p className="text-sm" style={{ color: 'var(--ed-ink)' }}>
@@ -1698,7 +1698,7 @@ function ApprovalTimeline({
                   <span className="font-medium">{row.decidedByName}</span>
                   {row.decidedAt && (
                     <span className="text-[11px]" style={{ color: 'var(--ed-ink-faint)' }}>
-                      {' '}em {new Date(row.decidedAt).toLocaleString('pt-PT')}
+                      {' '}em {row.decidedAt ? new Date(row.decidedAt).toLocaleString('pt-PT') : '—'}
                     </span>
                   )}
                 </>

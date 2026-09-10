@@ -645,7 +645,7 @@ export default function DocumentReviewPage() {
             )}
             {data.supplierVerifiedAt ? (
               <span style={{ color: 'var(--ed-status-ok)' }}>
-                fornecedor verificado em {new Date(data.supplierVerifiedAt).toLocaleString('pt-PT')}
+                fornecedor verificado em {data.supplierVerifiedAt ? new Date(data.supplierVerifiedAt).toLocaleString('pt-PT') : '—'}
               </span>
             ) : (
               <span style={{ color: 'var(--ed-ink-faint)' }}>

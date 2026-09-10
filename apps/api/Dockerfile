@@ -63,6 +63,8 @@ COPY --from=build --chown=docflow:docflow /repo/apps/api/node_modules ./node_mod
 COPY --from=build --chown=docflow:docflow /repo/apps/api/prisma       ./prisma
 COPY --from=build --chown=docflow:docflow /repo/apps/api/package.json ./package.json
 COPY --from=build --chown=docflow:docflow /repo/packages              /repo/packages
+COPY --chown=docflow:docflow apps/api/entrypoint.sh                   ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 RUN mkdir -p uploads && chown docflow:docflow uploads
 USER docflow
 EXPOSE 4000
@@ -70,5 +72,4 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/v1/health | grep -q '"status":"ok"' || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/src/main.js"]
+ENTRYPOINT ["/sbin/tini", "--", "./entrypoint.sh"]

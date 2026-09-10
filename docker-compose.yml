@@ -45,6 +45,7 @@ services:
       OPENROUTER_VISION_MODEL: google/gemini-2.5-flash
       UPLOADS_DIR: /repo/apps/api/uploads
       CORS_ORIGINS: ${CORS_ORIGINS}
+      THROTTLE_LIMIT: "1000"
     volumes:
       - docflow_uploads:/repo/apps/api/uploads
     ports:

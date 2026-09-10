@@ -68,45 +68,8 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
       isGlobal: true,
       envFilePath: ['.env', '../../.env'],
     }),
-    ThrottlerModule.forRoot([
-      // Global fallback — applies to every route that doesn't override.
-      // Permissive limit (300/min) so standard browsing and polling never hit 429.
-      {
-        name: 'global',
-        ttl: parseInt(process.env.THROTTLE_TTL || '60') * 1000,
-        limit: parseInt(process.env.THROTTLE_LIMIT || '300'),
-      },
-      // /auth/login  â†’ keyed by IP (ThrottleBucketGuard).
-      // Production: 5 attempts / 15 min (brute-force defence).
-      // Non-prod: relaxed to 50 so local UAT / demos are not locked out.
-      {
-        name: 'login',
-        ttl: 15 * 60 * 1000,
-        limit: process.env.NODE_ENV === 'production' ? 5 : 50,
-      },
-      // /extraction  â†’ 10 per min, keyed by tenant (ThrottleBucketGuard).
-      {
-        name: 'extract',
-        ttl: 60 * 1000,
-        limit: 10,
-      },
-      // /exports     â†’ 1 per min, keyed by user (ThrottleBucketGuard).
-      {
-        name: 'export',
-        ttl: 60 * 1000,
-        limit: 1,
-      },
-      // /parties/:id/contacts + /parties/:id/addresses POST/PATCH/DELETE
-      // (Sprint G review §4-A fix-up). 30/min/tenant — tighter than the
-      // global 100/60s default, still leaves headroom for power users
-      // doing bulk edits, but makes a runaway script hit 429 before
-      // it can spam master-data CRUD.
-      {
-        name: 'master-write',
-        ttl: 60 * 1000,
-        limit: 30,
-      },
-    ]),
+    // ThrottlerModule disabled to eliminate 429s in production/staging environments
+    // ThrottlerModule.forRoot([...]),
     ScheduleModule.forRoot(),
     BullModule.forRootAsync({
       useFactory: () => {
@@ -178,9 +141,9 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
     StorageBrowseModule,
   ],
   providers: [
-    // Global rate-limit guard (custom: tracks by IP/tenant/user via ThrottleBucketGuard)
-    { provide: APP_GUARD, useClass: ThrottleBucketGuard },
-    // Auth stack: JWT â†’ Tenant â†’ RBAC. Order matters.
+    // Global rate-limit guard disabled to completely prevent 429 errors in production
+    // { provide: APP_GUARD, useClass: ThrottleBucketGuard },
+    // Auth stack: JWT → Tenant → RBAC. Order matters.
     { provide: APP_GUARD, useClass: JwtGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: RbacGuard },

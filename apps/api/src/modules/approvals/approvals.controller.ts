@@ -9,6 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -208,6 +209,7 @@ export class ApprovalsController {
   // every 30s. Route sits under `/approvals` (not `/approvals/...`)
   // so the listing filter (`GET /approvals?status=…`) and the
   // count endpoint both live under the same parent path.
+  @SkipThrottle()
   @Get('approvals/pending-count')
   @ApiOperation({
     summary: 'Count of PENDING approvals in the tenant (for the sidebar badge)',

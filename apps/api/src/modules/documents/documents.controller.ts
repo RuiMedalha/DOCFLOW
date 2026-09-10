@@ -14,6 +14,7 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
@@ -140,6 +141,7 @@ export class DocumentsController {
 
   // ─────────────────────────────────────────── listings ────────────────
 
+  @SkipThrottle()
   @Get()
   @ApiOperation({
     summary: 'List documents',
@@ -154,6 +156,7 @@ export class DocumentsController {
     return this.documents.findAll(user.tenantId, query);
   }
 
+  @SkipThrottle()
   @Get('inbox')
   @ApiOperation({ summary: 'List inbox documents (status=NOVO)' })
   findInbox(
@@ -163,6 +166,7 @@ export class DocumentsController {
     return this.documents.findInbox(user.tenantId, query);
   }
 
+  @SkipThrottle()
   @Get('trash')
   @ApiOperation({
     summary: 'List soft-deleted documents (trash)',
@@ -182,6 +186,7 @@ export class DocumentsController {
     return this.documents.findInTrash(user.tenantId, query);
   }
 
+  @SkipThrottle()
   @Get('folders')
   @ApiOperation({
     summary: 'List folders for the inbox sidebar',

@@ -69,11 +69,12 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
       envFilePath: ['.env', '../../.env'],
     }),
     ThrottlerModule.forRoot([
-      // Global fallback â€” applies to every route that doesn't override.
+      // Global fallback — applies to every route that doesn't override.
+      // Permissive limit (300/min) so standard browsing and polling never hit 429.
       {
         name: 'global',
         ttl: parseInt(process.env.THROTTLE_TTL || '60') * 1000,
-        limit: parseInt(process.env.THROTTLE_LIMIT || '100'),
+        limit: parseInt(process.env.THROTTLE_LIMIT || '300'),
       },
       // /auth/login  â†’ keyed by IP (ThrottleBucketGuard).
       // Production: 5 attempts / 15 min (brute-force defence).

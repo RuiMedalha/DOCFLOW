@@ -1,5 +1,6 @@
 import { Controller, Get, Logger } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -23,6 +24,7 @@ import { RedisPingService } from './redis-ping.service';
  */
 @ApiTags('health')
 @Controller('health')
+  @SkipThrottle()
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);
   private readonly startedAt = Date.now();

@@ -673,8 +673,35 @@ export class ExtractionService implements OnModuleDestroy {
     // from this image; then the text layer of the PDF (which can carry
     // the QR string on a digital PDF export).
     const storedQr = doc.qrPayload ? this.findAtQrInText(doc.qrPayload) : null;
-    const zxingCandidate = storedQr ? null : (zxingQr ? this.findAtQrInText(zxingQr) : null);
+    let zxingCandidate = storedQr ? null : (zxingQr ? this.findAtQrInText(zxingQr) : null);
     const textQr = storedQr || zxingCandidate ? null : this.findAtQrInText(loaded.text);
+    // Fase 2 — deterministic QR for PDFs: when neither the stored payload
+    // nor the PDF text layer carries an AT-QR (scanned PDFs, or digital PDFs
+    // that draw the QR as an image), rasterise the first and last page and
+    // run the same ZXing/jsQR cascade used for photos. This runs BEFORE any
+    // vision call so NIF/total/ATCUD come from the QR, never from the LLM.
+    if (
+      !storedQr &&
+      !zxingCandidate &&
+      !textQr &&
+      /^application\/pdf/i.test(doc.mimeType) &&
+      this.storage
+    ) {
+      try {
+        const fromRaster = await this.decodeQrFromPdfRaster(doc, loaded.pageCount);
+        if (fromRaster) {
+          zxingQr = fromRaster;
+          zxingCandidate = fromRaster;
+          this.logger.log(
+            `[processDocumentAsync] ZXing decoded AT-QR from rasterised PDF page of ${doc.fileName}`,
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[processDocumentAsync] PDF raster QR step failed for ${doc.fileName}: ${(err as Error).message}`,
+        );
+      }
+    }
     const qrCandidate = storedQr ?? zxingCandidate ?? textQr;
 
     let fields: ExtractedFields;
@@ -1800,6 +1827,47 @@ export class ExtractionService implements OnModuleDestroy {
    * the raw PDF bytes — Gemini may still extract useful fields from an
    * image-only PDF inline.
    */
+  /**
+   * Fase 2 — rasterise page 1 (and the last page when the document has
+   * more than one) and try the AT-QR decoder cascade on each. Returns the
+   * validated payload or null. Kept separate from `rasterizeFirstPage()`
+   * because it needs page selection and a higher scale (QR modules must be
+   * ≥ 3 px to decode reliably; scale 2 on A4 gives ~1190 px width).
+   */
+  async decodeQrFromPdfRaster(
+    doc: { fileKey: string; fileName: string },
+    pageCount?: number,
+  ): Promise<string | null> {
+    if (!this.storage) return null;
+    const obj = await this.storage.getBuffer(doc.fileKey);
+    const pages: number[] = [1];
+    if (pageCount && pageCount > 1) pages.push(pageCount);
+    for (const pageNo of pages) {
+      const parser = new PDFParse({ data: obj.buffer });
+      let png: Buffer | null = null;
+      try {
+        const shot = await parser.getScreenshot({
+          partial: [pageNo],
+          scale: 2,
+          imageBuffer: true,
+        });
+        const page = shot?.pages?.[0];
+        if (page?.data) png = Buffer.from(page.data);
+      } finally {
+        try {
+          await parser.destroy?.();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!png) continue;
+      const raw = await decodeAtQr(png, "image/png", this.logger);
+      const validated = raw ? this.findAtQrInText(raw) : null;
+      if (validated) return validated;
+    }
+    return null;
+  }
+
   private async rasterizeFirstPage(
     buffer: Buffer,
     fileName: string,
@@ -2866,8 +2934,14 @@ export class ExtractionService implements OnModuleDestroy {
     if (!merged.customer && aiCustomer) {
       merged.customer = aiCustomer;
     }
+    // Fase 2 — an AI-read IBAN is only accepted when MOD-97 validates it;
+    // a mistranscribed IBAN is worse than none (payment to the wrong account).
     if (!merged.iban && aiIban) {
-      merged.iban = aiIban;
+      if (this.isValidIbanLocal(aiIban)) {
+        merged.iban = aiIban;
+      } else {
+        aiWarnings.push(`ai_iban_rejected_mod97:${aiIban}`);
+      }
       aiHints.push(`aiIban:${aiIban}`);
     }
     if (!merged.dueDate && aiDueDate) {

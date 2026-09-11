@@ -151,7 +151,11 @@ export interface VisionExtractedFields {
   notes?: string[];
 }
 
+export type VisionProviderName = 'gemini' | 'openrouter' | 'minimax' | 'openai' | 'anthropic';
+
 export interface VisionAnalysisResult {
+  /** Fase 2 — set when a second provider was consulted for a weak result. */
+  secondOpinion?: { provider: string; confidence: number };
   provider:
     | 'anthropic'
     | 'openai'
@@ -286,42 +290,101 @@ export class VisionService {
    * phone photos that the 2.5-flash primary misreads).
    */
   private readonly openrouterEscalateModel: string;
+  private readonly geminiUrl: string;
+  private readonly openaiUrl: string;
+  private readonly anthropicUrl: string | null;
+  /** Fase 2 — configurable auto-routing order (VISION_PROVIDER_ORDER). */
+  private readonly providerOrder: VisionProviderName[];
+  /** Fase 2 — below this confidence a second provider is consulted. */
+  private readonly secondOpinionThreshold: number;
+
+  static readonly DEFAULT_PROVIDER_ORDER: VisionProviderName[] = [
+    'gemini',
+    'openrouter',
+    'minimax',
+    'openai',
+    'anthropic',
+  ];
+
+  static parseProviderOrder(raw: string | undefined): VisionProviderName[] {
+    const valid = new Set<string>(VisionService.DEFAULT_PROVIDER_ORDER);
+    const parsed = (raw ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter((s): s is VisionProviderName => valid.has(s));
+    const unique = parsed.filter((p, i) => parsed.indexOf(p) === i);
+    // Providers not mentioned keep their default relative order after the
+    // explicit ones, so a partial list like "openrouter" still falls back.
+    for (const p of VisionService.DEFAULT_PROVIDER_ORDER) {
+      if (!unique.includes(p)) unique.push(p);
+    }
+    return unique;
+  }
+
+  static parseThreshold(raw: string | undefined): number {
+    const n = Number(raw);
+    if (!raw || !Number.isFinite(n) || n < 0 || n > 1) return 0.7;
+    return n;
+  }
+
+  /** ConfigService.get that treats "" as unset (docker-compose passes unset vars as ""). */
+  private cfg(name: string): string | undefined {
+    const v = this.config.get<string>(name);
+    return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+  }
 
   constructor(
     private config: ConfigService,
     @Optional()
     private readonly prisma?: PrismaService,
   ) {
-    this.anthropicKey = this.readKey('ANTHROPIC_API_KEY');
-    this.openaiKey = this.readKey('OPENAI_API_KEY');
-    this.geminiKey = this.readKey(['GOOGLE_API_KEY', 'GEMINI_API_KEY']);
-    this.openrouterKey = this.readKey('OPENROUTER_API_KEY');
-    this.minimaxKey = this.readKey('MINIMAX_API_KEY');
+    // Fase 2 — every provider is a gateway {URL, TOKEN, MODEL}. The
+    // `<PROVIDER>_TOKEN` / `<PROVIDER>_MODEL` / `<PROVIDER>_URL` names are
+    // canonical (docs/LLM_GATEWAY_PLAN.md); the older `*_API_KEY` /
+    // `*_VISION_MODEL` names stay as aliases so no deployment breaks.
+    // Empty strings (docker-compose passes unset vars as "") count as unset.
+    this.anthropicKey = this.readKey(['ANTHROPIC_TOKEN', 'ANTHROPIC_API_KEY']);
+    this.openaiKey = this.readKey(['OPENAI_TOKEN', 'OPENAI_API_KEY']);
+    this.geminiKey = this.readKey(['GEMINI_TOKEN', 'GOOGLE_API_KEY', 'GEMINI_API_KEY']);
+    this.openrouterKey = this.readKey(['OPENROUTER_TOKEN', 'OPENROUTER_API_KEY']);
+    this.minimaxKey = this.readKey(['MINIMAX_TOKEN', 'MINIMAX_API_KEY']);
     this.anthropicModel =
-      this.config.get<string>('ANTHROPIC_VISION_MODEL') ??
-      this.config.get<string>('ANTHROPIC_MODEL') ??
+      this.cfg('ANTHROPIC_MODEL') ??
+      this.cfg('ANTHROPIC_VISION_MODEL') ??
       'claude-3-5-sonnet-20241022';
     this.openaiModel =
-      this.config.get<string>('OPENAI_VISION_MODEL') ?? 'gpt-4o';
+      this.cfg('OPENAI_MODEL') ?? this.cfg('OPENAI_VISION_MODEL') ?? 'gpt-4o';
     this.geminiModel =
-      this.config.get<string>('GEMINI_VISION_MODEL') ?? 'gemini-3.6-flash';
+      this.cfg('GEMINI_MODEL') ?? this.cfg('GEMINI_VISION_MODEL') ?? 'gemini-3.6-flash';
     this.openrouterModel =
-      this.config.get<string>('OPENROUTER_VISION_MODEL') ??
+      this.cfg('OPENROUTER_MODEL') ??
+      this.cfg('OPENROUTER_VISION_MODEL') ??
       'google/gemini-2.5-flash';
     this.minimaxModel =
-      this.config.get<string>('MINIMAX_VISION_MODEL') ?? 'MiniMax-M3';
-    // Gateway-style URL config — defaults are the canonical
-    // OpenAI-compatible chat/completions endpoints but every user can
-    // swap them via .env without code changes.
+      this.cfg('MINIMAX_MODEL') ?? this.cfg('MINIMAX_VISION_MODEL') ?? 'MiniMax-M3';
     this.openrouterUrl =
-      this.config.get<string>('OPENROUTER_URL') ??
+      this.cfg('OPENROUTER_URL') ??
       'https://openrouter.ai/api/v1/chat/completions';
     this.minimaxUrl =
-      this.config.get<string>('MINIMAX_URL') ??
+      this.cfg('MINIMAX_URL') ??
       'https://api.minimax.io/v1/chat/completions';
+    this.geminiUrl = (
+      this.cfg('GEMINI_URL') ??
+      'https://generativelanguage.googleapis.com/v1beta'
+    ).replace(/\/+$/, '');
+    this.openaiUrl =
+      this.cfg('OPENAI_URL') ?? 'https://api.openai.com/v1/chat/completions';
+    this.anthropicUrl = this.cfg('ANTHROPIC_URL') ?? null;
     this.openrouterEscalateModel =
-      this.config.get<string>('OPENROUTER_VISION_MODEL_ESCALATE') ??
+      this.cfg('OPENROUTER_MODEL_ESCALATE') ??
+      this.cfg('OPENROUTER_VISION_MODEL_ESCALATE') ??
       'google/gemini-2.5-pro';
+    this.providerOrder = VisionService.parseProviderOrder(
+      this.cfg('VISION_PROVIDER_ORDER'),
+    );
+    this.secondOpinionThreshold = VisionService.parseThreshold(
+      this.cfg('VISION_SECOND_OPINION_CONFIDENCE'),
+    );
 
     if (this.liveProviderAvailable) {
       this.logger.log(
@@ -363,6 +426,22 @@ export class VisionService {
   get hasMinimax(): boolean {
     return !!this.minimaxKey;
   }
+  hasProvider(p: VisionProviderName): boolean {
+    switch (p) {
+      case 'gemini':
+        return this.hasGemini;
+      case 'openrouter':
+        return this.hasOpenrouter;
+      case 'minimax':
+        return this.hasMinimax;
+      case 'openai':
+        return this.hasOpenAI;
+      case 'anthropic':
+        return this.hasAnthropic;
+      default:
+        return false;
+    }
+  }
 
   /**
    * Which provider we'd use by default given the keys configured.
@@ -402,12 +481,11 @@ export class VisionService {
     if (preferred === 'openrouter' && this.hasOpenrouter) return 'openrouter';
     if (preferred === 'minimax' && this.hasMinimax) return 'minimax';
     if (preferred !== 'auto') return null;
-    // Auto routing — MiniMax first (per 2026-09-01 user decision).
-    if (this.hasMinimax) return 'minimax';
-    if (this.hasOpenrouter) return 'openrouter';
-    if (this.hasGemini) return 'gemini';
-    if (this.hasOpenAI) return 'openai';
-    if (this.hasAnthropic) return 'anthropic';
+    // Fase 2 — Gemini is the primary vision provider; OpenRouter only when
+    // its key exists; the rest follow VISION_PROVIDER_ORDER.
+    for (const p of this.providerOrder) {
+      if (this.hasProvider(p)) return p;
+    }
     return null;
   }
 
@@ -518,6 +596,39 @@ export class VisionService {
       // null payloads, or low-confidence guesses are treated as a
       // failure and we fall through to the next provider in the chain.
       if (isUsableForFallback(result)) {
+        // Fase 2 — second opinion: when the winning result is weak
+        // (confidence < VISION_SECOND_OPINION_CONFIDENCE, default 0.7) and
+        // another provider is configured, ask it too and keep the more
+        // confident answer. Bounded to ONE extra call.
+        if (
+          result.confidence < this.secondOpinionThreshold &&
+          i + 1 < chain.length &&
+          !result.secondOpinion
+        ) {
+          const next = chain[i + 1];
+          this.logger.warn(
+            `Vision: '${current}' returned confidence=${result.confidence.toFixed(2)} ` +
+              `< ${this.secondOpinionThreshold} — asking '${next}' for a second opinion.`,
+          );
+          try {
+            const second = await this.tryProvider(next, request, timeoutMs);
+            second.processingTimeMs = Date.now() - started;
+            if (isUsableForFallback(second) && second.confidence > result.confidence) {
+              this.logger.log(
+                `Vision: second opinion from '${next}' wins ` +
+                  `(${second.confidence.toFixed(2)} > ${result.confidence.toFixed(2)}).`,
+              );
+              second.secondOpinion = { provider: current, confidence: result.confidence };
+              result = second;
+            } else {
+              result.secondOpinion = { provider: next, confidence: second.confidence };
+            }
+          } catch (err) {
+            this.logger.warn(
+              `Vision: second opinion from '${next}' failed: ${(err as Error).message}`,
+            );
+          }
+        }
         if (current !== provider) {
           this.logger.log(
             `Vision: primary '${provider}' returned no usable data; ` +
@@ -581,9 +692,11 @@ export class VisionService {
     primary: 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'minimax',
   ): Array<'gemini' | 'openrouter' | 'minimax' | 'anthropic' | 'openai'> {
     const canonical: Array<'minimax' | 'openrouter' | 'gemini'> = [];
-    if (this.hasMinimax) canonical.push('minimax');
-    if (this.hasOpenrouter) canonical.push('openrouter');
-    if (this.hasGemini) canonical.push('gemini');
+    for (const p of this.providerOrder) {
+      if ((p === 'gemini' || p === 'openrouter' || p === 'minimax') && this.hasProvider(p)) {
+        canonical.push(p);
+      }
+    }
 
     // For the canonical primaries, dedupe so we don't call the same
     // provider twice when the user pinned a fallback as primary.
@@ -861,7 +974,7 @@ export class VisionService {
       throw new Error('global fetch() is not available');
     }
     const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${this.geminiUrl}/models/` +
       `${encodeURIComponent(this.geminiModel)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
     const body = {
       contents: [{ role: 'user', parts: userContent }],
@@ -1011,7 +1124,10 @@ export class VisionService {
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require('@anthropic-ai/sdk').default;
-    const client = new Anthropic({ apiKey: this.anthropicKey });
+    const client = new Anthropic({
+      apiKey: this.anthropicKey,
+      ...(this.anthropicUrl ? { baseURL: this.anthropicUrl } : {}),
+    });
 
     const userContent: Array<Record<string, unknown>> = [];
     if (request.fileBase64 && request.mimeType) {
@@ -1120,7 +1236,7 @@ export class VisionService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const resp = await f('https://api.openai.com/v1/chat/completions', {
+      const resp = await f(this.openaiUrl, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1182,7 +1298,7 @@ export class VisionService {
     });
 
     const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${this.geminiUrl}/models/` +
       `${encodeURIComponent(this.geminiModel)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
 
     const body = {

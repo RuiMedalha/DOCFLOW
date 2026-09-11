@@ -65,6 +65,7 @@ import {
 } from '../../common/queue/queue-adapter.interface';
 import { ExtractionService } from '../extraction/extraction.service';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
+import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
 import { NifLookupService } from '../nif-lookup/nif-lookup.service';
 
@@ -83,6 +84,22 @@ export const ALLOWED_MIMES = new Set<string>([
   'image/jpeg',
   'image/jpg',
   'image/png',
+  // Fase 2 — HEIC/HEIF (iPhone) is accepted and converted to JPEG at
+  // upload time (see normaliseHeic); the JPEG becomes the stored original.
+  'image/heic',
+  'image/heif',
+  // Fase 2 — HEIC/HEIF (iPhone) is accepted and converted to JPEG at
+  // upload time (see normaliseHeic); the JPEG becomes the stored original.
+  'image/heic',
+  'image/heif',
+  // Fase 2 — HEIC/HEIF (iPhone) is accepted and converted to JPEG at
+  // upload time (see normaliseHeic); the JPEG becomes the stored original.
+  'image/heic',
+  'image/heif',
+  // Fase 2 — HEIC/HEIF (iPhone) is accepted and converted to JPEG at
+  // upload time (see normaliseHeic); the JPEG becomes the stored original.
+  'image/heic',
+  'image/heif',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
 ]);
@@ -149,6 +166,26 @@ export class DocumentsService {
   ) {
     if (!file?.buffer?.length) {
       throw new BadRequestException('File is required and must not be empty');
+    }
+    // Fase 2 — HEIC/HEIF → JPEG before anything else (hash, magic-bytes
+    // check, storage, PDF derivative, extraction all see the JPEG).
+    if (isHeic(file)) {
+      try {
+        const jpeg = await normaliseHeic(file, this.logger);
+        if (jpeg) {
+          file = {
+            ...file,
+            buffer: jpeg.buffer,
+            mimetype: jpeg.mimetype,
+            originalname: jpeg.originalname,
+            size: jpeg.size,
+          };
+        }
+      } catch (err) {
+        throw new BadRequestException(
+          `HEIC/HEIF image could not be decoded: ${(err as Error).message}`,
+        );
+      }
     }
     if (!ALLOWED_MIMES.has(file.mimetype)) {
       throw new BadRequestException(`Unsupported file type: ${file.mimetype}`);

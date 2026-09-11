@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { DocumentOrigin, Prisma } from '@prisma/client';
 import { createHash, createHmac, createVerify, timingSafeEqual, verify } from 'node:crypto';
+import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,11 +18,13 @@ import { StorageService } from '../documents/storage/storage-service.interface';
 import type { ImapConfigDto } from './dto/imap-config.dto';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ACCEPTED_EXTENSIONS = new Set(['pdf', 'jpg', 'jpeg', 'png', 'docx']);
+const ACCEPTED_EXTENSIONS = new Set(['pdf', 'jpg', 'jpeg', 'png', 'docx', 'heic', 'heif']);
 const ACCEPTED_MIME_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
   'image/png',
+  'image/heic',
+  'image/heif',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
@@ -468,8 +471,24 @@ export class InboundService {
   }
 
   async ingestFiles(tenantId: string, files: InboundFile[], origin: DocumentOrigin, metadata: Prisma.InputJsonValue) {
+    // Fase 2 — HEIC/HEIF attachments (iPhone mail) become JPEG before hashing.
+    const normalised: InboundFile[] = [];
+    for (const file of files) {
+      if (!isHeic(file)) {
+        normalised.push(file);
+        continue;
+      }
+      try {
+        const jpeg = await normaliseHeic(file, this.logger);
+        normalised.push(jpeg ? { ...file, ...jpeg } : file);
+      } catch (err) {
+        this.logger.warn(
+          `[ingestFiles] HEIC decode failed for ${file.originalname}: ${(err as Error).message} — skipping file`,
+        );
+      }
+    }
     const created = await Promise.all(
-      files.map((file) =>
+      normalised.map((file) =>
         this.documents.createFromInbound({ tenantId, file, origin, metadata }),
       ),
     );

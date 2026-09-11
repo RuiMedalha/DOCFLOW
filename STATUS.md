@@ -13,11 +13,11 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `1d97ba6` (Fase 2). Deploy 2026-09-11 03:55 UTC |
+| Commit em produção | `d01ad38` (Fase 3). Deploy 2026-09-11 (migrations `20260911050000` + `20260911050001` aplicadas pelo entrypoint; backup `/root/backups/docflow/docflow-20260911-0415-pre-fase3.sql.gz`) |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
-| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (14 migrations, última `20260908002000_add_accountant_role`) |
+| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (24 migrations, última `20260911050001_fase3_fiscal_key_unique_index`) |
 | Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (legado, 3 ficheiros já migrados), `docflow-minio` |
 | DB de produção | 1 tenant (`demo` = NOV OUSADO UNIPESSOAL LDA), 1 user (`admin@demo.pt` ADMIN), 3 documentos (todos `EM_REVISAO`), 3 parties |
 | Storage | driver **s3** → MinIO interno `http://minio:9000`, bucket `docflow`, utilizador de serviço com policy só para o bucket; presigned URLs via `https://files-docflow.167.86.111.8.sslip.io` (só API S3; console desligada) |
@@ -31,7 +31,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1161 verdes / 1161** (107 suites) |
+| `apps/api` `pnpm test` | **1193 verdes / 1193** (109 suites) |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
 | Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
@@ -45,6 +45,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 - Vision IA: gateway {URL, TOKEN, MODEL} por provider (Gemini, OpenRouter, MiniMax, OpenAI, Anthropic), ordem por `VISION_PROVIDER_ORDER` (default Gemini primeiro), 2.ª opinião quando confidence < `VISION_SECOND_OPINION_CONFIDENCE` (0,7). Em produção só OpenRouter tem token.
 - Fornecedores (`Party`) com resolução por NIF, enriquecimento, categorias por fornecedor (`party-categories`), regras de pastas.
 - Categorias de despesa (9 PT seedadas, `ivaDeductibilityPct`).
+- Validade fiscal determinística (`fiscalStatus` FISCAL/NAO_FISCAL/INDETERMINADO + `fiscalReason`, `extraction/fiscal-status.ts`), tipos PROFORMA/ORCAMENTO/AVISO_PAGAMENTO/EXTRATO_FORNECEDOR/FATURA_SIMPLIFICADA, duplicados por chave fiscal (NIF + nº normalizado | ATCUD) → `DUPLICADO` ligado ao original; índice único parcial `documents_fiscal_key_unique`. NAO_FISCAL e DUPLICADO fora do apuramento de IVA.
 - Aprovação com workflow (`PENDING_APPROVAL`/`CHANGES_REQUESTED`), RBAC, auditoria hash-chained.
 - Calendário de pagamentos (`PaymentEvent`, `PaymentSchedule`, SEPA export).
 - Conciliação bancária (módulo `banking` + `reconciliation`, wizard CSV).
@@ -69,7 +70,9 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | 8 | Portas do `api` (32771) e `web` (32772) são publicadas no host pelo Coolify (compose `ports: - '4000'`). Firewall bloqueia de fora (testado: timeout), mas o ideal é `expose` em vez de `ports` | compose | Fase 1 |
 | 9 | Seed de demo (`admin@demo.pt` / tenant `demo`) é o único utilizador em produção | prod | Fase 7 |
 | 10 | Sem backups de Postgres nem de uploads | VPS | Fase 7 |
-| 11 | Sem campo `fiscalStatus`; `DocumentType` não tem PROFORMA/ORCAMENTO/AVISO/EXTRATO/FATURA_SIMPLIFICADA; dedup só por hash (há índice `[tenantId, atcud]` mas não único) | schema | Fase 3 |
+| 11 | ~~Sem `fiscalStatus`/tipos/dedup fiscal~~ **Resolvido na Fase 3** (`577c99c`, `4e86b28`, `ea1145a`, `d01ad38`). Faturas estrangeiras ficam `INDETERMINADO (vies_pending)` até a Fase 4 ligar o VIES | schema | ✅ |
+| 17 | `prisma migrate diff` local mostra drift **pré-existente** em `approvals`/`document_field_confirmations` (FKs/`updatedAt` default) — não tocado; rever na Fase 7 | schema | Fase 7 |
+| 18 | 11 dos 13 `qrPayload` guardados em produção eram read-backs da IA sem Q/R (antes do cross-check). Já não são usados como QR (só payloads completos contam), mas as linhas mantêm o texto antigo até à próxima re-extração | prod | Fase 7 (limpeza opcional) |
 | 12 | `Party` sem `vatNumber/vatRegime/currency/paymentTermsDays/directDebit/viesValidatedAt…` | schema | Fase 4 |
 | 13 | ~~HEIC não é aceite~~ **Resolvido na Fase 2** (`813c93d`, heic-convert) — falta um HEIC real para smoke (ver Bloqueios) | api | ✅ |
 | 14 | `/storage/tree` mostra vazio na raiz: as chaves são `_inbox/<tenantId>/…` e `fornecedores/…`, mas o browser lista `<tenantId>/…`. Comportamento pré-existente (também com driver local) | api | Fase 7 (ou quando a UI de pastas for revista) |
@@ -141,11 +144,25 @@ Falhou / adiado: comparação com `gemini-documental` — sem `GEMINI_API_KEY` n
 Bloqueios (preciso do Rui): `GEMINI_API_KEY` (Gemini principal + benchmark comparativo); um HEIC real para smoke.
 Próximo: Fase 3 — Validade fiscal, tipos e duplicados.
 
+## Fase 3 — Validade fiscal, tipos e duplicados — 2026-09-11
+Feito: schema + 2 migrations à mão (enums/colunas e índice único parcial em transações separadas, porque o Postgres não deixa usar um valor de enum novo na mesma transação); módulo puro `fiscal-status.ts` (QR-AT válido → FISCAL, palavras-chave → NAO_FISCAL com tipo, estrangeira → FISCAL só com VIES, resto INDETERMINADO; nunca a partir de QR lido pela IA); dedup por (NIF + nº normalizado) ou ATCUD com fallback P2002; ATCUD deixa de ser usado como nº de documento; `qrPayload` guardado só conta se for QR completo; IVA exclui NAO_FISCAL/DUPLICADO; badges e link ao original no frontend.
+Verificado em produção: backup `pg_dump` antes do deploy; migrations aplicadas pelo entrypoint (`_prisma_migrations` + `documents_fiscal_key_unique` confirmados por SQL); smoke 8/8: proforma sintética da Miranda & Serra → `NAO_FISCAL / PROFORMA` (não duplicada da fatura real), Miranda FT 2026A92/6384 → `FISCAL (qr_at_valid)`, foto IKEA #2 → `DUPLICADO` da foto #1, Clima Hostelería (ES) → `INDETERMINADO (vies_pending:ESB06612386)`.
+Testes: 1193 verdes / 1193 (api). Build api ✅, web typecheck ✅.
+Falhou / adiado: 1.º deploy falhou no build Docker (chave `FS` duplicada no aliasMap — o build local incremental não a apanhou; corrigido em `4e86b28`, tsbuildinfo agora limpo antes do build). Smoke de proforma feito com PDF sintético — não há proforma real nas amostras.
+Bloqueios (preciso do Rui): nenhum novo (GEMINI_API_KEY e HEIC real continuam pendentes).
+Próximo: Fase 4 — Fornecedores completos.
+
 ---
 
 ## Próxima fase
 
-**Fase 3 — Validade fiscal, tipos e duplicados.** Ordem prevista:
+**Fase 4 — Fornecedores completos.** Ordem prevista:
+1. Migration `Party`: country, vatNumber, vatRegime (PT | UE_REVERSE_CHARGE | EXTRA_UE), currency, paymentTermsDays, directDebit, defaultCategoryId, billingEmail, contacts, notes, viesValidatedAt/viesName/viesAddress; `PartyCategoryStat(partyId, categoryId, approvedCount)`; `Document.amountEur`.
+2. Serviço VIES (REST oficial da CE, cache 30 dias) + ligação ao `fiscal-status` (`viesValidated`) → faturas ES passam a FISCAL.
+3. Câmbio BCE à data da fatura para moeda ≠ EUR (`amountEur`).
+4. Importador CSV de fornecedores; página de fornecedor com ficha + histórico + produtos; auto-categoria após 3 aprovações.
+
+~~**Fase 3 — Validade fiscal, tipos e duplicados.** Ordem prevista:~~
 1. Migration: `fiscalStatus` (FISCAL | NAO_FISCAL | INDETERMINADO) + `DocumentType` alargado (PROFORMA, ORCAMENTO, AVISO_PAGAMENTO, EXTRATO_FORNECEDOR, FATURA_SIMPLIFICADA) + índice único parcial `(tenantId, supplierNif, docNumber, atcud)` + estado `DUPLICADO` ligado ao original.
 2. Regra determinística de `fiscalStatus` (QR válido / estrangeira com NIF-IVA + nº + data / palavras-chave proforma-orçamento-aviso) com testes por regra.
 3. Dedup por chave fiscal na extração (email vs papel: Miranda 6384 nativo vs scan; fotos IKEA ×2).

@@ -1255,6 +1255,14 @@ export class ExtractionService implements OnModuleDestroy {
       );
     }
 
+    // Fase 4 — persist the AI-extracted line items as DocumentItem rows.
+    // Without this, the "produtos comprados" feature (party-products.service)
+    // and the manual line-item editor both stay empty forever — the AI's
+    // lineItems only ever lived in metadata.extraction JSON. Idempotent
+    // re-extraction: replace the set rather than append. Never throws —
+    // a line-item write failure must not fail the extraction pipeline.
+    await this.persistLineItems(documentId, fields.lineItems);
+
     // Post-extraction rename: swap the upload-time filename (e.g.
     // `image.jpg`, `<hash>.pdf`) for a human-friendly slug like
     // `AMERICO-ALVES_2026-07-31_FT-2026-1751.pdf`. We do this AFTER the
@@ -2895,6 +2903,57 @@ export class ExtractionService implements OnModuleDestroy {
     } catch (err) {
       this.logger.warn(`[resolveAutoCategory] failed for party=${partyId}: ${(err as Error).message}`);
       return null;
+    }
+  }
+
+  /**
+   * Fase 4 — replace this document's DocumentItem rows with the
+   * AI-extracted line items. Skips items with no description or no
+   * derivable total (garbage in, nothing written). Tolerates prisma test
+   * doubles without `documentItem` (same pattern as the other Fase 3/4
+   * optional-model helpers in this file).
+   */
+  private async persistLineItems(
+    documentId: string,
+    lineItems: ExtractedFields["lineItems"] | undefined,
+  ): Promise<void> {
+    const client = this.prisma as unknown as {
+      documentItem?: {
+        deleteMany: (args: unknown) => Promise<unknown>;
+        createMany: (args: unknown) => Promise<unknown>;
+      };
+    };
+    if (typeof client.documentItem?.deleteMany !== "function") return;
+    try {
+      await client.documentItem.deleteMany({ where: { documentId } });
+      const rows = (lineItems ?? [])
+        .map((it) => {
+          const description = it.description?.trim();
+          const quantity = it.quantity ?? 1;
+          const unitPrice = it.unitPrice;
+          const total =
+            it.lineTotal ??
+            (unitPrice != null ? Math.round(unitPrice * quantity * 100) / 100 : undefined);
+          if (!description || total == null || !Number.isFinite(total)) return null;
+          return {
+            documentId,
+            code: it.code ?? null,
+            description,
+            quantity,
+            unitPrice: unitPrice ?? total / (quantity || 1),
+            discount: it.discount ?? 0,
+            taxRate: it.vatRate ?? 23,
+            total,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      if (rows.length > 0) {
+        await client.documentItem.createMany({ data: rows });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[persistLineItems] failed for document=${documentId}: ${(err as Error).message}`,
+      );
     }
   }
 

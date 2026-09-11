@@ -13,11 +13,11 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `d01ad38` (Fase 3). Deploy 2026-09-11 (migrations `20260911050000` + `20260911050001` aplicadas pelo entrypoint; backup `/root/backups/docflow/docflow-20260911-0415-pre-fase3.sql.gz`) |
+| Commit em produção | `095f953` (Fase 4). Migration `20260911060000_fase4_party_fiscal_profile` aplicada pelo entrypoint; backup `/root/backups/docflow/docflow-20260911-0521-pre-fase4.sql.gz` |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
-| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (24 migrations, última `20260911050001_fase3_fiscal_key_unique_index`) |
+| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (25 migrations, última `20260911060000_fase4_party_fiscal_profile`) |
 | Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (legado, 3 ficheiros já migrados), `docflow-minio` |
 | DB de produção | 1 tenant (`demo` = NOV OUSADO UNIPESSOAL LDA), 1 user (`admin@demo.pt` ADMIN), 3 documentos (todos `EM_REVISAO`), 3 parties |
 | Storage | driver **s3** → MinIO interno `http://minio:9000`, bucket `docflow`, utilizador de serviço com policy só para o bucket; presigned URLs via `https://files-docflow.167.86.111.8.sslip.io` (só API S3; console desligada) |
@@ -31,7 +31,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1193 verdes / 1193** (109 suites) |
+| `apps/api` `pnpm test` | **1220 verdes / 1220** (113 suites) |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
 | Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
@@ -43,7 +43,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 - Pipeline assíncrono `RECEIVED → EXTRACTING → ENRICHING → ROUTING → COMPLETED` com SSE (`/documents/:id/processing/stream`).
 - QR-AT: decoder ZXing cascade + jsQR fallback (em worker thread) + parser determinístico; em PDFs sem QR no texto rasteriza pág. 1 (@2/@3) e última. QR lido pela IA só é aceite com cross-check (`isAiQrConsistent`). Benchmark: `docs/READING_BENCHMARK.md` (19/19).
 - Vision IA: **OpenRouter é o provider de vision de todo o pipeline** (`OPENROUTER_API_KEY`, `google/gemini-2.5-flash`, escalada `google/gemini-2.5-pro`); gateway {URL, TOKEN, MODEL} por provider (OpenRouter, Gemini direto opcional, MiniMax, OpenAI, Anthropic), ordem por `VISION_PROVIDER_ORDER` (default OpenRouter primeiro), 2.ª opinião quando confidence < `VISION_SECOND_OPINION_CONFIDENCE` (0,7).
-- Fornecedores (`Party`) com resolução por NIF, enriquecimento, categorias por fornecedor (`party-categories`), regras de pastas.
+- Fornecedores (`Party`) com resolução por NIF, enriquecimento, categorias por fornecedor (`party-categories`), regras de pastas. **Fase 4:** perfil fiscal/comercial (NIF-IVA UE, regime PT/UE autoliquidação/extra-UE, moeda, prazo, débito direto, email de faturação, categoria de despesa default), validação **VIES** (REST oficial da CE, cache 30 dias, `POST /parties/:id/vies`), câmbio **BCE** à data da fatura (`amountEur`/`exchangeRate`), importador CSV (`POST /parties/import`, Moloni-friendly, dry-run), produtos comprados (`GET /parties/:id/products`), auto-categoria após ≥ 3 aprovações (`PartyCategoryStat`).
 - Categorias de despesa (9 PT seedadas, `ivaDeductibilityPct`).
 - Validade fiscal determinística (`fiscalStatus` FISCAL/NAO_FISCAL/INDETERMINADO + `fiscalReason`, `extraction/fiscal-status.ts`), tipos PROFORMA/ORCAMENTO/AVISO_PAGAMENTO/EXTRATO_FORNECEDOR/FATURA_SIMPLIFICADA, duplicados por chave fiscal (NIF + nº normalizado | ATCUD) → `DUPLICADO` ligado ao original; índice único parcial `documents_fiscal_key_unique`. NAO_FISCAL e DUPLICADO fora do apuramento de IVA.
 - Aprovação com workflow (`PENDING_APPROVAL`/`CHANGES_REQUESTED`), RBAC, auditoria hash-chained.
@@ -73,7 +73,8 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | 11 | ~~Sem `fiscalStatus`/tipos/dedup fiscal~~ **Resolvido na Fase 3** (`577c99c`, `4e86b28`, `ea1145a`, `d01ad38`). Faturas estrangeiras ficam `INDETERMINADO (vies_pending)` até a Fase 4 ligar o VIES | schema | ✅ |
 | 17 | `prisma migrate diff` local mostra drift **pré-existente** em `approvals`/`document_field_confirmations` (FKs/`updatedAt` default) — não tocado; rever na Fase 7 | schema | Fase 7 |
 | 18 | 11 dos 13 `qrPayload` guardados em produção eram read-backs da IA sem Q/R (antes do cross-check). Já não são usados como QR (só payloads completos contam), mas as linhas mantêm o texto antigo até à próxima re-extração | prod | Fase 7 (limpeza opcional) |
-| 12 | `Party` sem `vatNumber/vatRegime/currency/paymentTermsDays/directDebit/viesValidatedAt…` | schema | Fase 4 |
+| 19 | ~~`document_items` nunca era escrita pela extração~~ **Resolvido na Fase 4** (`095f953`) — `document_items` tinha 0 linhas em toda a base de dados apesar da IA extrair `lineItems` para quase todos os documentos; agora persistidas em cada extração (idempotente) | api | ✅ |
+| 12 | ~~`Party` sem perfil fiscal~~ **Resolvido na Fase 4** (`095f953`) | schema | ✅ |
 | 13 | ~~HEIC não é aceite~~ **Resolvido na Fase 2** (`813c93d`, heic-convert) — falta um HEIC real para smoke (ver Bloqueios) | api | ✅ |
 | 14 | `/storage/tree` mostra vazio na raiz: as chaves são `_inbox/<tenantId>/…` e `fornecedores/…`, mas o browser lista `<tenantId>/…`. Comportamento pré-existente (também com driver local) | api | Fase 7 (ou quando a UI de pastas for revista) |
 | 15 | ~~PDF 4 páginas sem total~~ **Resolvido na Fase 2** (QR rasterizado: 6,7 s, total certo). Fotos continuam ≈ 2 min (cascade a várias escalas + vision) — já não bloqueia a API | extraction | Fase 7 (otimização opcional) |
@@ -152,11 +153,21 @@ Falhou / adiado: 1.º deploy falhou no build Docker (chave `FS` duplicada no ali
 Bloqueios (preciso do Rui): nenhum novo (só o HEIC real continua pendente).
 Próximo: Fase 4 — Fornecedores completos.
 
+## Fase 4 — Fornecedores completos — 2026-09-11
+Feito: migration `Party` (vatNumber, vatRegime, currency, directDebit, billingEmail, defaultCategoryId, vies*) + `PartyCategoryStat` + `Document.amountEur/exchangeRate/exchangeRateDate`; `ViesService` (REST oficial `ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number`, confirmado com curl; cache 30 dias em memória e no `Party`); extração valida NIF-IVA estrangeiro → `FISCAL (foreign_vies_validated)` e grava `vatRegime`; `EcbFxService` (`data-api.ecb.europa.eu`, csvdata, fixing anterior em fins de semana) → `amountEur`; `POST /parties/import` (delimitador auto, cabeçalhos PT/EN ou `mapping` JSON, upsert por NIF / NIF-IVA / nome, `dryRun`); `GET /parties/:id/products`; auto-categoria (aprovar conta em `PartyCategoryStat`; ≥ 3 → aplicada na extração com confidence 1, categoria default do fornecedor com 0,9); web: formulário alargado, painel VIES na identidade, tab Produtos. Correção do Rui aplicada: Gemini via OpenRouter em todo o pipeline (`VISION_PROVIDER_ORDER=openrouter,…`), variáveis `GEMINI_*` vazias removidas do Coolify.
+Verificado em produção: backup `pg_dump` antes do deploy; migration aplicada; smoke 10/10 — VIES validou ESB06612386 (valid=true, regime UE_REVERSE_CHARGE); a fatura VFV26000793 passou a FISCAL (foreign_vies_validated); fatura sintética em GBP → amountEur=1160,63 (câmbio BCE 2026-02-04, 0,8616); importador CSV (dry-run, live e re-import idempotente); auto-categoria: 3 aprovações da mesma categoria em Miranda & Serra → a 4.ª fatura recebeu "Alojamento" automaticamente na re-extração; produtos comprados da Miranda & Serra listam 3 artigos agregados de 1 documento (corrigido a persistência de `DocumentItem`, que estava vazia em toda a base de dados — Fase 4 também gravou este fix).
+Testes: 1220 verdes / 1220 (api, inclui a correção de persistência de linhas). Build api ✅, web typecheck ✅.
+Falhou / adiado: nada de âmbito; a fatura em GBP é sintética (não há fatura real em moeda ≠ EUR nas amostras); a comparação com `gemini-documental` fica opcional via `OPENROUTER_MODEL=google/gemini-2.0-flash-001`.
+Bloqueios (preciso do Rui): nenhum (HEIC real continua opcional).
+Próximo: **parado a pedido do Rui** — Fase 5 (conciliação bancária CSV) só arranca com OK explícito. Antes disso o Rui quer confirmar quais os bancos usados (templates CSV).
+
 ---
 
 ## Próxima fase
 
-**Fase 4 — Fornecedores completos.** Ordem prevista:
+**Fase 5 — Conciliação bancária (CSV)** — NÃO iniciar sem OK do Rui. Precisa de: bancos usados pela HotelEquip (para os templates CSV) e um extrato real de um mês.
+
+~~**Fase 4 — Fornecedores completos.** Ordem prevista:~~
 1. Migration `Party`: country, vatNumber, vatRegime (PT | UE_REVERSE_CHARGE | EXTRA_UE), currency, paymentTermsDays, directDebit, defaultCategoryId, billingEmail, contacts, notes, viesValidatedAt/viesName/viesAddress; `PartyCategoryStat(partyId, categoryId, approvedCount)`; `Document.amountEur`.
 2. Serviço VIES (REST oficial da CE, cache 30 dias) + ligação ao `fiscal-status` (`viesValidated`) → faturas ES passam a FISCAL.
 3. Câmbio BCE à data da fatura para moeda ≠ EUR (`amountEur`).
@@ -169,6 +180,38 @@ Próximo: Fase 4 — Fornecedores completos.
 4. `NAO_FISCAL` fora do envio ao TOC/IVA; smoke em produção com proforma + fatura do mesmo fornecedor (pedir proforma real ao Rui ou gerar).
 
 ---
+
+## Guião de teste manual (produção) — para o Rui
+
+**URLs**
+- Web: https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io
+- API: https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1 (Swagger em `/api/docs`)
+- Health: https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health/full → deve devolver `db: up, redis: up, storage: up, storageDriver: s3`
+- Ficheiros (MinIO, só links assinados): https://files-docflow.167.86.111.8.sslip.io
+
+**Login (seed de demo — único utilizador até à Fase 7):** email `admin@demo.pt`, password `Admin123!`, tenant `demo`.
+
+**Fluxo 1 — ler uma fatura (Fases 1–3)**
+1. Documentos → carregar um PDF/foto de `C:\Projetos\docflow-mvp\samples` (ou uma foto do telemóvel; HEIC também é aceite).
+2. Esperar 10–60 s (fotos ≈ 2 min). O documento passa a **Em revisão** com NIF, total, data, nº e IVA preenchidos; a badge **Fiscal** aparece quando o QR-AT é válido (ex.: Miranda & Serra), **Por confirmar** nas faturas espanholas sem VIES, **Não fiscal** numa proforma/orçamento.
+3. Carregar o mesmo talão duas vezes (ex.: as duas fotos IKEA) → o segundo fica **Duplicado — ver original**.
+4. Abrir o documento → o botão de descarregar dá um link assinado do MinIO (válido 5 min).
+
+**Fluxo 2 — fornecedor completo (Fase 4)**
+1. Fornecedores → abrir “Clima Hostelería” (ou criar um com NIF-IVA `ESB06612386`, país ES).
+2. Identidade → painel **VIES / regime de IVA** → “Validar no VIES” → estado **Válido**, regime **Intra-UE — autoliquidação**.
+3. Documentos → re-extrair a fatura VFV26000793 (Documentos → abrir → “Re-extrair”) → badge **Fiscal** (`foreign_vies_validated`).
+4. Formulário do fornecedor: moeda, prazo, email de faturação, categoria de despesa por defeito, débito direto — guardar e reabrir.
+5. Tab **Produtos** → artigos comprados agregados (Miranda & Serra tem linhas).
+6. Auto-categoria: em 3 faturas do mesmo fornecedor escolher a mesma categoria e **Aprovar**; a 4.ª fatura desse fornecedor (re-extrair) já vem com a categoria aplicada.
+
+**Fluxo 3 — importar fornecedores do Moloni (CSV)**
+```bash
+curl -s -X POST "https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/parties/import" -H "Authorization: Bearer <token>" -F "file=@fornecedores.csv" -F "dryRun=true"
+```
+Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Postal, Cidade, País, IBAN, Prazo Pagamento, Moeda. Sem `dryRun=true` grava (cria ou atualiza por NIF/NIF-IVA/nome). Token: `POST /auth/login` com `{"email","password","tenantSlug":"demo"}` → `data.tokens.accessToken`.
+
+**O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos.
 
 ## Como correr localmente
 

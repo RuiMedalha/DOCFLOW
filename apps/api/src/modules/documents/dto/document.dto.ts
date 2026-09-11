@@ -19,6 +19,7 @@ import {
   DocumentStatus,
   DocumentType,
   FiscalStatus,
+  CategoryNature,
 } from '@prisma/client';
 import { EXPENSE_CATEGORIES } from '../folder-rules/folder-rules.types';
 
@@ -157,6 +158,37 @@ export class UpdateDocumentDto {
   @IsString()
   @MaxLength(50)
   expenseCategory?: string;
+
+  /**
+   * Fase 4.1 — classificação. O operador escolhe uma Category real
+   * (tabela `categories`), não um nome de uma lista fixa. A natureza vem
+   * com a categoria; passar `expenseNature` sozinho permite corrigir só
+   * o eixo contabilístico.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Category.id da classificação. Define também a natureza e recalcula a '
+      + 'dedutibilidade do IVA. String vazia limpa a classificação.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  expenseCategoryId?: string;
+
+  @ApiPropertyOptional({ enum: CategoryNature })
+  @IsOptional()
+  @IsEnum(CategoryNature)
+  expenseNature?: CategoryNature;
+
+  /**
+   * Fase 4.1 (P2.2) — o operador tem de poder marcar um documento como
+   * não fiscal. A correção manual fica registada na auditoria e não é
+   * revertida por uma re-extração.
+   */
+  @ApiPropertyOptional({ enum: FiscalStatus })
+  @IsOptional()
+  @IsEnum(FiscalStatus)
+  fiscalStatus?: FiscalStatus;
 
   @ApiPropertyOptional({
     description:

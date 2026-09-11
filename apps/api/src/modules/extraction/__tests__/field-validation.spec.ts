@@ -6,6 +6,7 @@ import {
   normalizeVatId,
   resolveDocumentCountry,
   resolveTaxIds,
+  extractAtcudFromText,
   sanitizeAtcud,
   shouldClearStoredAtcud,
   shouldClearStoredNif,
@@ -239,5 +240,38 @@ describe('helpers', () => {
     expect(isPortugueseDocument('pt')).toBe(true);
     expect(isPortugueseDocument('ES')).toBe(false);
     expect(isPortugueseDocument(null)).toBe(false);
+  });
+});
+
+/**
+ * Fase 4.1 (P2.1) — em várias fotos PT o QR-AT lê-se mas o ATCUD não
+ * chegava ao documento. Quando não há QR, tentamos o "ATCUD:" impresso.
+ */
+describe('extractAtcudFromText()', () => {
+  it('apanha o ATCUD impresso nas várias formas que aparecem nas faturas', () => {
+    expect(extractAtcudFromText('ATCUD: JFXG7XVG-7018')).toBe('JFXG7XVG-7018');
+    expect(extractAtcudFromText('ATCUD JFXG7XVG-7018')).toBe('JFXG7XVG-7018');
+    expect(extractAtcudFromText('ATCUD:JFXG7XVG-7018')).toBe('JFXG7XVG-7018');
+    expect(extractAtcudFromText('atcud - jfxg7xvg-7018')).toBe('JFXG7XVG-7018');
+  });
+
+  it('encontra-o no meio do texto de uma fatura', () => {
+    const ocr = [
+      'FATURA FT 2026A/7018',
+      'ATCUD: JFXG7XVG-7018   Doc. processado por programa certificado',
+      'Total 572,57 EUR',
+    ].join(String.fromCharCode(10));
+    expect(extractAtcudFromText(ocr)).toBe('JFXG7XVG-7018');
+  });
+
+  it('não aceita um código com formato inválido, mesmo rotulado de ATCUD', () => {
+    expect(extractAtcudFromText('ATCUD: ABC1234-56789')).toBeNull();
+    expect(extractAtcudFromText('ATCUD: 1012.30')).toBeNull();
+  });
+
+  it('devolve null quando não há ATCUD nenhum', () => {
+    expect(extractAtcudFromText('FATURA FT 2026/1')).toBeNull();
+    expect(extractAtcudFromText('')).toBeNull();
+    expect(extractAtcudFromText(null)).toBeNull();
   });
 });

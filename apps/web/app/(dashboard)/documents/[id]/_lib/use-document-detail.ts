@@ -70,6 +70,26 @@ export interface DocumentDetail extends ExtractedFields {
    * Supplier ISO-3166-1 alpha-2 country code (also metadata-backed).
    */
   supplierCountry?: string | null;
+  // ── Fase 4.1 — classificação (natureza + categoria) e correção manual
+  expenseCategoryId?: string | null;
+  expenseNature?:
+    | 'MERCADORIAS_REVENDA'
+    | 'MATERIAS_PRIMAS_SUBSIDIARIAS'
+    | 'SERVICOS_EXTERNOS'
+    | 'DESPESA_OPERACIONAL'
+    | 'IMOBILIZADO'
+    | null;
+  ivaDeductibilityPct?: number | null;
+  typeManualOverride?: boolean;
+  fiscalStatusManualOverride?: boolean;
+  /** Fase 4.1 — notas de crédito e descontos. */
+  correctedDocNumber?: string | null;
+  correctedDocumentId?: string | null;
+  signedTotal?: number | null;
+  discountAmount?: number | null;
+  totalsReconciled?: boolean | null;
+  totalsDelta?: number | null;
+  atcud?: string | null;
 }
 
 export interface DocumentDetailBundle {

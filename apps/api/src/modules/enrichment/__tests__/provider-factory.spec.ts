@@ -27,16 +27,22 @@ describe('EnrichmentProviderFactory', () => {
     return new EnrichmentProviderFactory(sabi, vies, manual);
   };
 
-  it('routes country=PT to sabi-pt', () => {
+  /**
+   * Fase 4.1 (P2.3) — a SABI está desligada: é uma base de dados paga
+   * que a HotelEquip não subscreve, e a ficha de entidade mostrava
+   * `sabi_api_key_missing` como se fosse uma avaria. Portugal passa a
+   * ir pelo VIES, que é gratuito e não precisa de chave.
+   */
+  it('routes country=PT to vies (sabi-pt desligada na Fase 4.1)', () => {
     const factory = makeFactory();
     const picked = factory.pick('PT', null);
-    expect(picked.name).toBe('sabi-pt');
+    expect(picked.name).toBe('vies');
   });
 
-  it('routes PT50… IBAN to sabi-pt regardless of country', () => {
+  it('routes PT50… IBAN to vies regardless of country', () => {
     const factory = makeFactory();
     const picked = factory.pick(null, 'PT50 0002 0123 1234 5678 9015 4');
-    expect(picked.name).toBe('sabi-pt');
+    expect(picked.name).toBe('vies');
   });
 
   it('routes country=ES (EU non-PT) to vies', () => {
@@ -83,10 +89,10 @@ describe('EnrichmentProviderFactory', () => {
 
   it('is case-insensitive for both country and IBAN', () => {
     const factory = makeFactory();
-    expect(factory.pick('pt', null).name).toBe('sabi-pt');
+    expect(factory.pick('pt', null).name).toBe('vies');
     expect(factory.pick('es', null).name).toBe('vies');
     expect(factory.pick('us', null).name).toBe('manual');
-    expect(factory.pick(null, 'pt50 0002 0123 1234 5678 9015 4').name).toBe('sabi-pt');
+    expect(factory.pick(null, 'pt50 0002 0123 1234 5678 9015 4').name).toBe('vies');
   });
 
   it('strips whitespace from IBAN before checking the prefix', () => {

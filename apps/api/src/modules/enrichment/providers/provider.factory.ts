@@ -108,11 +108,17 @@ export class EnrichmentProviderFactory {
     const c = (country ?? '').toUpperCase().trim();
     const ib = (iban ?? '').toUpperCase().replace(/\s+/g, '');
 
+    // ── Fase 4.1 (P2.3) — a SABI está desligada ──────────────────────
+    // A SABI (Bureau van Dijk / Moody's) é uma base de dados paga que a
+    // HotelEquip não subscreve, e a ficha de entidade andava a mostrar
+    // `sabi_api_key_missing` como se fosse uma avaria. Portugal passa
+    // pelo VIES, que é gratuito, não precisa de chave e devolve nome e
+    // morada a partir do NIF-IVA. O provider fica no código (não é
+    // apagado) para o dia em que houver subscrição: basta repor esta
+    // condição.
     if (c === 'PT' || ib.startsWith('PT50')) {
-      this.logger.debug(
-        `[pick] country=${c} iban=${ib.slice(0, 4)} → sabi-pt`,
-      );
-      return this.sabiPt;
+      this.logger.debug(`[pick] country=${c} iban=${ib.slice(0, 4)} → vies (sabi-pt desligada)`);
+      return this.vies;
     }
 
     if (c && EU_COUNTRIES.has(c)) {

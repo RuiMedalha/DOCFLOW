@@ -46,7 +46,9 @@ import {
 } from "./extraction.constants";
 import { autoOrientImage } from "./qr-decode/qr-decoder";
 import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-status";
+import { reconcileTotals, signedAmounts } from "./totals-reconciliation";
 import {
+  extractAtcudFromText,
   fieldConfidence,
   resolveDocumentCountry,
   resolveTaxIds,
@@ -59,6 +61,7 @@ import { EcbFxService } from "../../common/fx/ecb-fx.service";
 import { pickAutoCategory } from "../parties/auto-category";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
+import type { ArchiveImageService } from "../documents/image-to-pdf/archive-image.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
 // EXTRACTING → ENRICHING handler runs. Previously the extraction service
 // returned its result but never told the pipeline to advance — documents
@@ -364,6 +367,11 @@ export class ExtractionService implements OnModuleDestroy {
     private readonly vies?: ViesService,
     @Optional()
     private readonly fx?: EcbFxService,
+    // Fase 4.1 (P1.4) — endireita pelo conteúdo e comprime a imagem
+    // antes de a embeber no PDF de arquivo. @Optional pela mesma razão
+    // que o ImageToPdfService: o harness de testes não liga o módulo.
+    @Optional()
+    private readonly archiveImage?: ArchiveImageService,
   ) {}
 
   /**
@@ -664,6 +672,14 @@ export class ExtractionService implements OnModuleDestroy {
             );
           }
         }
+        // ── Fase 4.1 (P1.4) — PDF de arquivo: direito e ≤ 500 KB ───────
+        // O arquivo fiscal é de 10 anos: um JPEG de 3 MB por documento
+        // não é sustentável, e as fotos apareciam deitadas porque muitas
+        // não trazem etiqueta EXIF (a rotação EXIF acima só resolve as
+        // que trazem). Aqui endireitamos pelo conteúdo e comprimimos. O
+        // original fica intacto no MinIO; é o PDF que vai para arquivo.
+        await this.rebuildArchivePdf(documentId, doc, oriented);
+
         // Now try the QR decode on the upright bytes (always prefer the
         // rotated version when present — even when the persist step
         // failed, `oriented` is local and correct).
@@ -953,9 +969,22 @@ export class ExtractionService implements OnModuleDestroy {
       country: docCountry,
       viesValidated: viesValidatedForDoc,
     });
-    const atcudSan = sanitizeAtcud(fields.atcud ?? null, {
+    // Fase 4.1 (P2.1) — o ATCUD chega, por esta ordem: campo H de um
+    // QR-AT realmente descodificado > "ATCUD:" impresso no texto/OCR >
+    // o que a IA disse. Em várias fotos o QR lia-se mas o ATCUD não
+    // chegava ao documento.
+    const atcudFromQr = atcudTrusted ? (parsedForFiscal?.atcud ?? null) : null;
+    const atcudFromText = extractAtcudFromText(loaded.text);
+    const atcudCandidate = atcudFromQr ?? atcudFromText ?? fields.atcud ?? null;
+    if (!fields.atcud && atcudCandidate) {
+      fields.hints = [
+        ...(fields.hints ?? []),
+        `atcudSource:${atcudFromQr ? "qr_field_h" : "ocr_text"}`,
+      ];
+    }
+    const atcudSan = sanitizeAtcud(atcudCandidate, {
       country: docCountry,
-      fromTrustedQr: atcudTrusted && Boolean(parsedForFiscal?.atcud),
+      fromTrustedQr: Boolean(atcudFromQr),
     });
     if (taxIds.rejected) {
       this.logger.warn(
@@ -1063,10 +1092,28 @@ export class ExtractionService implements OnModuleDestroy {
       ].join(String.fromCharCode(10)),
       viesValidated: viesValidatedForDoc,
     });
-    (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
-    (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
-    (updateData as Record<string, unknown>).isNonFiscalDoc = fiscal.fiscalStatus === "NAO_FISCAL";
-    if (fiscal.documentType) updateData.type = fiscal.documentType as DocumentType;
+    // ── Fase 4.1 (P2.2) — a correção manual do operador manda ────────
+    // Quem marcou um documento como não fiscal (ou lhe corrigiu o tipo)
+    // não pode ver a decisão desfeita pela re-extração seguinte.
+    const fiscalLocked = doc.fiscalStatusManualOverride === true;
+    const typeLocked = doc.typeManualOverride === true;
+    if (fiscalLocked) {
+      fields.hints = [...(fields.hints ?? []), `fiscalStatus:manual_override_kept:${doc.fiscalStatus}`];
+      this.logger.log(
+        `[processDocumentAsync] document=${documentId} keeping operator's fiscalStatus ` +
+          `${doc.fiscalStatus} (classifier said ${fiscal.fiscalStatus})`,
+      );
+    } else {
+      (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
+      (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
+      (updateData as Record<string, unknown>).isNonFiscalDoc = fiscal.fiscalStatus === "NAO_FISCAL";
+    }
+    if (typeLocked) {
+      delete (updateData as Record<string, unknown>).type;
+      fields.hints = [...(fields.hints ?? []), `documentType:manual_override_kept:${doc.type}`];
+    } else if (fiscal.documentType) {
+      updateData.type = fiscal.documentType as DocumentType;
+    }
     const docNumberNorm = normalizeDocNumber(fields.docNumber);
     if (docNumberNorm) (updateData as Record<string, unknown>).docNumberNorm = docNumberNorm;
     fields.hints = [...(fields.hints ?? []), `fiscalStatus:${fiscal.fiscalStatus}:${fiscal.reason}`];
@@ -1299,6 +1346,63 @@ export class ExtractionService implements OnModuleDestroy {
         } catch (err) {
           this.logger.warn(`[processDocumentAsync] FX conversion failed: ${(err as Error).message}`);
         }
+      }
+    }
+
+    // ── Fase 4.1 (P1.3) — descontos e fecho dos totais ao cêntimo ────
+    // Antes, um desconto aparecia como "diferença" e ficava gravado em
+    // silêncio. Agora a conta é explícita — soma(linhas) − descontos +
+    // IVA = total, com tolerância de 1 cêntimo — e quando não fecha o
+    // documento vai para revisão com o motivo.
+    const recon = reconcileTotals({
+      lineItems: fields.lineItems,
+      discountAmount: fields.discountAmount,
+      taxAmount: fields.taxAmount,
+      netAmount: fields.netAmount,
+      total: fields.total,
+    });
+    fields.totalsReconciled = recon.reconciled;
+    if (recon.discountAmount != null) {
+      (updateData as Record<string, unknown>).discountAmount = recon.discountAmount;
+    }
+    (updateData as Record<string, unknown>).lineDiscountTotal = recon.lineDiscountTotal;
+    (updateData as Record<string, unknown>).totalsReconciled = recon.reconciled;
+    (updateData as Record<string, unknown>).totalsDelta = recon.delta;
+    fields.hints = [...(fields.hints ?? []), `totals:${recon.reconciled ? "ok" : "mismatch"}:${recon.reason}`];
+    if (!recon.reconciled && recon.delta != null) {
+      fields.warnings = [...(fields.warnings ?? []), recon.reason];
+      finalStatus = DocumentStatus.EM_REVISAO;
+    }
+
+    // ── Fase 4.1 (P1.2) — notas de crédito ───────────────────────────
+    // Uma NC entra negativa no saldo do fornecedor e no IVA, e liga-se à
+    // fatura que retifica. O valor impresso fica intacto em `total`.
+    const effectiveType =
+      ((updateData as Record<string, unknown>).type as DocumentType | undefined) ?? doc.type;
+    const signed = signedAmounts(effectiveType, {
+      total: fields.total ?? (doc.total != null ? Number(doc.total) : null),
+      taxAmount: fields.taxAmount ?? (doc.taxAmount != null ? Number(doc.taxAmount) : null),
+      netAmount: fields.netAmount ?? (doc.netAmount != null ? Number(doc.netAmount) : null),
+    });
+    (updateData as Record<string, unknown>).signedTotal = signed.signedTotal;
+    (updateData as Record<string, unknown>).signedTaxAmount = signed.signedTaxAmount;
+    (updateData as Record<string, unknown>).signedNetAmount = signed.signedNetAmount;
+    if (effectiveType === "NOTA_CREDITO" && fields.correctedDocumentNumber) {
+      (updateData as Record<string, unknown>).correctedDocNumber = fields.correctedDocumentNumber;
+      const original = await this.findCorrectedDocument(
+        tenantId,
+        documentId,
+        fields.correctedDocumentNumber,
+        taxIds.nif,
+      );
+      if (original) {
+        (updateData as Record<string, unknown>).correctedDocumentId = original.id;
+        fields.hints = [...(fields.hints ?? []), `creditNote:corrects=${original.id}:${original.docNumber ?? "?"}`];
+      } else {
+        fields.hints = [
+          ...(fields.hints ?? []),
+          `creditNote:corrected_doc_not_found:${fields.correctedDocumentNumber}`,
+        ];
       }
     }
 
@@ -3098,6 +3202,106 @@ export class ExtractionService implements OnModuleDestroy {
   }
 
   /** Fase 3 — the single place that writes the extraction result row. */
+  /**
+   * Fase 4.1 (P1.2) — encontra a fatura que uma nota de crédito
+   * retifica. Procuramos pelo nº normalizado do documento retificado,
+   * dentro do mesmo tenant e, quando o sabemos, do mesmo fornecedor. Uma
+   * NC nunca se liga a si própria nem a outra nota de crédito.
+   */
+  private async findCorrectedDocument(
+    tenantId: string,
+    selfId: string,
+    correctedNumber: string,
+    supplierNif: string | null,
+  ): Promise<{ id: string; docNumber: string | null } | null> {
+    const norm = normalizeDocNumber(correctedNumber);
+    if (!norm) return null;
+    try {
+      const rows = await this.prisma.document.findMany({
+        where: {
+          tenantId,
+          id: { not: selfId },
+          docNumberNorm: norm,
+          type: { not: DocumentType.NOTA_CREDITO },
+          deletedAt: null,
+          ...(supplierNif ? { supplierNif } : {}),
+        },
+        select: { id: true, docNumber: true, supplierNif: true },
+        orderBy: { createdAt: "asc" },
+        take: 5,
+      });
+      // Com NIF conhecido, o filtro já garantiu o fornecedor certo; sem
+      // ele, só aceitamos quando não há ambiguidade.
+      if (rows.length === 1) return rows[0];
+      if (supplierNif && rows.length > 0) return rows[0];
+      return null;
+    } catch (err) {
+      this.logger.warn(
+        `[findCorrectedDocument] lookup failed for "${correctedNumber}": ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Fase 4.1 (P1.4) — reconstrói o derivado PDF a partir da imagem
+   * endireitada pelo conteúdo e comprimida para ≤ 500 KB, e confirma
+   * que o QR-AT continua legível depois da compressão.
+   *
+   * Best-effort de ponta a ponta: qualquer falha deixa o documento
+   * exactamente como estava. O original nunca é tocado.
+   */
+  private async rebuildArchivePdf(
+    documentId: string,
+    doc: { mimeType: string; fileName: string },
+    uprightBytes: Buffer,
+  ): Promise<void> {
+    if (!this.archiveImage || !this.imageToPdf || !this.storage?.put) return;
+    if (!this.imageToPdf.supports(doc.mimeType)) return;
+    try {
+      const prepared = await this.archiveImage.prepare(uprightBytes, doc.mimeType);
+      if (!prepared) return;
+
+      // O QR tem de continuar a ler-se depois da compressão — é o que
+      // sustenta toda a validade fiscal do documento. Se a versão
+      // comprimida perdeu o QR que o original tinha, ficamos com o
+      // original: um ficheiro maior é melhor do que um ilegível.
+      const qrBefore = await decodeAtQr(uprightBytes, doc.mimeType, this.logger);
+      let bytesForPdf = prepared.buffer;
+      if (qrBefore) {
+        const qrAfter = await decodeAtQr(prepared.buffer, "image/jpeg", this.logger);
+        if (!qrAfter) {
+          this.logger.warn(
+            `[archive] compression cost the QR on ${doc.fileName} — keeping the uncompressed image`,
+          );
+          bytesForPdf = uprightBytes;
+        }
+      }
+
+      const pdf = await this.imageToPdf.convert(
+        bytesForPdf,
+        bytesForPdf === prepared.buffer ? "image/jpeg" : doc.mimeType,
+      );
+      const row = await this.prisma.document.findFirst({
+        where: { id: documentId },
+        select: { pdfKey: true, fileKey: true },
+      });
+      const pdfKey = row?.pdfKey ?? `${row?.fileKey ?? documentId}.pdf`;
+      await this.storage.put(pdfKey, pdf, { contentType: "application/pdf" });
+      if (!row?.pdfKey) {
+        await this.prisma.document.update({ where: { id: documentId }, data: { pdfKey } });
+      }
+      this.logger.log(
+        `[archive] ${doc.fileName}: rotated ${prepared.rotation}° (${prepared.rotationReason}), ` +
+          `${(prepared.originalBytes / 1024).toFixed(0)}KB → ${(prepared.buffer.length / 1024).toFixed(0)}KB ` +
+          `@q${prepared.quality}, pdf ${(pdf.length / 1024).toFixed(0)}KB` +
+          (prepared.withinBudget ? "" : " (ACIMA do orçamento de 500KB)"),
+      );
+    } catch (err) {
+      this.logger.warn(`[archive] rebuild failed for ${doc.fileName}: ${(err as Error).message}`);
+    }
+  }
+
   private runFinalUpdate(
     documentId: string,
     data: Prisma.DocumentUpdateInput,

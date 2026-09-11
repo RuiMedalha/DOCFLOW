@@ -13,6 +13,8 @@ import {
   DocumentStatus,
   DocumentType,
   Prisma,
+
+  CategoryNature,
 } from '@prisma/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -44,6 +46,7 @@ import {
   FolderRulesEngine,
 } from './folder-rules/folder-rules.engine';
 import { generateStandardFileName } from './storage/filename-standardizer';
+import { resolveIvaDeductibility } from './iva-deductibility';
 import {
   buildPatternContext,
   decideFilingFolder,
@@ -666,12 +669,44 @@ export class DocumentsService {
         partyId: true,
         docDate: true,
         metadata: true,
+        expenseCategoryId: true,
+        expenseNature: true,
+        fiscalStatus: true,
       },
     });
     if (!existing) throw new NotFoundException('Document not found');
 
+    // ── Fase 4.1 — classificação: natureza + categoria ────────────────
+    // O detalhe do documento não deixava escolher nem guardar categoria:
+    // o DTO só aceitava o nome de uma lista fixa (`expenseCategory`), e
+    // a coluna `expenseCategoryId` — que é a que liga à tabela Category
+    // e ao contador da auto-categoria — nunca era escrita a partir da
+    // interface. Agora o operador escolhe uma Category real e a natureza
+    // vem com ela.
+    let resolvedCategoryRow: {
+      id: string;
+      name: string;
+      slug: string;
+      nature: CategoryNature;
+    } | null = null;
+    if (dto.expenseCategoryId !== undefined) {
+      if (dto.expenseCategoryId) {
+        const row = await this.prisma.category.findFirst({
+          where: { id: dto.expenseCategoryId, tenantId },
+          select: { id: true, name: true, slug: true, nature: true },
+        });
+        if (!row) throw new NotFoundException('Category not found');
+        resolvedCategoryRow = row;
+      }
+    }
+
     // Validate manual expense-category override (empty string clears it).
     let manualCategory: ExpenseCategory | null | undefined;
+    if (dto.expenseCategoryId !== undefined) {
+      // Escolher a Category também fixa o nome na metadata.filing, que é
+      // o que as regras de pastas leem.
+      manualCategory = (resolvedCategoryRow?.name ?? null) as ExpenseCategory | null;
+    }
     if (dto.expenseCategory !== undefined) {
       if (dto.expenseCategory === '') {
         manualCategory = null; // explicit clear
@@ -791,6 +826,42 @@ export class DocumentsService {
 
     const data: Record<string, unknown> = { ...dto };
     if (dto.docDate !== undefined) data.docDate = new Date(dto.docDate);
+    // ── Fase 4.1 — natureza + dedutibilidade do IVA ───────────────────
+    // A dedutibilidade passa a depender da natureza e da categoria
+    // (mercadoria para revenda é 100 % dedutível; refeições, viaturas e
+    // deslocações seguem as limitações do art. 21.º CIVA). Nunca é a IA
+    // a decidir isto — a regra vive em `resolveIvaDeductibility`.
+    const effectiveNature =
+      dto.expenseNature ??
+      (dto.expenseCategoryId !== undefined ? resolvedCategoryRow?.nature ?? null : undefined) ??
+      undefined;
+    if (effectiveNature !== undefined) data.expenseNature = effectiveNature;
+    if (dto.expenseCategoryId !== undefined || dto.expenseNature !== undefined) {
+      const natureForIva =
+        (effectiveNature as CategoryNature | null | undefined) ?? existing.expenseNature;
+      const slugForIva =
+        resolvedCategoryRow?.slug ??
+        (dto.expenseCategoryId === undefined && existing.expenseCategoryId
+          ? (
+              await this.prisma.category.findFirst({
+                where: { id: existing.expenseCategoryId, tenantId },
+                select: { slug: true },
+              })
+            )?.slug ?? null
+          : null);
+      const iva = resolveIvaDeductibility(natureForIva, slugForIva);
+      data.ivaDeductibilityPct = iva.pct;
+    }
+    // ── Fase 4.1 (P2.2) — correção manual tem prioridade sobre a IA ───
+    // Marcamos a coluna para que uma re-extração não reverta a decisão
+    // do operador.
+    if (dto.type !== undefined) data.typeManualOverride = true;
+    if (dto.fiscalStatus !== undefined) {
+      data.fiscalStatus = dto.fiscalStatus;
+      data.fiscalStatusManualOverride = true;
+      data.fiscalReason = `manual:${userId}`;
+      data.isNonFiscalDoc = dto.fiscalStatus === 'NAO_FISCAL';
+    }
     if (dto.dueDate !== undefined) data.dueDate = new Date(dto.dueDate);
     if (suggestedFolder !== undefined) data.suggestedFolder = suggestedFolder;
     if (finalFolder !== undefined) data.finalFolder = finalFolder;

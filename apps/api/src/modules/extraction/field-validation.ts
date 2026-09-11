@@ -278,3 +278,22 @@ export function fieldConfidence(
   if (source === 'ai') return Math.min(v, UNVALIDATED_CONFIDENCE_CAP);
   return v;
 }
+
+/**
+ * Fase 4.1 (P2.1) — ATCUD a partir do texto.
+ *
+ * Em várias fotos PT o QR-AT é lido mas o ATCUD não chega ao documento.
+ * Quando o QR existe, o campo H do payload é a fonte; quando não existe,
+ * procuramos o "ATCUD:" impresso no texto/OCR. Nunca inventamos: só é
+ * aceite o que respeitar o formato oficial da AT.
+ */
+export function extractAtcudFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  // "ATCUD: JFXG7XVG-7018", "ATCUD JFXG7XVG-7018", "ATCUD:JFXG7XVG-7018"
+  const m = text
+    .toUpperCase()
+    .match(/ATCUD\s*[:\-]?\s*([A-Z0-9]{8,}\s*-\s*\d+)/);
+  if (!m) return null;
+  const candidate = m[1].replace(/\s+/g, '');
+  return ATCUD_PATTERN.test(candidate) ? candidate : null;
+}

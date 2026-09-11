@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { DocumentViewer } from './_components/document-viewer';
 import { FieldPanel } from './_components/field-panel';
+import { ClassificationPanel } from './_components/classification-panel';
 import { FraudWarning } from './_components/fraud-warning';
 import { QrBadge } from './_components/qr-badge';
 import { CorrectSupplierDialog } from './_components/correct-supplier-dialog';
@@ -1143,6 +1144,21 @@ export default function DocumentDetailPage() {
               Mover para lixo
             </button>
           </div>
+
+          {/* Fase 4.1 — natureza + categoria, tipo e validade fiscal.
+              Antes não havia forma de escolher nem guardar nenhum destes. */}
+          <ClassificationPanel
+            documentType={(doc.type ?? 'OUTRO') as never}
+            fiscalStatus={doc.fiscalStatus ?? null}
+            fiscalReason={doc.fiscalReason ?? null}
+            expenseCategoryId={doc.expenseCategoryId ?? null}
+            expenseNature={doc.expenseNature ?? null}
+            ivaDeductibilityPct={doc.ivaDeductibilityPct ?? null}
+            typeManualOverride={doc.typeManualOverride}
+            fiscalStatusManualOverride={doc.fiscalStatusManualOverride}
+            saving={saveFields.isPending}
+            onSave={(patch) => saveFields.mutate({ id, patch: patch as never })}
+          />
 
           <FieldPanel
             fields={effective ?? {}}

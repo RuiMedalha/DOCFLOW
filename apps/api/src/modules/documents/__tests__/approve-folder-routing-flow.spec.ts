@@ -309,7 +309,7 @@ describe('Sprint E end-to-end: upload → approve → relocate', () => {
     expect(storage.moves).toHaveLength(1);
     expect(storage.moves[0].from).toBe(inboxKey);
     expect(storage.moves[0].to).toBe(
-      'fornecedores/edp-comercial/estrategico/2026-09/ft-2026-123-doc-flow.pdf',
+      'fornecedores/edp-comercial/estrategico/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf',
     );
 
     // The final fileKey update in the transaction points to the destination.
@@ -414,7 +414,7 @@ describe('Sprint E end-to-end: upload → approve → relocate', () => {
 
     const inboxKey = `_inbox/${TENANT_ID}/2026/09/2222222222-bbbbbbbbbbbbbbbb.pdf`;
     const routedKey =
-      'fornecedores/edp/2026-09/ft-9-doc-flow.pdf';
+      'fornecedores/edp/2026/FT_EDP_FT9_2026-09-04.pdf';
 
     // First approve: existing row is NOVO with inboxKey → move fires.
     prisma.document.findFirst

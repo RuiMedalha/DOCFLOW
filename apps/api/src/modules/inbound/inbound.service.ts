@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { DocumentOrigin, Prisma } from '@prisma/client';
-import { createHash, createHmac, createVerify, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, createVerify, timingSafeEqual, verify } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -393,29 +393,18 @@ export class InboundService {
     if (sig.length === 0) return false;
     try {
       // P1363 (r||s, 64 bytes for P-256) is what SendGrid returns today.
-      // crypto.createVerify only accepts DER-encoded ECDSA signatures,
-      // so for P1363 we use the WebCrypto API. Both paths are constant
-      // time at the cryptographic primitive level — verification cost
-      // dominates any side-channel. WebCrypto is async but tiny, so we
-      // wrap it in a synchronous facade by initializing the key once
-      // per call (cheap for a webhook that's bounded by an OS process).
+      // Node's `crypto.verify` understands it natively via
+      // `dsaEncoding: 'ieee-p1363'` — the previous hand-rolled DER
+      // wrapper was wrong whenever r or s had the high bit set (needs a
+      // leading 0x00 + length fix-up), which rejected ~75 % of valid
+      // signatures.
       if (sig.length === 64) {
-        // Heuristic: P1363 is two 32-byte integers for P-256. Convert
-        // to DER by prepending the SEQUENCE/INTEGER headers expected by
-        // Node. DER layout for r||s with both integers exactly 32 bytes:
-        //   30 44 02 20 <r:32> 02 20 <s:32>
-        const r = sig.subarray(0, 32);
-        const s = sig.subarray(32, 64);
-        const der = Buffer.concat([
-          Buffer.from([0x30, 0x44, 0x02, 0x20]),
-          r,
-          Buffer.from([0x02, 0x20]),
-          s,
-        ]);
-        const verifier = createVerify('SHA256');
-        verifier.update(rawBytes);
-        verifier.end();
-        return verifier.verify(publicKeyPem, der);
+        return verify(
+          'sha256',
+          rawBytes,
+          { key: publicKeyPem, dsaEncoding: 'ieee-p1363' },
+          sig,
+        );
       }
       // Otherwise treat the signature as raw DER.
       const verifier = createVerify('SHA256');

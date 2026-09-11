@@ -1396,7 +1396,12 @@ export class ExtractionService implements OnModuleDestroy {
         taxIds.nif,
       );
       if (original) {
-        (updateData as Record<string, unknown>).correctedDocumentId = original.id;
+        // `Prisma.DocumentUpdateInput` é a variante *checked*: uma chave
+        // estrangeira escreve-se pela relação, não pela coluna. Escrever
+        // `correctedDocumentId` directamente rebentava a extração — e só
+        // quando a fatura retificada era mesmo encontrada, que é o único
+        // caso que interessa.
+        updateData.correctedDocument = { connect: { id: original.id } };
         fields.hints = [...(fields.hints ?? []), `creditNote:corrects=${original.id}:${original.docNumber ?? "?"}`];
       } else {
         fields.hints = [

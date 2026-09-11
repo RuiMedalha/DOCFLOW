@@ -13,15 +13,15 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `8e4f4da` (= `main` HEAD local). Deploy feito 2026-09-11 01:26 UTC |
-| Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine` — todos `healthy` |
-| API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up}`; `/health/full` → `{db:up, redis:up}` |
+| Commit em produção | `7afa312` (Fase 1). Deploy 2026-09-11 02:06 UTC + restart 02:14 UTC |
+| Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
+| API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
 | Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (14 migrations, última `20260908002000_add_accountant_role`) |
-| Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (3 ficheiros, 1,1 MB) |
+| Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (legado, 3 ficheiros já migrados), `docflow-minio` |
 | DB de produção | 1 tenant (`demo` = NOV OUSADO UNIPESSOAL LDA), 1 user (`admin@demo.pt` ADMIN), 3 documentos (todos `EM_REVISAO`), 3 parties |
-| Storage | driver **local** (`/repo/apps/api/uploads`) — sem MinIO/S3 ainda |
-| Postgres/Redis | não publicados no host (só rede interna) ✅ |
+| Storage | driver **s3** → MinIO interno `http://minio:9000`, bucket `docflow`, utilizador de serviço com policy só para o bucket; presigned URLs via `https://files-docflow.167.86.111.8.sslip.io` (só API S3; console desligada) |
+| Postgres/Redis/MinIO | não publicados no host (só rede interna; MinIO só via Traefik com TLS) ✅ |
 | docker.sock | nenhum container DocFlow o monta ✅ (só coolify-sentinel, coolify-proxy, supabase-vector) |
 | Dockerfiles | `USER docflow` (uid 10001, não-root) em api e web ✅; healthcheck interno ✅ |
 | Logs api (últimas 200 linhas) | sem erros; só mapeamento de rotas + healthchecks |
@@ -31,10 +31,10 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1115 verdes / 1118** (102 suites, 100 verdes) — ver "Não funciona" |
+| `apps/api` `pnpm test` | **1139 verdes / 1139** (103 suites) |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
-| Node / pnpm locais | Node 24.12.0; pnpm 10 (o `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build`; não afeta Docker que usa `--ignore-scripts`) |
+| Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
 | Estrutura | **Não é workspace pnpm**: `apps/api` e `apps/web` têm `package.json` + `pnpm-lock.yaml` próprios; `packages/shared` ligado por `file:../../packages/shared` |
 
 ### Funcionalidades existentes (por código + testes; smoke em produção fica para a Fase 1)
@@ -49,9 +49,9 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 - Calendário de pagamentos (`PaymentEvent`, `PaymentSchedule`, SEPA export).
 - Conciliação bancária (módulo `banking` + `reconciliation`, wizard CSV).
 - Módulos extra fora do âmbito do MVP: `crm`, `fleet`, `payroll`, `accounting`, `saft-export`, `tax-simulator`.
-- `StorageService` interface pronta para S3 (`storage-service.interface.ts`); só existe `LocalFilesystemStorage`. `STORAGE_DRIVER` **não é lido** por código nenhum (só comentários).
-- Health: `/health` (DB) e `/health/full` (DB + Redis). **Não verifica storage.**
-- Segurança: helmet, CORS por `CORS_ORIGINS`, trust proxy, validação global. **Throttler desativado** (commit `38699a3`) — sem rate limiting em produção.
+- Storage: `LocalFilesystemStorage` e `S3Storage` (aws-sdk v3) selecionados por `STORAGE_DRIVER`; `/storage/tree` agnóstico do driver. Script `node dist/src/scripts/migrate-local-to-s3.js [--dry-run]` idempotente.
+- Health: `/health` (DB + storage) e `/health/full` (DB + Redis + storage).
+- Segurança: helmet, CORS por `CORS_ORIGINS`, trust proxy, validação global. `pnpm audit --audit-level=high` **limpo** em api e web (Next 15.5.25, Nest 11.2.3, Prisma 6.19.3, multer 2.3.0). **Throttler desativado** (commit `38699a3`) — sem rate limiting em produção.
 
 ---
 
@@ -59,10 +59,10 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | # | Problema | Onde | Fase que resolve |
 |---|----------|------|------------------|
-| 1 | 3 testes falham: `inbound.security.spec.ts` (assinatura ECDSA SendGrid válida rejeitada) e 2× `approve-folder-routing-flow.spec.ts` (esperam o caminho antigo `…/2026-09/ft-…pdf`, o código produz `…/2026/FT_…pdf` — teste desatualizado face ao `filename-standardizer`) | `apps/api` | Fase 1 (corrigir/atualizar testes antes do primeiro commit com código) |
-| 2 | `GEMINI_API_KEY` **não existe** nas env vars do Coolify (só `OPENROUTER_API_KEY`) e o `docker-compose.yml` nem a passa ao container `api`. O prompt mestre diz que já está — **não está**. Produção usa OpenRouter com `google/gemini-2.5-flash` | Coolify + compose | Bloqueio → ver secção abaixo |
+| 1 | ~~3 testes falham~~ **Resolvido na Fase 1** (`14ebc3a`): verificação ECDSA passou a `crypto.verify` com `ieee-p1363` (o DER manual rejeitava ~75 % das assinaturas válidas); expectativas de folder-routing atualizadas | `apps/api` | ✅ |
+| 2 | `GEMINI_API_KEY` existe agora no Coolify mas **vazia** (criada na Fase 1, o compose já a passa ao `api`). Produção continua a usar OpenRouter com `google/gemini-2.5-flash` até o Rui preencher a chave | Coolify | Bloqueio → ver secção abaixo |
 | 3 | Produção corre a partir de `docker-compose.yml` (Postgres + Redis dentro do compose). A DB `docflow-db` (postgres:18) e o Redis do ambiente 5 do Coolify estão `exited:unhealthy` — restos não usados | Coolify | Fase 7 (limpeza, com confirmação do Rui) |
-| 4 | `pnpm audit --audit-level=high`: **api** 13 high + 1 critical (ex.: `multer <2.3.0` DoS via `@nestjs/platform-express`); **web** 14 high + 4 critical (`next 15.1.0` → `postcss`, `sharp`, etc.). Next.js 15.1.0 está muito atrás dos patches | ambos | Fase 1 (regra 10: audit limpo antes do deploy) |
+| 4 | ~~audit high/critical~~ **Resolvido na Fase 1** (`c95e8ea`): api 0 high/critical (2 moderate restantes), web 0 high/critical (1 low) | ambos | ✅ |
 | 5 | Rate limiting desligado (`ThrottlerModule` comentado em `app.module.ts`) por causa de 429s | api | Fase 7 (reativar com limites sensatos + `SkipThrottle` nas rotas de listagem) |
 | 6 | **92 ficheiros-lixo commitados** na raiz de `apps/api` e `apps/web` (fragmentos de shell como `apps/api/'`, `apps/api/(k`, `apps/api/d.id)`, logs `api-debug.log.err`, `apps/web/.playwright-mcp/*`, `.overclock-app/messages.db`) | repo | Fase 7 (limpeza; não afeta build) |
 | 7 | `apps/web/pnpm-workspace.yaml` foi criado automaticamente pelo pnpm 10 local durante a Fase 0 — apagado, não commitado | local | — |
@@ -72,6 +72,9 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | 11 | Sem campo `fiscalStatus`; `DocumentType` não tem PROFORMA/ORCAMENTO/AVISO/EXTRATO/FATURA_SIMPLIFICADA; dedup só por hash (há índice `[tenantId, atcud]` mas não único) | schema | Fase 3 |
 | 12 | `Party` sem `vatNumber/vatRegime/currency/paymentTermsDays/directDebit/viesValidatedAt…` | schema | Fase 4 |
 | 13 | HEIC não é aceite (sem `sharp`/`heic-convert` na api) | api | Fase 2 |
+| 14 | `/storage/tree` mostra vazio na raiz: as chaves são `_inbox/<tenantId>/…` e `fornecedores/…`, mas o browser lista `<tenantId>/…`. Comportamento pré-existente (também com driver local) | api | Fase 7 (ou quando a UI de pastas for revista) |
+| 15 | Extração do PDF de 4 páginas `FT 4 83 5638` demorou > 2 min e ficou sem `total` (NIF e nº doc certos). Fotos WhatsApp ≈ 2 min | extraction | Fase 2 |
+| 16 | Volume `docflow-uploads` continua montado com os 3 ficheiros antigos (já copiados para o MinIO) — manter até ao fim do MVP como rollback; remover na Fase 7 | compose | Fase 7 |
 
 ---
 
@@ -97,7 +100,7 @@ Branches com 0 commits à frente podem ser apagadas com segurança — **aguarda
 
 ## Bloqueios (preciso do Rui)
 
-1. **`GEMINI_API_KEY` no Coolify.** O prompt diz que existe; a API do Coolify mostra que não. Para a Fase 2 (Gemini como provider principal) preciso que a chave seja adicionada à app `docflow-production` no Coolify (Environment Variables → `GEMINI_API_KEY`). Vou preparar o `docker-compose.yml` para a passar ao container `api` na Fase 1. Entretanto a extração continua a funcionar via OpenRouter (`google/gemini-2.5-flash`).
+1. **`GEMINI_API_KEY` no Coolify.** O prompt diz que existe; não existia. Na Fase 1 criei a variável **vazia** na app `docflow-production` e o compose já a passa ao `api`. Para a Fase 2 (Gemini como provider principal) o Rui só tem de preencher o valor em Coolify → docflow-production → Environment Variables → `GEMINI_API_KEY` e fazer redeploy. Entretanto a extração funciona via OpenRouter (`google/gemini-2.5-flash`).
 2. Nenhum outro bloqueio para as Fases 1–3.
 
 ---
@@ -119,18 +122,25 @@ Verificado em produção: `/api/v1/health` 200 (db up), `/api/v1/health/full` (d
 Testes: 1115 verdes / 1118 total (3 falhas pré-existentes, detalhadas acima). Builds: api ✅, web ✅ (só standalone-symlink falha no Windows).
 Falhou / adiado: nada nesta fase.
 Bloqueios (preciso do Rui): `GEMINI_API_KEY` não está no Coolify (ver secção Bloqueios).
-Próximo: Fase 1 — Storage MinIO + deploy limpo (corrigir os 3 testes, `S3Storage`, MinIO no Coolify, health com storage, audit high/critical, `expose` em vez de `ports`).
+Próximo: Fase 1 — Storage MinIO + deploy limpo.
+
+## Fase 1 — Storage MinIO + deploy limpo — 2026-09-11
+Feito: 3 testes vermelhos corrigidos (`14ebc3a`); audit high/critical a zero + pnpm 11 unificado (`c95e8ea`); `S3Storage` + factory `STORAGE_DRIVER` + health com storage + `/storage/tree` agnóstico + script de migração + MinIO/minio-init no compose (`7afa312`). Env vars criadas no Coolify: `MINIO_ROOT_USER/PASSWORD`, `S3_ACCESS_KEY/SECRET_KEY`, `S3_BUCKET`, `STORAGE_DRIVER=s3`, `S3_PUBLIC_ENDPOINT`, `GEMINI_API_KEY` (vazia), `GEMINI_VISION_MODEL` (vazia). Domínio `files-docflow.167.86.111.8.sslip.io` atribuído ao serviço `minio` (só API S3, TLS Let's Encrypt — a 1.ª emissão falhou por DNS transitório no LE; um restart da app resolveu).
+Verificado em produção: deploy 1 com `STORAGE_DRIVER=local` → `minio-init` criou bucket + utilizador; migração dos 3 ficheiros existentes (`--dry-run` → live → re-run = 3 skipped); deploy 2 com `STORAGE_DRIVER=s3` → `/health/full` `{db:up, redis:up, storage:up, storageDriver:s3}`. Smoke com 6 amostras reais (Miranda e Serra 6384, AAA26_05582, FT 4 83 5638, LIZOTEL 1944, foto WhatsApp, VFV26000793): 6/6 upload 201 → objeto no MinIO → `GET /documents/:id/url` devolve presigned URL → download 200 com bytes iguais ao original (o último com TLS estrito). 5/6 com NIF do emitente e total corretos; 1 (PDF 4 págs) sem total → Fase 2. Localmente: 19/19 checks e2e contra MinIO em docker-compose (put/get/move/presign/tamper 403/list/policy do utilizador de serviço/migração idempotente).
+Testes: 1139 verdes / 1139 (api). Build api ✅, web ✅ (Next 15.5.25).
+Falhou / adiado: `expose` em vez de `ports` para api/web não foi alterado — o Coolify usa `ports` para descobrir a porta a rotear e a firewall já bloqueia o acesso direto; fica para a Fase 7. Chaves de storage mantidas no esquema existente (`_inbox/<tenant>/…` → `fornecedores/<slug>/<ano>/…`) em vez de `{tenantId}/{ano}/{sha256}.{ext}`: mudar o esquema partiria a relocalização na aprovação e o browser de pastas; o driver é agnóstico da chave.
+Bloqueios (preciso do Rui): `GEMINI_API_KEY` continua vazia no Coolify (ver Bloqueios).
+Próximo: Fase 2 — Leitura robusta.
 
 ---
 
 ## Próxima fase
 
-**Fase 1 — Storage MinIO + deploy limpo.** Ordem prevista:
-1. Corrigir os 3 testes vermelhos (sem alterar comportamento de produção).
-2. Rever `feat/auto-process-pipeline` para reaproveitar a storage driver factory se for melhor que escrever de novo.
-3. `S3Storage` (aws-sdk v3, `forcePathStyle`, presigned URLs) + seleção por `STORAGE_DRIVER`.
-4. MinIO no Coolify (rede interna, sem console pública) + bucket `docflow` + utilizador de serviço.
-5. `scripts/migrate-local-to-s3.ts`; health com storage; env vars; `pnpm audit` limpo; deploy; smoke com 5 amostras.
+**Fase 2 — Leitura robusta.** Ordem prevista:
+1. HEIC/HEIF → JPEG (`sharp`/`heic-convert`) antes de vision e do PDF derivado.
+2. Pipeline fixo EXIF → QR-AT (ZXing) → texto nativo → vision → merge por campo com regras (QR manda em NIF/total/IVA/ATCUD/data/nº; IBAN só com MOD-97).
+3. Retry com 2.º provider quando `confidence < 0.7`; gateway `{URL, TOKEN, MODEL}` por provider.
+4. Benchmark com todas as amostras vs `gemini-documental` → `docs/READING_BENCHMARK.md` (≥ 90 % NIF+total+data).
 
 ---
 

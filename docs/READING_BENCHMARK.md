@@ -10,7 +10,7 @@ Método: `POST /documents/upload` (409 → `POST /extraction/documents/:id` sín
 |---------|-------|
 | Documentos | 19 |
 | **NIF + total + data corretos sem edição manual** | **19/19 (100 %)** — objetivo ≥ 90 % ✅ |
-| QR-AT descodificado deterministicamente (ZXing/jsQR) | 11 (todos os PDFs com QR legível; inclui 8 scans via rasterização) |
+| QR-AT descodificado deterministicamente (ZXing/jsQR) | 11 (6 scans via rasterização + 5 PDFs nativos) |
 | QR lido pela IA e aceite após cross-check | 5 (BP, Bonezinho ×2 → rejeitado→campos IA; fotos IKEA ×2 aceites) |
 | Sem QR (faturas espanholas) | 3 — só IA, NIF-IVA `ES…` correto nas 3 |
 

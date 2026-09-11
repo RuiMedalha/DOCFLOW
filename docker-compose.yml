@@ -20,6 +20,56 @@ services:
     volumes:
       - docflow_redisdata:/data
 
+  # ── Object storage (S3-compatible). Only the S3 API (9000) is reachable,
+  #    and only inside the Coolify network plus the Traefik route created by
+  #    SERVICE_FQDN_MINIO_9000 (needed so presigned download URLs work in
+  #    the browser). The web console is disabled (MINIO_BROWSER=off).
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data
+    environment:
+      SERVICE_FQDN_MINIO_9000:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER: "off"
+    volumes:
+      - docflow_minio:/data
+    expose:
+      - "9000"
+
+  # ── One-shot bootstrap: bucket + service user with a bucket-only policy.
+  #    Idempotent; safe to re-run on every deploy.
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-docflow}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          echo "waiting for minio..."; sleep 2
+        done
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        cat > /tmp/policy.json <<POLICY
+        {"Version":"2012-10-17","Statement":[
+          {"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::$$S3_BUCKET"]},
+          {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::$$S3_BUCKET/*"]}
+        ]}
+        POLICY
+        mc admin policy create local "$$S3_BUCKET-rw" /tmp/policy.json >/dev/null 2>&1 || true
+        mc admin user add local "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" >/dev/null 2>&1 || true
+        mc admin policy attach local "$$S3_BUCKET-rw" --user "$$S3_ACCESS_KEY" >/dev/null 2>&1 || true
+        echo "minio-init: bucket '$$S3_BUCKET' ready, user '$$S3_ACCESS_KEY' attached to policy '$$S3_BUCKET-rw'"
+
   api:
     build:
       context: .
@@ -28,6 +78,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_started
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -41,9 +93,20 @@ services:
       JWT_AUDIENCE: docflow-api
       JWT_ACCESS_TTL: 15m
       CRON_SECRET: ${CRON_SECRET}
+      # Vision / LLM providers
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      OPENROUTER_VISION_MODEL: google/gemini-2.5-flash
+      OPENROUTER_VISION_MODEL: ${OPENROUTER_VISION_MODEL:-google/gemini-2.5-flash}
+      # Object storage
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       UPLOADS_DIR: /repo/apps/api/uploads
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-docflow}
+      S3_REGION: us-east-1
       CORS_ORIGINS: ${CORS_ORIGINS}
       THROTTLE_LIMIT: "1000"
     volumes:
@@ -69,3 +132,4 @@ volumes:
   docflow_pgdata:
   docflow_redisdata:
   docflow_uploads:
+  docflow_minio:

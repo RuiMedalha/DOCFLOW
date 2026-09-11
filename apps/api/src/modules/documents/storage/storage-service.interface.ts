@@ -25,6 +25,17 @@ export interface GetObjectResult {
   size: number;
 }
 
+export interface StorageListEntry {
+  name: string;
+  size?: number;
+  modifiedAt?: string;
+}
+
+export interface StorageListResult {
+  folders: StorageListEntry[];
+  files: StorageListEntry[];
+}
+
 export interface StorageService {
   /**
    * Persist `buffer` at `key`. Overwrites if it exists (object storage is
@@ -67,6 +78,20 @@ export interface StorageService {
    * the controller surfaces it to the user.
    */
   getSignedUrl(key: string, ttlSeconds?: number): Promise<string>;
+
+  /**
+   * Immediate children (folders + files) of a directory-like prefix.
+   * `prefix` is a POSIX path relative to the storage root ('' = root).
+   * Used by the storage tree browser; optional so test doubles that only
+   * exercise put/get/move don't have to implement it.
+   */
+  list?(prefix: string): Promise<StorageListResult>;
+
+  /**
+   * Cheap reachability probe for /health (bucket HEAD, root dir access).
+   * Optional for the same reason as `list`.
+   */
+  healthCheck?(): Promise<boolean>;
 
   /**
    * Driver label for logging/metrics.

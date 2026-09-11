@@ -5,6 +5,7 @@ import * as path from 'path';
 import {
   GetObjectResult,
   PutObjectOptions,
+  StorageListResult,
   StorageService,
 } from './storage-service.interface';
 
@@ -179,6 +180,50 @@ export class LocalFilesystemStorage implements StorageService, OnModuleInit {
         `callers must resolve documentId and use GET /documents/:id/download`,
     );
     return '';
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      await fs.access(this.rootDir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Immediate children of `<root>/<prefix>`. A missing directory yields an
+   * empty listing (the UI renders an "empty" state) — same semantics as the
+   * S3 driver, where a prefix with no objects simply lists nothing.
+   * Symlinks and special files are skipped so they can never become a
+   * traversal vector.
+   */
+  async list(prefix: string): Promise<StorageListResult> {
+    const absolute = prefix ? this.resolveSafe(prefix) : this.rootDir;
+    let dirents: import('fs').Dirent[];
+    try {
+      dirents = await fs.readdir(absolute, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { folders: [], files: [] };
+      }
+      throw err;
+    }
+    const folders: StorageListResult['folders'] = [];
+    const files: StorageListResult['files'] = [];
+    for (const d of dirents) {
+      if (d.isDirectory()) {
+        folders.push({ name: d.name });
+      } else if (d.isFile()) {
+        const stat = await fs.stat(path.join(absolute, d.name)).catch(() => null);
+        files.push({
+          name: d.name,
+          size: stat?.size,
+          modifiedAt: stat?.mtime?.toISOString(),
+        });
+      }
+    }
+    return { folders, files };
   }
 
   /**

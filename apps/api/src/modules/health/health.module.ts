@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { StorageModule } from '../documents/storage/storage.module';
 import { HealthController } from './health.controller';
 import { RedisPingService } from './redis-ping.service';
 
@@ -11,6 +12,7 @@ import { RedisPingService } from './redis-ping.service';
  * don't keep a second persistent connection in the API process.
  */
 @Module({
+  imports: [StorageModule],
   controllers: [HealthController],
   providers: [RedisPingService],
 })

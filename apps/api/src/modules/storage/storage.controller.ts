@@ -2,15 +2,14 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Inject,
   NotFoundException,
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
-import { LocalFilesystemStorage } from '../documents/storage/local-filesystem.storage';
+import { StorageService } from '../documents/storage/storage-service.interface';
 
 interface FsEntryDto {
   name: string;
@@ -32,7 +31,9 @@ interface TreeResponseDto {
 @ApiTags('storage')
 @Controller('storage')
 export class StorageController {
-  constructor(private readonly storage: LocalFilesystemStorage) {}
+  constructor(
+    @Inject(StorageService) private readonly storage: StorageService,
+  ) {}
 
   /**
    * GET /storage/tree?path=/<subdir>
@@ -45,9 +46,8 @@ export class StorageController {
    * The route is gated by JwtGuard + TenantGuard globally; we never read
    * `tenantId` from the query string. Empty path means the tenant root.
    *
-   * NOTE: today this controller uses the `LocalFilesystemStorage` driver
-   * directly. When we move to S3/MinIO, swap the underlying impl for an
-   * `S3StorageAdapter` that does prefix listing.
+   * Driver-agnostic: delegates to `StorageService.list()` (filesystem
+   * readdir for the local driver, ListObjectsV2 with delimiter for S3/MinIO).
    */
   @Get('tree')
   @ApiOperation({
@@ -79,65 +79,28 @@ export class StorageController {
     }
 
     const cleaned = sanitizePath(rawPath ?? '/');
-    const tenantRoot = this.storage.uploadsRoot;
-    const tenantRootAbs = path.resolve(tenantRoot, tenantId);
-    // `path.resolve(root, 'tenant', '/_inbox')` on Windows interprets the
-    // leading `/` as a drive-absolute path and returns `C:\` instead of
-    // staying under the tenant root. Strip the leading slash on the
-    // tenant-relative segment so resolve() walks down from the tenant
-    // root instead of jumping back to the drive root.
     const relativeToTenant = cleaned.replace(/^\/+/, '');
-    const absolute = relativeToTenant
-      ? path.resolve(tenantRootAbs, relativeToTenant)
-      : tenantRootAbs;
+    // Tenant scoping happens here, never from caller input: the prefix
+    // handed to the driver is always `<tenantId>/<sanitized path>`.
+    const prefix = relativeToTenant ? `${tenantId}/${relativeToTenant}` : tenantId;
 
-    // Belt-and-suspenders: even after sanitizePath we double-check that
-    // the absolute path stays under the tenant root.
-    if (!absolute.startsWith(tenantRootAbs)) {
-      throw new BadRequestException('path escapes tenant root');
+    if (!this.storage.list) {
+      throw new NotFoundException('storage driver does not support listing');
     }
+    const listing = await this.storage.list(prefix);
 
-    let dirents: import('fs').Dirent[];
-    try {
-      dirents = await fs.readdir(absolute, { withFileTypes: true });
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') {
-        // Path doesn't exist — return an empty listing instead of 404 so
-        // the UI can render a "no docs here yet" state.
-        return {
-          path: cleaned,
-          parent: parentOf(cleaned),
-          folders: [],
-          files: [],
-        };
-      }
-      throw err;
-    }
-
-    const folders: FsEntryDto[] = [];
-    const files: FsEntryDto[] = [];
-
-    for (const d of dirents) {
-      const rel = joinPosix(cleaned, d.name);
-      if (d.isDirectory()) {
-        folders.push({ name: d.name, path: rel, kind: 'folder' });
-        continue;
-      }
-      if (d.isFile()) {
-        const stat = await fs.stat(path.join(absolute, d.name)).catch(() => null);
-        files.push({
-          name: d.name,
-          path: rel,
-          kind: 'file',
-          size: stat?.size,
-          modifiedAt: stat?.mtime?.toISOString(),
-        });
-        continue;
-      }
-      // Skip symlinks and special files — never expose anything that
-      // could be a traversal vector.
-    }
+    const folders: FsEntryDto[] = listing.folders.map((f) => ({
+      name: f.name,
+      path: joinPosix(cleaned, f.name),
+      kind: 'folder' as const,
+    }));
+    const files: FsEntryDto[] = listing.files.map((f) => ({
+      name: f.name,
+      path: joinPosix(cleaned, f.name),
+      kind: 'file' as const,
+      size: f.size,
+      modifiedAt: f.modifiedAt,
+    }));
 
     // Stable order: folders first by name, then files by name.
     folders.sort((a, b) => a.name.localeCompare(b.name));

@@ -48,17 +48,56 @@ describe('reconcileTotals()', () => {
     expect(TOTALS_TOLERANCE).toBe(0.01);
   });
 
+  /**
+   * Casos reais da produção que a primeira versão da regra marcava
+   * erradamente como "não fecha" — 20 em 37 documentos. O fornecedor
+   * tanto imprime o total da linha líquido como já com IVA, e o
+   * desconto global tanto está por aplicar como já refletido nas
+   * linhas. Só damos o documento por não fechado quando NENHUMA das
+   * convenções plausíveis fecha.
+   */
+  it('aceita linhas já com IVA (IKEA: soma das linhas = total exacto)', () => {
+    const out = reconcileTotals({
+      lineItems: [{ lineTotal: 196 }, { lineTotal: 64 }],
+      taxAmount: 48.62,
+      netAmount: 211.38,
+      total: 260,
+    });
+    expect(out.reconciled).toBe(true);
+    expect(out.reason).toContain('linhas_com_iva');
+  });
+
+  it('aceita o desconto global já refletido nas linhas (OLITREM)', () => {
+    const out = reconcileTotals({
+      lineItems: [{ quantity: 1, unitPrice: 1335, lineTotal: 731.56 }],
+      discountAmount: 615.43,
+      taxAmount: 168.26,
+      total: 899.82,
+    });
+    expect(out.reconciled).toBe(true);
+  });
+
+  it('continua a apanhar uma diferença real (SAMMIC: faltam 0,81 €)', () => {
+    const out = reconcileTotals({
+      lineItems: [{ lineTotal: 33.74 }, { lineTotal: 7 }],
+      taxAmount: 0,
+      total: 39.93,
+    });
+    expect(out.reconciled).toBe(false);
+    expect(out.delta).toBeCloseTo(0.81, 2);
+  });
+
   it('quando não fecha, diz exactamente porquê e quanto falta', () => {
     const out = reconcileTotals({
       lineItems: [{ lineTotal: 100 }],
       discountAmount: 10,
       taxAmount: 20.7,
-      total: 120.7, // esqueceram-se do desconto
+      total: 200, // nenhuma interpretação fecha
     });
     expect(out.reconciled).toBe(false);
-    expect(out.delta).toBe(-10);
     expect(out.reason).toContain('totals_mismatch');
     expect(out.reason).toContain('desconto=10.00');
+    expect(out.reason).toContain('melhor=');
   });
 
   it('sem linhas utilizáveis, fecha o trio base + IVA', () => {

@@ -89,28 +89,48 @@ export function reconcileTotals(input: {
   const haveAllLines = items.length > 0 && nets.every((n) => n != null);
 
   if (haveAllLines) {
-    const linesNet = round2((nets as number[]).reduce((a, b) => a + b, 0));
-    const expected = round2(linesNet - (discountAmount ?? 0) + (tax ?? 0));
-    const delta = round2(expected - total);
-    if (Math.abs(delta) <= TOTALS_TOLERANCE) {
-      return {
-        reconciled: true,
-        delta,
-        lineDiscountTotal,
-        discountAmount,
-        reason: 'lines_minus_discounts_plus_tax_equals_total',
-      };
+    const lines = round2((nets as number[]).reduce((a, b) => a + b, 0));
+    const disc = discountAmount ?? 0;
+    const t = tax ?? 0;
+
+    // O fornecedor pode imprimir o total da linha líquido OU já com IVA
+    // ("net or gross, whichever the supplier prints"), e o desconto
+    // global pode já estar refletido nas linhas ou não. Não há forma de
+    // saber qual a convenção — por isso testamos as quatro combinações
+    // plausíveis e só damos o documento por não fechado quando NENHUMA
+    // fecha. Assumir uma só convenção marcava metade das faturas reais
+    // como erradas: a IKEA imprime linhas com IVA (soma = total exacto)
+    // e era acusada de faltarem 48,62 € de IVA.
+    const candidates: Array<{ expected: number; reason: string }> = [
+      { expected: round2(lines - disc + t), reason: 'linhas_liquidas_menos_desconto_mais_iva' },
+      { expected: round2(lines + t), reason: 'linhas_liquidas_mais_iva_desconto_ja_nas_linhas' },
+      { expected: round2(lines - disc), reason: 'linhas_com_iva_menos_desconto' },
+      { expected: lines, reason: 'linhas_com_iva_desconto_ja_nas_linhas' },
+    ];
+    let best = candidates[0];
+    let bestDelta = round2(best.expected - total);
+    for (const c of candidates) {
+      const delta = round2(c.expected - total);
+      if (Math.abs(delta) <= TOTALS_TOLERANCE) {
+        return { reconciled: true, delta, lineDiscountTotal, discountAmount, reason: c.reason };
+      }
+      if (Math.abs(delta) < Math.abs(bestDelta)) {
+        best = c;
+        bestDelta = delta;
+      }
     }
     return {
       reconciled: false,
-      delta,
+      // Reportamos a interpretação que menos falhou — é a que ajuda quem
+      // vai rever o documento.
+      delta: bestDelta,
       lineDiscountTotal,
       discountAmount,
       reason:
-        `totals_mismatch:linhas=${linesNet.toFixed(2)} ` +
-        `desconto=${(discountAmount ?? 0).toFixed(2)} ` +
-        `iva=${(tax ?? 0).toFixed(2)} esperado=${expected.toFixed(2)} ` +
-        `documento=${total.toFixed(2)} diferença=${delta.toFixed(2)}`,
+        `totals_mismatch:linhas=${lines.toFixed(2)} ` +
+        `desconto=${disc.toFixed(2)} iva=${t.toFixed(2)} ` +
+        `melhor=${best.reason}(${best.expected.toFixed(2)}) ` +
+        `documento=${total.toFixed(2)} diferença=${bestDelta.toFixed(2)}`,
     };
   }
 

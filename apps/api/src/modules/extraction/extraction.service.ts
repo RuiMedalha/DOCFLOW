@@ -5046,6 +5046,13 @@ export class ExtractionService implements OnModuleDestroy {
         confidence: fields.confidence,
         currency: fields.currency,
         country: fields.country,
+        // Fase 4.1 — o cabeçalho transcrito à letra fica gravado: é o
+        // texto em que a regra determinística se baseou para decidir
+        // "orçamento" em vez de "fatura", e sem ele quem revê o
+        // documento não consegue perceber porquê.
+        documentTitle: fields.documentTitle,
+        correctedDocumentNumber: fields.correctedDocumentNumber,
+        totalsReconciled: fields.totalsReconciled,
         documentLocale: fields.documentLocale,
         ibanCountry: fields.ibanCountry,
         supplierVatId: fields.supplierVatId,

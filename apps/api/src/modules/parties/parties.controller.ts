@@ -25,6 +25,11 @@ import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/guards/rbac.guard';
 import { PartiesService } from './parties.service';
+import { ViesService } from '../vies/vies.service';
+import { PartyImportService } from './party-import.service';
+import { PartyProductsService } from './party-products.service';
+import { UploadedFile, UseInterceptors, BadRequestException as PartiesBadRequest } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentsService } from '../documents/documents.service';
 import {
   AccountQueryDto,
@@ -80,7 +85,59 @@ export class PartiesController {
   constructor(
     private readonly parties: PartiesService,
     private readonly documents: DocumentsService,
+    private readonly vies: ViesService,
+    private readonly partyImport: PartyImportService,
+    private readonly partyProducts: PartyProductsService,
   ) {}
+
+  // ── Fase 4 ─────────────────────────────────────────────────────────
+  @Post('parties/import')
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiOperation({
+    summary: 'Import suppliers from CSV (Moloni export or any CSV)',
+    description:
+      'multipart/form-data: `file` (CSV, UTF-8, `;` or `,`), optional `mapping` (JSON string: DocFlow field → CSV column), optional `dryRun=true`. Upsert by NIF / NIF-IVA / exact name.',
+  })
+  importCsv(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('mapping') mapping?: string,
+    @Body('dryRun') dryRun?: string,
+    @Body('type') type?: string,
+  ) {
+    if (!file?.buffer?.length) throw new PartiesBadRequest('CSV file is required (field "file")');
+    let parsedMapping: Record<string, string> | undefined;
+    if (mapping) {
+      try {
+        parsedMapping = JSON.parse(mapping);
+      } catch {
+        throw new PartiesBadRequest('mapping must be a JSON object');
+      }
+    }
+    return this.partyImport.importCsv(user.tenantId, user.id, file.buffer, parsedMapping, {
+      dryRun: dryRun === 'true' || dryRun === '1',
+      type: type === 'CLIENTE' || type === 'AMBOS' ? (type as 'CLIENTE' | 'AMBOS') : undefined,
+    });
+  }
+
+  @Post('parties/:id/vies')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Validate the party VAT number in VIES (EC REST API, 30-day cache)' })
+  validateVies(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Query('force') force?: string,
+  ) {
+    return this.vies.validateParty(user.tenantId, id, force === 'true' || force === '1');
+  }
+
+  @Get('parties/:id/products')
+  @ApiOperation({ summary: 'Products bought from this supplier (aggregated document line items)' })
+  products(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.partyProducts.list(user.tenantId, id);
+  }
 
   // ─────────────────────────────────────────── parties CRUD ───────────────
 

@@ -1,4 +1,5 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
@@ -11,8 +12,9 @@ import {
   Matches,
   MaxLength,
   Min,
+  IsEmail,
 } from 'class-validator';
-import { PartyType } from '@prisma/client';
+import { PartyType, VatRegime } from '@prisma/client';
 
 /**
  * Body for POST /parties — create a supplier/customer/both.
@@ -162,6 +164,39 @@ export class CreatePartyDto {
   @IsOptional()
   @IsString()
   partyCategoryId?: string;
+
+  // ── Fase 4 — perfil fiscal/comercial ─────────────────────────────
+  @ApiPropertyOptional({ example: 'ESB06612386', description: 'NIF-IVA UE com prefixo de país (fornecedores estrangeiros). PT usa `nif`.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  vatNumber?: string;
+
+  @ApiPropertyOptional({ enum: VatRegime, description: 'PT | UE_REVERSE_CHARGE (autoliquidação intra-UE) | EXTRA_UE' })
+  @IsOptional()
+  @IsEnum(VatRegime)
+  vatRegime?: VatRegime;
+
+  @ApiPropertyOptional({ example: 'EUR', description: 'Moeda habitual das faturas (ISO 4217)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  currency?: string;
+
+  @ApiPropertyOptional({ description: 'Pagamentos por débito direto (SEPA DD)' })
+  @IsOptional()
+  @IsBoolean()
+  directDebit?: boolean;
+
+  @ApiPropertyOptional({ description: 'Email para onde o fornecedor envia faturas' })
+  @IsOptional()
+  @IsEmail()
+  billingEmail?: string;
+
+  @ApiPropertyOptional({ description: 'Category.id aplicada aos documentos deste fornecedor quando não há histórico suficiente' })
+  @IsOptional()
+  @IsString()
+  defaultCategoryId?: string;
 }
 
 /** PATCH /parties/:id — every field optional. */

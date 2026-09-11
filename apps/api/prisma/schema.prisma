@@ -78,6 +78,13 @@ enum FiscalStatus {
   INDETERMINADO
 }
 
+// Fase 4 — regime de IVA do fornecedor (determina autoliquidação / dedução).
+enum VatRegime {
+  PT
+  UE_REVERSE_CHARGE
+  EXTRA_UE
+}
+
 enum DocumentStatus {
   NOVO
   PROCESSADO
@@ -469,6 +476,11 @@ model Document {
   taxAmount      Decimal?       @db.Decimal(12, 2)
   total          Decimal?       @db.Decimal(12, 2)
   currency       String         @default("EUR")
+  // Fase 4 — contravalor em EUR à taxa de referência do BCE na data da fatura
+  // (moeda ≠ EUR). Para EUR, amountEur = total.
+  amountEur        Decimal?     @db.Decimal(12, 2)
+  exchangeRate     Decimal?     @db.Decimal(14, 6)   // unidades da moeda por 1 EUR
+  exchangeRateDate DateTime?
   expenseCategoryId     String?
   expenseCategory       Category? @relation("DocumentCategory", fields: [expenseCategoryId], references: [id])
   ivaDeductibilityPct   Int?
@@ -826,9 +838,24 @@ model Party {
   enrichmentSource   String?
   enrichmentError    String?
 
+  // Fase 4 — perfil fiscal/comercial completo do fornecedor.
+  vatNumber          String?      // NIF-IVA UE com prefixo de país (ESB06612386); PT usa `nif`
+  vatRegime          VatRegime    @default(PT)
+  currency           String       @default("EUR")
+  directDebit        Boolean      @default(false)
+  billingEmail       String?
+  defaultCategoryId  String?
+  defaultCategory    Category?    @relation("PartyDefaultCategory", fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+  // VIES (REST oficial da Comissão Europeia) — cache de 30 dias
+  viesValidatedAt    DateTime?
+  viesValid          Boolean?
+  viesName           String?
+  viesAddress        String?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  categoryStats PartyCategoryStat[]
   documents     Document[]
   payableItems  PayableItem[]
   ibanChanges   IbanHistory[]
@@ -849,7 +876,28 @@ model Party {
   // Replaces the previous plain @@index which only guarded the read.
   @@unique([tenantId, slug])
   @@index([tenantId, partyCategoryId])
+  @@index([tenantId, vatNumber])
   @@map("parties")
+}
+
+// Fase 4 — contador de aprovações por (fornecedor, categoria de despesa).
+// Ao aprovar um documento com categoria incrementa; com >= 3 aprovações a
+// categoria passa a ser aplicada automaticamente na extração (confidence = 1).
+model PartyCategoryStat {
+  id             String   @id @default(cuid())
+  tenantId       String
+  partyId        String
+  party          Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  categoryId     String
+  category       Category @relation("PartyCategoryStats", fields: [categoryId], references: [id], onDelete: Cascade)
+  approvedCount  Int      @default(0)
+  lastApprovedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([partyId, categoryId])
+  @@index([tenantId, partyId])
+  @@map("party_category_stats")
 }
 
 // =============================================================================
@@ -1214,6 +1262,8 @@ model Category {
   updatedAt                   DateTime @updatedAt
 
   documents                   Document[] @relation("DocumentCategory")
+  defaultForParties           Party[]    @relation("PartyDefaultCategory")
+  partyStats                  PartyCategoryStat[] @relation("PartyCategoryStats")
 
   @@unique([tenantId, slug])
   @@index([tenantId])

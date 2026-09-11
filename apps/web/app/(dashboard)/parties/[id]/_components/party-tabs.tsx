@@ -5,6 +5,7 @@ import {
   FileText,
   History,
   Landmark,
+  Package,
   User,
   Users,
   Wallet,
@@ -16,6 +17,7 @@ export type PartyTabId =
   | 'documents'
   | 'payments'
   | 'iban'
+  | 'products'
   | 'timeline';
 
 interface TabSpec {
@@ -30,6 +32,7 @@ const TABS: TabSpec[] = [
   { id: 'documents', label: 'Documentos', icon: FileText },
   { id: 'payments', label: 'Pagamentos', icon: Wallet },
   { id: 'iban', label: 'IBAN', icon: Landmark },
+  { id: 'products', label: 'Produtos', icon: Package },
   { id: 'timeline', label: 'Histórico', icon: History },
 ];
 
@@ -110,6 +113,7 @@ export function usePartyTabFromUrl(): PartyTabId {
     'documents',
     'payments',
     'iban',
+    'products',
     'timeline',
   ];
   return (valid as string[]).includes(tab) ? (tab as PartyTabId) : 'identity';

@@ -145,6 +145,7 @@ export class PartiesService {
         partyCategory: {
           select: { id: true, slug: true, name: true, color: true, sortOrder: true },
         },
+        defaultCategory: { select: { id: true, name: true, slug: true } },
         // Sprint G: eager-load the 360° sub-resources so the detail page
         // can render without a waterfall of follow-up GETs. Tenant scope
         // is already enforced by `where: { tenantId }` above — the
@@ -237,6 +238,13 @@ export class PartiesService {
         website: dto.website,
         industry: dto.industry,
         notes: dto.notes,
+        // Fase 4
+        vatNumber: dto.vatNumber ? dto.vatNumber.replace(/[\s.-]/g, '').toUpperCase() : null,
+        vatRegime: dto.vatRegime ?? ((dto.country ?? 'PT').toUpperCase() === 'PT' ? 'PT' : dto.vatNumber ? 'UE_REVERSE_CHARGE' : 'EXTRA_UE'),
+        currency: (dto.currency ?? 'EUR').toUpperCase(),
+        directDebit: dto.directDebit ?? false,
+        billingEmail: dto.billingEmail,
+        defaultCategoryId: dto.defaultCategoryId ?? null,
         tags: dto.tags ?? [],
         paymentTermDays: dto.paymentTermDays ?? 30,
         defaultDebitAccountId: dto.defaultDebitAccountId,
@@ -407,6 +415,15 @@ export class PartiesService {
     if (dto.website !== undefined) data.website = dto.website;
     if (dto.industry !== undefined) data.industry = dto.industry;
     if (dto.notes !== undefined) data.notes = dto.notes;
+    // Fase 4
+    if (dto.vatNumber !== undefined)
+      data.vatNumber = dto.vatNumber ? dto.vatNumber.replace(/[\s.-]/g, '').toUpperCase() : null;
+    if (dto.vatRegime !== undefined) data.vatRegime = dto.vatRegime;
+    if (dto.currency !== undefined) data.currency = (dto.currency || 'EUR').toUpperCase();
+    if (dto.directDebit !== undefined) data.directDebit = dto.directDebit;
+    if (dto.billingEmail !== undefined) data.billingEmail = dto.billingEmail || null;
+    if (dto.defaultCategoryId !== undefined)
+      data.defaultCategory = dto.defaultCategoryId ? { connect: { id: dto.defaultCategoryId } } : { disconnect: true };
     if (dto.tags !== undefined) data.tags = dto.tags;
     if (dto.paymentTermDays !== undefined) data.paymentTermDays = dto.paymentTermDays;
     if (dto.defaultDebitAccountId !== undefined)

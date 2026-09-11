@@ -69,8 +69,37 @@ export interface Party {
   isRecurringManualOverride?: boolean | null;
   defaultDebitAccount?: { id: string; code: string; name: string } | null;
   defaultCreditAccount?: { id: string; code: string; name: string } | null;
+  // Fase 4 — perfil fiscal/comercial + VIES
+  vatNumber?: string | null;
+  vatRegime?: VatRegime | null;
+  currency?: string | null;
+  directDebit?: boolean | null;
+  billingEmail?: string | null;
+  defaultCategoryId?: string | null;
+  defaultCategory?: { id: string; name: string; slug: string } | null;
+  paymentTermDays?: number | null;
+  viesValidatedAt?: string | null;
+  viesValid?: boolean | null;
+  viesName?: string | null;
+  viesAddress?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Fase 4 — regime de IVA do fornecedor. */
+export type VatRegime = 'PT' | 'UE_REVERSE_CHARGE' | 'EXTRA_UE';
+
+/** Fase 4 — produto comprado a um fornecedor (GET /parties/:id/products). */
+export interface PartyProduct {
+  key: string;
+  code: string | null;
+  description: string;
+  timesBought: number;
+  totalQuantity: number;
+  totalSpent: number;
+  lastUnitPrice: number | null;
+  lastDate: string | null;
+  lastDocumentId: string | null;
 }
 
 export interface PartyListResponse {
@@ -187,6 +216,14 @@ export interface PartyInput {
   partyCategoryId?: string;
   isRecurring?: boolean;
   isRecurringManualOverride?: boolean;
+  // Fase 4
+  vatNumber?: string;
+  vatRegime?: VatRegime;
+  currency?: string;
+  directDebit?: boolean;
+  billingEmail?: string;
+  defaultCategoryId?: string;
+  paymentTermDays?: number;
 }
 
 // =============================================================================

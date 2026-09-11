@@ -1194,6 +1194,7 @@ export class DocumentsService {
       select: {
         id: true, status: true, dueDate: true, paymentDueDate: true,
         total: true, netAmount: true,
+        partyId: true, expenseCategoryId: true, metadata: true,
       },
     });
     if (!existing) throw new NotFoundException('Document not found');
@@ -1242,9 +1243,48 @@ export class DocumentsService {
     // `_inbox/` staging path into the deterministic party/category folder.
     // Skip silently when the document has no linked party — operator
     // decides manually through a separate classification flow.
+    // Fase 4 — conta a aprovação por (fornecedor, categoria) para a auto-categoria.
+    // The review screen stores the category as `metadata.filing.expenseCategory`
+    // (a Category.name); resolve it to the Category row so the stat counts.
+    const filingCategory = ((existing.metadata as { filing?: { expenseCategory?: string } } | null)?.filing?.expenseCategory) ?? null;
+    const statCategoryId = existing.expenseCategoryId ?? (await this.resolveCategoryIdByName(tenantId, filingCategory));
+    await this.bumpPartyCategoryStat(tenantId, existing.partyId ?? null, statCategoryId);
     await this.relocateAfterApprove(tenantId, id, userId);
 
     return this.sanitize(updated);
+  }
+
+  /**
+   * Fase 4 — conta aprovações por (fornecedor, categoria). Com >= 3 a
+   * extração passa a aplicar a categoria automaticamente
+   * (extraction/resolveAutoCategory + parties/auto-category.ts).
+   * Never throws — a stats failure must not block an approval.
+   */
+  private async resolveCategoryIdByName(tenantId: string, name: string | null): Promise<string | null> {
+    if (!name) return null;
+    const client = this.prisma as unknown as { category?: { findFirst: (args: unknown) => Promise<{ id: string } | null> } };
+    if (typeof client.category?.findFirst !== 'function') return null;
+    try {
+      const row = await client.category.findFirst({ where: { tenantId, name }, select: { id: true } });
+      return row?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async bumpPartyCategoryStat(tenantId: string, partyId: string | null, categoryId: string | null) {
+    if (!partyId || !categoryId) return;
+    const client = this.prisma as unknown as { partyCategoryStat?: { upsert: (args: unknown) => Promise<unknown> } };
+    if (typeof client.partyCategoryStat?.upsert !== 'function') return;
+    try {
+      await client.partyCategoryStat.upsert({
+        where: { partyId_categoryId: { partyId, categoryId } },
+        create: { tenantId, partyId, categoryId, approvedCount: 1, lastApprovedAt: new Date() },
+        update: { approvedCount: { increment: 1 }, lastApprovedAt: new Date() },
+      });
+    } catch (err) {
+      this.logger.warn(`[bumpPartyCategoryStat] party=${partyId} category=${categoryId}: ${(err as Error).message}`);
+    }
   }
 
   // ─────────────────────────────────────────── re-extract ────────────────

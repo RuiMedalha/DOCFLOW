@@ -16,6 +16,7 @@ import type {
   PartyInput,
   PartyListResponse,
   PartyPaymentEvent,
+  PartyProduct,
   TimelineListResponse,
 } from '../_lib/types';
 
@@ -154,6 +155,33 @@ export function usePartyCategories() {
 }
 
 // ─────────────────────────────────────────── IBAN ANTI-FRAUD ──────────────
+
+/** Fase 4 — POST /parties/:id/vies (validação no VIES, cache 30 dias). */
+export function useValidateVies() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, force }: { id: string; force?: boolean }) => {
+      const res = await authedFetch(`${API_BASE}/parties/${id}/vies${force ? '?force=true' : ''}`, { method: 'POST' });
+      return unwrap<{ partyId: string; result: { valid: boolean; name: string | null } | null; reason: string | null }>(res);
+    },
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: partyKeys.one(vars.id) });
+    },
+  });
+}
+
+/** Fase 4 — GET /parties/:id/products (linhas agregadas). */
+export function usePartyProducts(id: string | null) {
+  return useQuery<{ items: PartyProduct[]; documents: number }>({
+    queryKey: ['parties', 'products', id ?? ''],
+    queryFn: async () => {
+      if (!id) return { items: [], documents: 0 };
+      const res = await authedFetch(`${API_BASE}/parties/${id}/products`);
+      return unwrap<{ items: PartyProduct[]; documents: number }>(res);
+    },
+    enabled: !!id,
+  });
+}
 
 export function useIbanHistory(id: string | null) {
   return useQuery<IbanHistoryEntry[]>({

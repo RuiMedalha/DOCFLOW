@@ -48,6 +48,8 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { FleetModule } from './modules/fleet/fleet.module';
 import { TaxSimulatorModule } from './modules/tax-simulator/tax-simulator.module';
 import { HealthModule } from './modules/health/health.module';
+import { ViesModule } from './modules/vies/vies.module';
+import { FxModule } from './common/fx/ecb-fx.service';
 // Sprint H — async processing pipeline.
 import { ProcessingModule } from './modules/documents/processing/processing.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
@@ -130,6 +132,8 @@ import { StorageBrowseModule } from './modules/storage/storage.module';
     FleetModule,
     TaxSimulatorModule,
     HealthModule,
+    ViesModule,
+    FxModule,
     // Sprint H — wire the queue + the processing pipeline. QueueModule
     // is `global: true` after .forRoot() so any module that injects
     // QueueAdapter can find it. ProcessingModule owns the SSE controller.

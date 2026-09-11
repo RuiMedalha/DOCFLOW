@@ -10,6 +10,7 @@ import {
   usePartyCategories,
 } from './use-parties';
 import type { PartyInput, Account, PartyCategory } from '../_lib/types';
+import { useCategories } from '../../categories/use-categories';
 
 export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput; partyId?: string; isAdmin?: boolean }) {
   const router = useRouter();
@@ -20,6 +21,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
     ? seedAccountsData
     : (seedAccountsData && (seedAccountsData as any).items) || [];
   const partyCategories = usePartyCategories().data ?? [];
+  const expenseCategories = useCategories().categories;
   const [form, setForm] = useState<PartyInput>(initial ?? {
     type: 'FORNECEDOR',
     name: '',
@@ -60,6 +62,14 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         // Sprint E: empty string clears the category — server treats it
         // as null in the Prisma update path.
         partyCategoryId: form.partyCategoryId || undefined,
+        // Fase 4 — perfil fiscal/comercial
+        vatNumber: form.vatNumber?.trim() || undefined,
+        vatRegime: form.vatRegime || undefined,
+        currency: form.currency?.trim().toUpperCase() || undefined,
+        directDebit: form.directDebit ?? undefined,
+        billingEmail: form.billingEmail?.trim() || undefined,
+        defaultCategoryId: form.defaultCategoryId === undefined ? undefined : form.defaultCategoryId,
+        paymentTermDays: form.paymentTermDays === undefined || form.paymentTermDays === null ? undefined : Number(form.paymentTermDays),
         // ADMIN-only fields: server rejects (403) if non-ADMIN tries to send these.
         isRecurring: isAdmin ? form.isRecurring : undefined,
         isRecurringManualOverride: isAdmin ? form.isRecurringManualOverride : undefined,
@@ -127,6 +137,40 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         </Field>
         <Field label="País">
           <input className="input" value={form.country ?? 'Portugal'} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+        </Field>
+        {/* Fase 4 — perfil fiscal/comercial */}
+        <Field label="NIF-IVA UE (estrangeiros)">
+          <input className="input font-mono" placeholder="ESB06612386" value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
+        </Field>
+        <Field label="Regime de IVA">
+          <select className="select" value={form.vatRegime ?? 'PT'} onChange={(e) => setForm({ ...form, vatRegime: e.target.value as PartyInput['vatRegime'] })}>
+            <option value="PT">Portugal (IVA normal)</option>
+            <option value="UE_REVERSE_CHARGE">Intra-UE — autoliquidação</option>
+            <option value="EXTRA_UE">Fora da UE</option>
+          </select>
+        </Field>
+        <Field label="Moeda das faturas">
+          <input className="input" maxLength={3} placeholder="EUR" value={form.currency ?? 'EUR'} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} />
+        </Field>
+        <Field label="Prazo de pagamento (dias)">
+          <input className="input" type="number" min={0} max={365} value={form.paymentTermDays ?? ''} onChange={(e) => setForm({ ...form, paymentTermDays: e.target.value === '' ? undefined : Number(e.target.value) })} />
+        </Field>
+        <Field label="Email de faturação">
+          <input className="input" type="email" placeholder="faturas@fornecedor.pt" value={form.billingEmail ?? ''} onChange={(e) => setForm({ ...form, billingEmail: e.target.value })} />
+        </Field>
+        <Field label="Categoria de despesa por defeito">
+          <select className="select" value={form.defaultCategoryId ?? ''} onChange={(e) => setForm({ ...form, defaultCategoryId: e.target.value })}>
+            <option value="">— Automática (após 3 aprovações) —</option>
+            {expenseCategories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Débito direto">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!form.directDebit} onChange={(e) => setForm({ ...form, directDebit: e.target.checked })} />
+            Pago por débito direto (SEPA DD)
+          </label>
         </Field>
         <Field label="Conta Débito default">
           <select className="select" value={form.defaultDebitAccountId ?? ''} onChange={(e) => setForm({ ...form, defaultDebitAccountId: e.target.value || undefined })}>

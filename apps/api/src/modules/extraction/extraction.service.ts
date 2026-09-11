@@ -32,6 +32,7 @@ import { VisionService } from "../ai/vision.service";
 import { FolderRulesEngine } from "../documents/folder-rules/folder-rules.engine";
 import {
   ExpenseCategory,
+  isExpenseCategory,
   mapToExpenseCategory,
   VAT_DEDUCTIBILITY_HINTS,
 } from "../documents/folder-rules/folder-rules.types";
@@ -45,6 +46,9 @@ import {
 } from "./extraction.constants";
 import { autoOrientImage } from "./qr-decode/qr-decoder";
 import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-status";
+import { ViesService } from "../vies/vies.service";
+import { EcbFxService } from "../../common/fx/ecb-fx.service";
+import { pickAutoCategory } from "../parties/auto-category";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
@@ -330,6 +334,10 @@ export class ExtractionService implements OnModuleDestroy {
     @Optional()
     @Inject(QUEUE_ADAPTER)
     private readonly queueAdapter?: QueueAdapter,
+    @Optional()
+    private readonly vies?: ViesService,
+    @Optional()
+    private readonly fx?: EcbFxService,
   ) {}
 
   /**
@@ -905,6 +913,16 @@ export class ExtractionService implements OnModuleDestroy {
     // IKEA receipt), so it may confirm a duplicate but never veto one.
     const atcudTrusted = qrOriginForFiscal !== null && qrOriginForFiscal !== "ai";
     const parsedForFiscal = qrForFiscal ? parseAtQr(qrForFiscal) : null;
+    // Fase 4 — VIES: a foreign EU VAT id validated by the Commission's
+    // service upgrades the document from INDETERMINADO to FISCAL.
+    let viesValidatedForDoc = false;
+    if (fields.supplierVatId && !/^PT/i.test(fields.supplierVatId) && this.vies) {
+      try {
+        viesValidatedForDoc = await this.vies.isValidated(fields.supplierVatId, tenantId);
+      } catch (err) {
+        this.logger.warn(`[processDocumentAsync] VIES check failed: ${(err as Error).message}`);
+      }
+    }
     const fiscal = classifyFiscalStatus({
       qr: parsedForFiscal
         ? {
@@ -926,7 +944,7 @@ export class ExtractionService implements OnModuleDestroy {
         fields.documentType ?? "",
         ...(fields.hints ?? []).filter((h) => /^(aiDocType|documentType|aiDocumentType):/i.test(h)),
       ].join(String.fromCharCode(10)),
-      viesValidated: false, // Fase 4 liga o VIES; até lá as estrangeiras ficam INDETERMINADO
+      viesValidated: viesValidatedForDoc,
     });
     (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
     (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
@@ -1142,6 +1160,45 @@ export class ExtractionService implements OnModuleDestroy {
       // Low confidence but SOME signal (e.g. supplier name without a
       // total). Still flag for review but don't suppress the row.
       finalStatus = DocumentStatus.EM_REVISAO;
+    }
+
+    // ── Fase 4 — contravalor em EUR (BCE) ──────────────────────────
+    if (fields.total != null && Number.isFinite(fields.total)) {
+      const cur = (fields.currency || "EUR").toUpperCase();
+      if (cur === "EUR") {
+        (updateData as Record<string, unknown>).amountEur = fields.total;
+      } else if (this.fx) {
+        try {
+          const fxDate = fields.docDate ?? new Date().toISOString().slice(0, 10);
+          const conv = await this.fx.toEur(fields.total, cur, fxDate);
+          if (conv) {
+            (updateData as Record<string, unknown>).amountEur = conv.amountEur;
+            (updateData as Record<string, unknown>).exchangeRate = conv.rate.rate;
+            (updateData as Record<string, unknown>).exchangeRateDate = new Date(`${conv.rate.rateDate}T00:00:00Z`);
+            fields.hints = [...(fields.hints ?? []), `fx:${cur}→EUR@${conv.rate.rate}(${conv.rate.rateDate})`];
+          } else {
+            fields.warnings = [...(fields.warnings ?? []), `fx_rate_unavailable:${cur}`];
+          }
+        } catch (err) {
+          this.logger.warn(`[processDocumentAsync] FX conversion failed: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    // ── Fase 4 — categoria automática por fornecedor ────────────────
+    const linkedPartyId =
+      (updateData.party as { connect?: { id?: string } } | undefined)?.connect?.id ?? doc.partyId ?? null;
+    if (linkedPartyId) {
+      const auto = await this.resolveAutoCategory(tenantId, linkedPartyId);
+      if (auto) {
+        updateData.expenseCategory = { connect: { id: auto.categoryId } };
+        (updateData as Record<string, unknown>).categoryConfidence = auto.confidence;
+        fields.hints = [...(fields.hints ?? []), `autoCategory:${auto.categoryId}:${auto.reason}`];
+        // The review screen reads `metadata.filing.expenseCategory` (Category.name);
+        // mirror the automatic choice there so the badge and IVA deduction follow.
+        const catName = await this.categoryNameById(tenantId, auto.categoryId);
+        if (catName && isExpenseCategory(catName)) aiFiledExpenseCategory = catName;
+      }
     }
 
     const composeFinalMetadata = () =>
@@ -2806,6 +2863,48 @@ export class ExtractionService implements OnModuleDestroy {
       this.logger.warn(
         `[findFiscalKeyOriginal] lookup failed for document=${documentId}: ${(err as Error).message}`,
       );
+      return null;
+    }
+  }
+
+  /**
+   * Fase 4 — categoria de despesa automática: >= 3 aprovações da mesma
+   * categoria para o fornecedor (PartyCategoryStat) ou a categoria por
+   * defeito do fornecedor. Tolera prisma sem o modelo (test doubles).
+   */
+  private async resolveAutoCategory(
+    tenantId: string,
+    partyId: string,
+  ): Promise<{ categoryId: string; confidence: number; reason: string } | null> {
+    const client = this.prisma as unknown as {
+      partyCategoryStat?: { findMany: (args: unknown) => Promise<Array<{ categoryId: string; approvedCount: number }>> };
+      party?: { findFirst: (args: unknown) => Promise<{ defaultCategoryId: string | null } | null> };
+    };
+    if (typeof client.partyCategoryStat?.findMany !== "function" || typeof client.party?.findFirst !== "function") {
+      return null;
+    }
+    try {
+      const [stats, party] = await Promise.all([
+        client.partyCategoryStat.findMany({
+          where: { tenantId, partyId },
+          select: { categoryId: true, approvedCount: true },
+        }),
+        client.party.findFirst({ where: { id: partyId, tenantId }, select: { defaultCategoryId: true } }),
+      ]);
+      return pickAutoCategory(stats ?? [], party?.defaultCategoryId ?? null);
+    } catch (err) {
+      this.logger.warn(`[resolveAutoCategory] failed for party=${partyId}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  private async categoryNameById(tenantId: string, id: string): Promise<string | null> {
+    const client = this.prisma as unknown as { category?: { findFirst: (args: unknown) => Promise<{ name: string } | null> } };
+    if (typeof client.category?.findFirst !== "function") return null;
+    try {
+      const row = await client.category.findFirst({ where: { id, tenantId }, select: { name: true } });
+      return row?.name ?? null;
+    } catch {
       return null;
     }
   }

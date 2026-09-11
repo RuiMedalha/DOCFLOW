@@ -18,6 +18,8 @@ import { IbanTab } from './_components/iban-tab';
 import { TimelineTab } from './_components/timeline-tab';
 
 import { PartyEnrichmentBadge } from './_components/party-enrichment-badge';
+import { ViesPanel } from './_components/vies-panel';
+import { ProductsTab } from './_components/products-tab';
 /**
  * PartyDetailPage — Sprint G 360° file. 6 tabs:
  *   - Identity   (default) — the existing PartyForm (kept as-is)
@@ -130,7 +132,15 @@ export default function PartyDetailPage() {
           </div>
           {/* The PartyIbanPanel previously lived here on the Identity tab.
               Sprint G moves it into the IBAN tab to avoid duplication. */}
+          <div className="space-y-5">
+            {/* Fase 4 — VIES / regime de IVA */}
+            <ViesPanel partyId={params.id} />
+          </div>
         </div>
+      )}
+
+      {activeTab === 'products' && (
+        <ProductsTab partyId={params.id} />
       )}
 
       {activeTab === 'contacts' && (

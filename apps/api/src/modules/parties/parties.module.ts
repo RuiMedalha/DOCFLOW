@@ -11,6 +11,8 @@ import { PartyTimelineController } from './timeline/party-timeline.controller';
 import { PartyTimelineService } from './timeline/party-timeline.service';
 import { PartyPaymentsController } from './payments/party-payments.controller';
 import { PartyPaymentsService } from './payments/party-payments.service';
+import { PartyImportService } from './party-import.service';
+import { PartyProductsService } from './party-products.service';
 
 /**
  * PartiesModule — supplier/customer master + PT chart of accounts + IBAN
@@ -55,6 +57,8 @@ import { PartyPaymentsService } from './payments/party-payments.service';
     PartyAddressesService,
     PartyTimelineService,
     PartyPaymentsService,
+    PartyImportService,
+    PartyProductsService,
   ],
   exports: [
     PartiesService,

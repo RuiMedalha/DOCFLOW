@@ -1,63 +1,108 @@
-# Benchmark de leitura — Fase 2 (2026-09-11)
+# Benchmark de leitura — DocFlow
 
-Todos os documentos de `C:\Projetos\docflow-mvp\samples` (19 ficheiros, ver `docs/SAMPLES_INVENTORY.md`) foram carregados/re-extraídos **em produção** (commit `1d97ba6`, provider de vision: **OpenRouter** com `google/gemini-2.5-flash` — o Gemini é acedido via OpenRouter, não há chave direta da Google) e comparados com a verdade de terreno lida visualmente a partir das páginas rasterizadas (NIF do emitente, total, data de emissão, nº do documento).
+Corrido **em produção**, contra os documentos reais do cliente, não contra
+fixtures. O script vive fora do repositório (é descartável); o que interessa
+é o resultado e o que ele revelou.
 
-Método: `POST /documents/upload` (409 → `POST /extraction/documents/:id` síncrono para re-extrair o documento já existente) → `GET /documents/:id` → comparação campo a campo. Script no scratchpad da sessão (`benchmark-prod.mjs`), não commitado por conter credenciais de demo.
+- Modelo de visão: **Gemini 2.5 Flash via OpenRouter** (`OPENROUTER_API_KEY`,
+  `VISION_PROVIDER_ORDER=openrouter,gemini,minimax,openai,anthropic`).
+  Não há chave direta da Google neste deployment — o repositório de
+  referência `gemini-documental` chama `generativelanguage.googleapis.com`
+  diretamente, por isso não existe comparação 1:1. Uma comparação
+  equivalente é possível com `OPENROUTER_MODEL=google/gemini-2.0-flash-001`.
+- Descodificação do QR-AT: ZXing + jsQR em worker thread, com rasterização
+  de PDF a escala 3.
 
-## Resultado
+---
+
+## Fase 4.1 — 2026-09-11 (37 documentos)
+
+Amostra: as 19 amostras reais do cliente, mais as faturas estrangeiras que
+falharam no teste do Rui, mais fixtures sintéticos para casos que as
+amostras não cobriam (nota de crédito, desconto global, foto deitada sem
+EXIF, fatura em GBP).
+
+### Resultado global
 
 | Métrica | Valor |
-|---------|-------|
-| Documentos | 19 |
-| **NIF + total + data corretos sem edição manual** | **19/19 (100 %)** — objetivo ≥ 90 % ✅ |
-| QR-AT descodificado deterministicamente (ZXing/jsQR) | 11 (6 scans via rasterização + 5 PDFs nativos) |
-| QR lido pela IA e aceite após cross-check | 5 (BP, Bonezinho ×2 → rejeitado→campos IA; fotos IKEA ×2 aceites) |
-| Sem QR (faturas espanholas) | 3 — só IA, NIF-IVA `ES…` correto nas 3 |
+|---|---|
+| Documentos | 37 |
+| `FISCAL` (QR-AT válido ou NIF-IVA validado no VIES) | 18 |
+| `NAO_FISCAL` (orçamento, proforma, encomenda, aviso, extrato) | 6 |
+| `INDETERMINADO` (vão para revisão) | 13 |
+| Com NIF gravado (todos validados por módulo 11 ou VIES) | 31 |
+| Com ATCUD | 21 |
+| QR-AT descodificado deterministicamente | 17 |
+| ATCUD presente nos documentos PT fiscais | **13/13** |
+| Totais que fecham ao cêntimo | 27 |
+| Totais que não fecham (vão para revisão com o motivo) | 10 |
 
-## Tabela por ficheiro
+### O que o benchmark revelou
 
-| Ficheiro | Tipo | QR no doc | Fonte | NIF | Total | Data | Nº doc | Tempo |
-|----------|------|-----------|-------|-----|-------|------|--------|-------|
-| `BP 30,00 €.pdf` | scan | sim | `ai` | 508729084 ✅ | 30 ✅ | 2026-07-31 ✅ | FS 274271005/028318 | 45 s |
-| `FR 1 8482 BONEZINHO.pdf` | scan | sim | `ai` | 507097823 ✅ | 175.15 ✅ | 2026-07-04 ✅ | FR 1/8482 | 36 s |
-| `FR 101 00049652 Almoço.pdf` | scan | sim | `at_qr+ai` | 228212375 ✅ | 21.65 ✅ | 2026-07-01 ✅ | JFHGPF47-00049652 | 7 s |
-| `FR FV 010C.FV 448 Alcides.pdf` | scan | sim | `at_qr+ai` | 513726136 ✅ | 34 ✅ | 2026-07-17 ✅ | FV0102C.FV/448 | 7 s |
-| `FT 1 74609 Refeição.pdf` | scan | sim | `at_qr+ai` | 502550694 ✅ | 32.4 ✅ | 2026-05-29 ✅ | 3.73 | 7 s |
-| `FT 1 8376 Refeição.pdf` | scan | sim | `ai` | 507097823 ✅ | 38.1 ✅ | 2026-06-30 ✅ | FR 1/8376 | 33 s |
-| `FT 2026 1396 AZUR NET 190,65€.pdf` | scan | sim | `at_qr+ai` | 502293780 ✅ | 190.65 ✅ | 2026-06-30 ✅ | FT2026/1396 | 7 s |
-| `FT 2026A92 6384 Miranda e Serra 2.030,68€.pdf` | native | sim | `at_qr+ai` | 500842019 ✅ | 2030.68 ✅ | 2026-05-21 ✅ | J66V9C9T-6384 | 7 s |
-| `FT 2026A92 6781 Miranda e Serra 1.245,13€.pdf` | native | sim | `at_qr+ai` | 500842019 ✅ | 1245.13 ✅ | 2026-05-29 ✅ | J66V9C9T-6781 | 70 s |
-| `FT 2026A94 149 Miranda e serra 2 223.82€  13 mar.pdf` | scan | sim | `at_qr+ai` | 500842019 ✅ | 2223.82 ✅ | 2026-02-13 ✅ | FT2026A94/149 | 21 s |
-| `FT 4 83 5638 PAGO 1.129,88€.pdf` | native | sim | `at_qr+ai` | 504213636 ✅ | 1129.88 ✅ | 2026-02-24 ✅ | JFV9G2J4-5638 | 7 s |
-| `FT 76  1944 LIZOTEL 418,10 €.pdf` | scan | sim | `at_qr+ai` | 506144860 ✅ | 418.1 ✅ | 2026-08-28 ✅ | FT2026A76/1944 | 10 s |
-| `FT FAT2026 396 QUI-LIBRA 279,21€.pdf` | native | sim | `at_qr+ai` | 502827130 ✅ | 279.21 ✅ | 2026-05-13 ✅ | FAT2026/396 | 6 s |
-| `FT FE 0220100158006AA0E03822026000001180.pdf` | scan | não | `ai` | ESA28559573 ✅ | 123.78 ✅ | 2026-08-07 ✅ | FE 022010015806AA0E03822 | 29 s |
-| `FT VFV26000793 296,61€.pdf` | native | não | `ai` | 924981555 ✅ | 296.61 ✅ | 2026-02-04 ✅ | VFV26000793 | 64 s |
-| `FT VFV26001324 PAGO 323,82€.pdf` | native | não | `ai` | ESB06700785 ✅ | 323.82 ✅ | 2026-05-30 ✅ | VFV26001324 | 64 s |
-| `FT_AAA26_05582.pdf` | native | sim | `at_qr+ai` | 517412993 ✅ | 92.76 ✅ | 2026-08-10 ✅ | 92.76 | 17 s |
-| `WhatsApp Image 2026-09-11 at 01.25.47 (1).jpeg` | photo | sim | `at_qr+ai` | 505416654 ✅ | 260 ✅ | 2025-11-16 ✅ | JJY2HD80-0000428 | 114 s |
-| `WhatsApp Image 2026-09-11 at 01.25.47.jpeg` | photo | sim | `at_qr+ai` | 505416654 ✅ | 260 ✅ | 2025-11-16 ✅ | 0010322025/0000428 | 41 s |
+Correr isto contra documentos reais — em vez de confiar nos testes — apanhou
+quatro defeitos que os testes unitários não podiam apanhar:
 
-`at_qr+ai` = QR-AT determinístico (ou lido pela IA e validado) + IA para fornecedor/linhas; `ai` = só vision. Tempos incluem a chamada ao provider (30–70 s quando há escalada para `gemini-2.5-pro`; ~2 min nas fotos).
+1. **Cinco documentos tinham o TOTAL gravado na coluna do ATCUD**
+   (`1012.30`, `155.00`, `32.40`, `1.94`, `918.60`). Corrigir a escrita não
+   chegava: a extração é aditiva e nunca limpava o que já lá estava.
+2. **O VIES era consultado com o número errado.** O código colava o país a
+   um NIF-IVA que já o trazia (`ES` + `ESB09802059` = `ESESB09802059`), e
+   por isso TODOS os fornecedores estrangeiros apareciam como inválidos.
+   Depois da correção: TEFCOLD, SAMMIC, Arilex e GALP validam.
+3. **O derivado PDF nunca era reconstruído.** Medir os bytes (em vez de
+   confiar na existência do `pdfKey`) mostrou PDFs do tamanho do original.
+   A dependência era injetada a partir de um `import type`, que apaga a
+   classe em tempo de execução. Era esta a razão de as fotos continuarem
+   deitadas e com 3 MB.
+4. **A regra dos totais acusava 20 em 37 documentos.** Assumia que o
+   fornecedor imprime o total da linha líquido e que o desconto global
+   ainda não está aplicado. Nenhuma das duas coisas é universal —
+   corrigida, passou de 17 para **27 documentos a fechar** e os 10 que
+   restam são diferenças reais (a SAMMIC tem mesmo 0,81 € por explicar)
+   ou faturas em que o modelo truncou linhas.
 
-## O que mudou na Fase 2 e o efeito medido
+### Documentos estrangeiros (os que falharam no teste do Rui)
 
-| Alteração | Antes | Depois |
-|-----------|-------|--------|
-| QR em PDFs digitalizados: rasterizar pág. 1 (@2, @3) e última e correr ZXing/jsQR antes da vision | QR só do texto do PDF → 0 scans com QR determinístico | 8/10 scans + 1 PDF nativo com QR vetorial (Miranda 6384, só @3) |
-| `atQrRaw` da IA só é promovido a QR se NIF/total/data baterem com os campos estruturados da própria IA | BP: data vazia; Bonezinho 8376: total **5,20** (real 38,10) — payloads "QR" alucinados usados como autoridade fiscal | 19/19 |
-| `qrPayload` vindo da IA só persiste se passou o cross-check | payload mau ficava na linha e curto-circuitava re-extrações | corrigido (+ 3 linhas limpas em prod) |
-| Cascade ZXing em worker thread | bloqueava o event loop 5–40 s → healthcheck falhava → Traefik "no available server" durante o benchmark | API responde durante a descodificação |
-| IBAN da IA só com MOD-97 | IBAN mal transcrito era gravado | rejeitado com warning (`ai_iban_rejected_mod97`, visto na Miranda 6384) |
-| HEIC/HEIF → JPEG no upload/email/scanner | 400 "Unsupported file type" | aceite; HEIC inválido → 400 "HEIC/HEIF image could not be decoded" (verificado em prod) |
-| Ordem de providers configurável, Gemini principal, gateway {URL,TOKEN,MODEL}, 2.ª opinião < 0,7 | MiniMax > OpenRouter > Gemini hardcoded | `VISION_PROVIDER_ORDER` (default gemini,openrouter,minimax,openai,anthropic); em prod só OpenRouter está ativo |
+| Documento | Antes | Agora |
+|---|---|---|
+| `VOV26009084` TEFCOLD ES (oferta de venta) | `FISCAL`, NIF `500000001` e ATCUD `ABC1234-56789` inventados, 90 % de confiança | `ORCAMENTO` / `NAO_FISCAL` (`keyword:orcamento`), sem ATCUD, confiança limitada a 0,5 |
+| `VTA30456237` SAMMIC (ES) | entidade separada, NIF-IVA por validar | `FISCAL`, `ESB20869152` validado no VIES, regime autoliquidação |
+| `VFV26001324` Arilex (ES) | NIF-IVA por validar | `FISCAL`, `ESB06700785` validado no VIES |
+| `FE-0220100158006…` GALP España | NIF-IVA por validar | `FISCAL`, `ESA28559573` validado no VIES |
+| `2-FA238674` SAS Casselin (FR) | NIF-IVA por validar | VIES não confirma `FR04540090727` → NIF **não** é gravado, documento vai para revisão |
+| `INV-2026-00417` Catering Supplies (GB) | NIF-IVA por validar | Extra-UE: nunca é NIF confirmado, fica como texto não validado |
 
-## Comparação com `gemini-documental`
+O caso da Casselin é o comportamento pretendido, não uma falha: o VIES não
+confirma aquele número, por isso **não** é gravado como identificador. Ou o
+modelo leu um dígito mal, ou o fornecedor não está registado para operações
+intracomunitárias — em qualquer dos casos, a decisão é de um humano.
 
-**Não foi corrido tal e qual.** O `gemini-documental` (`C:\Users\Rui Medalha\gemini-documental\apps\api\src\app.service.ts`) é uma única chamada à API **direta** da Google (`generativelanguage.googleapis.com`, `gemini-2.0-flash`, JSON, temperatura 0,1) com um prompt de auditor e sem QR, sem rasterização e sem validação determinística. No DocFlow o Gemini é acedido via OpenRouter (decisão do Rui, 2026-09-11) e não existe chave direta da Google — por isso não há comparação 1:1. O que se portou dele: nada de código — o prompt não traz campos que o DocFlow não extraia já (o DocFlow tem ainda ATCUD, IVA por taxa, IBAN validado e categoria). Comparação equivalente possível sem tocar no código: `OPENROUTER_MODEL=google/gemini-2.0-flash-001` e repetir o benchmark.
+### Fotos (P1.4)
 
-## Limitações conhecidas
+| Foto | Original | PDF de arquivo | Rotação detetada |
+|---|---|---|---|
+| CREATEINFOR FT-FA-2026-4791 | 2753 KB | **481 KB** | 90° (texto na vertical) |
+| CREATEINFOR FT-FA-2026-2285 | 2823 KB | **353 KB** | 90° (texto na vertical) |
+| CREATEINFOR FT-FA-2026-4791 (2.ª) | 2760 KB | **490 KB** | 90° (texto na vertical) |
+| TEFCOLD VOV26009084 | 3287 KB | **427 KB** | 0° (já direita) |
+| IKEA (foto deitada sem EXIF) | 475 KB | **396 KB** | 0° após correção EXIF |
 
-- Talões térmicos digitalizados (BP, Bonezinho ×2) e as fotos IKEA: o QR impresso não é descodificável por ZXing/jsQR a nenhuma escala nem por mosaicos (testado localmente); nesses casos a leitura fica a cargo da IA, com cross-check. A verdade de terreno do NIF do Bonezinho foi inicialmente lida como 507397823; a ampliação a escala 4 confirma **507097823** (a IA e o Tesseract estavam certos).
-- As fotos demoram ~2 min (cascade a várias escalas/rotações + vision); o worker evita bloquear a API, mas o tempo mantém-se. Candidato a otimização: detetar a região do QR antes do cascade.
-- `Miranda 6781` levou 70 s por escalada para `gemini-2.5-pro` (o flash devolveu um `O:` corrompido); é o mecanismo de escalada existente a funcionar.
+Todas abaixo dos 500 KB pedidos, com o QR-AT ainda legível depois da
+compressão (verificado descodificando-o outra vez sobre os bytes
+comprimidos). As fotos da CREATEINFOR estavam **mesmo** deitadas — e não
+traziam etiqueta EXIF, que era exactamente o caso que a rotação anterior
+não apanhava.
+
+---
+
+## Fase 2 — 2026-09-11 (histórico)
+
+O primeiro benchmark, que estabeleceu a linha de base da leitura. Duas
+conclusões que continuam válidas:
+
+- Um QR "lido" pelo modelo nunca é prova: o modelo troca caracteres
+  (`JJY2HD8C` vs `JJY2HD80` em duas fotos do mesmo talão do IKEA). Só um
+  QR descodificado por ZXing/jsQR vale como certificação.
+- A cascata de descodificação bloqueava o event loop 5–40 s por imagem, o
+  que fazia o healthcheck do Docker falhar a meio do benchmark. Passou a
+  correr em worker thread.

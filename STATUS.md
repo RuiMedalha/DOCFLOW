@@ -13,11 +13,11 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `095f953` (Fase 4). Migration `20260911060000_fase4_party_fiscal_profile` aplicada pelo entrypoint; backup `/root/backups/docflow/docflow-20260911-0521-pre-fase4.sql.gz` |
+| Commit em produção | `4b20835` (Fase 4.1). Migrations `20260911120000_fase41_natureza_nc_descontos` e `20260911150000_fase41_fix_double_vat_prefix` aplicadas pelo entrypoint; backups `/root/backups/docflow/docflow-20260911-1400-pre-fase41.sql.gz` e `…-1600-pre-fase41b.sql.gz` |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
-| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (25 migrations, última `20260911060000_fase4_party_fiscal_profile`) |
+| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (27 migrations, última `20260911150000_fase41_fix_double_vat_prefix`) |
 | Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (legado, 3 ficheiros já migrados), `docflow-minio` |
 | DB de produção | 1 tenant (`demo` = NOV OUSADO UNIPESSOAL LDA), 1 user (`admin@demo.pt` ADMIN), 3 documentos (todos `EM_REVISAO`), 3 parties |
 | Storage | driver **s3** → MinIO interno `http://minio:9000`, bucket `docflow`, utilizador de serviço com policy só para o bucket; presigned URLs via `https://files-docflow.167.86.111.8.sslip.io` (só API S3; console desligada) |
@@ -31,7 +31,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1220 verdes / 1220** (113 suites) |
+| `apps/api` `pnpm test` | **1332 verdes / 1332** (120 suites). No Windows correr com `--maxWorkers=2`: com paralelismo total há suites que falham por contenção de recursos, não por bug |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
 | Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
@@ -159,7 +159,93 @@ Verificado em produção: backup `pg_dump` antes do deploy; migration aplicada; 
 Testes: 1220 verdes / 1220 (api, inclui a correção de persistência de linhas). Build api ✅, web typecheck ✅.
 Falhou / adiado: nada de âmbito; a fatura em GBP é sintética (não há fatura real em moeda ≠ EUR nas amostras); a comparação com `gemini-documental` fica opcional via `OPENROUTER_MODEL=google/gemini-2.0-flash-001`.
 Bloqueios (preciso do Rui): nenhum (HEIC real continua opcional).
-Próximo: **parado a pedido do Rui** — Fase 5 (conciliação bancária CSV) só arranca com OK explícito. Antes disso o Rui quer confirmar quais os bancos usados (templates CSV).
+Próximo: Fase 4.1 — correções a partir do teste real do Rui.
+
+## Fase 4.1 — correções do teste real — 2026-09-11
+
+**P0.1 — campos inventados em documentos estrangeiros.** `field-validation.ts`
+(puro, testado): o ATCUD só existe em Portugal e só com o formato oficial da AT
+(código de validação com 8+ caracteres — o `ABC1234-56789` inventado tem 7); o
+NIF só é gravado depois de passar módulo 11 (PT) ou VIES (UE), e um número
+extra-UE nunca é confirmado; a confiança de um campo que não foi cruzado com
+nada fica limitada a 0,5. Palavras-chave em falta acrescentadas ("oferta de
+venta", quote/quotation, nota de encomenda, purchase order).
+*Causa raiz do falso FISCAL:* nas fotos o OCR devolve vazio (`textSource: none`)
+e a regra de palavras-chave corria às cegas. O modelo passa a transcrever o
+cabeçalho à letra em `documentTitle` — dá texto à regra sem lhe dar a decisão,
+que continua a ser tomada em código.
+
+**P0.2 — listagem.** A API sempre devolveu tudo; era o web que declarava um
+contrato inexistente (`nif`, `documentDate`, `iva`, enums em minúsculas).
+Contrato realinhado, coluna ATCUD nova, badge de duplicado com link para o
+original, filtros por estado e por validade fiscal.
+
+**P0.3 — fornecedor único.** Consequência directa do P0.1: NIF inválido → não
+gravado → procura por NIF não encontra → cria outra entidade (três
+`CreateInfor` em produção). `party-identity.ts` acrescenta o nome normalizado
+(sem acentos, sem formas jurídicas) + país como chave secundária;
+`POST /parties/:id/merge` (ADMIN) funde entidades com registo na auditoria e
+`GET /parties/duplicates` sugere os grupos.
+
+**P1.1 — natureza.** Novo eixo `CategoryNature` (mercadorias para revenda,
+matérias-primas, serviços externos, despesa operacional, imobilizado). O seed
+passou a ser incremental — os tenants antigos nunca viam "Mercadorias para
+revenda", que é a categoria que falta a uma revendedora. O detalhe do documento
+passa a deixar escolher e guardar, e a dedutibilidade do IVA segue natureza +
+categoria (art. 21.º CIVA).
+
+**P1.2 — notas de crédito.** Tipo reconhecido, valores com sinal negativo em
+`signed*` (o valor impresso fica intacto em `total`) e ligação à fatura que
+retifica por nº normalizado + NIF.
+
+**P1.3 — descontos.** `reconcileTotals()` verifica que os totais fecham ao
+cêntimo; quando não fecham o documento vai para revisão com a diferença
+explícita.
+
+**P1.4 — fotos.** A rotação por EXIF já existia; faltavam as fotos SEM etiqueta
+EXIF, que eram as que apareciam deitadas. `detectOrientation()` decide pelos
+pixels e comprime para ≤ 500 KB, confirmando que o QR continua legível.
+
+**P2.1** ATCUD: campo H do QR > "ATCUD:" do texto > o que a IA disse.
+**P2.2** operador corrige tipo e validade fiscal (fica na auditoria, a
+re-extração não reverte) e pode desfazer com `resetClassificationOverride`.
+**P2.3** SABI desligada — o enriquecimento usa VIES + dados do documento +
+edição manual.
+
+Verificado em produção: backup `pg_dump` antes de cada migration; smoke
+**30/30** contra os documentos reais que falharam no teste. `VOV26009084` →
+`ORCAMENTO / NAO_FISCAL`, sem ATCUD, sem NIF inventado. Nenhum documento não-PT
+tem ATCUD, nenhum NIF gravado sem módulo 11 ou VIES, 13/13 dos PT fiscais têm
+ATCUD. Benchmark completo em `docs/READING_BENCHMARK.md`.
+
+Testes: 1332 verdes / 1332 (120 suites). Build api ✅, typecheck web ✅.
+
+**Quatro defeitos que só apareceram por verificar em produção** (e que os
+testes davam por bons):
+1. Corrigir a escrita não chegava — cinco documentos tinham o **total gravado
+   na coluna do ATCUD**. A extração é aditiva e nunca limpava o que já lá
+   estava.
+2. **O VIES era consultado com o número errado** (`ES` + `ESB09802059` =
+   `ESESB09802059`), por isso TODOS os fornecedores estrangeiros apareciam
+   como inválidos. Vinha da Fase 4 e passou despercebido porque a única
+   entidade testada então escapava ao ramo com bug.
+3. **O derivado PDF nunca era reconstruído**: a dependência era injetada a
+   partir de um `import type`, que apaga a classe em tempo de execução, e o
+   `@Optional()` transformava isso num `undefined` silencioso. Era esta a razão
+   de fundo das fotos deitadas de 3 MB.
+4. **A minha regra de totais acusava 20 em 37 faturas** por assumir uma
+   convenção de impressão que não é universal. Corrigida: 27 fecham.
+
+Falhou / adiado: 10 documentos ainda não fecham os totais — são diferenças
+reais (a SAMMIC tem 0,81 € por explicar) ou faturas em que o modelo truncou
+linhas; ficam em revisão, que é o comportamento pretendido. O NIF-IVA francês
+da SAS Casselin não é confirmado pelo VIES, por isso não é gravado.
+
+Bloqueios (preciso do Rui): nenhum.
+
+Próximo: **parado a pedido do Rui** — Fase 5 (conciliação bancária CSV) só
+arranca com OK explícito, e preciso de saber quais os bancos usados (templates
+CSV) e de um extrato real de um mês.
 
 ---
 
@@ -210,6 +296,22 @@ Próximo: **parado a pedido do Rui** — Fase 5 (conciliação bancária CSV) s�
 curl -s -X POST "https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/parties/import" -H "Authorization: Bearer <token>" -F "file=@fornecedores.csv" -F "dryRun=true"
 ```
 Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Postal, Cidade, País, IBAN, Prazo Pagamento, Moeda. Sem `dryRun=true` grava (cria ou atualiza por NIF/NIF-IVA/nome). Token: `POST /auth/login` com `{"email","password","tenantSlug":"demo"}` → `data.tokens.accessToken`.
+
+**Fluxo 4 — o que a Fase 4.1 corrigiu (vale a pena confirmar)**
+1. Documentos → a lista mostra agora **NIF, Data, ATCUD e Estado**, e os
+   duplicados aparecem com o badge *Duplicado* que abre o original. Há dois
+   filtros novos: por estado e por validade fiscal.
+2. Abrir o `VOV26009084` (TEFCOLD) → deve estar **Orçamento / Não fiscal**, sem
+   ATCUD e sem NIF inventado. O motivo aparece no painel: `keyword:orcamento`.
+3. No detalhe de qualquer documento há agora o painel **Classificação**:
+   escolher "Mercadorias para revenda" e guardar → a dedutibilidade do IVA
+   passa a 100 %. Escolher "Refeições" → 50 %.
+4. No mesmo painel dá para corrigir à mão o **tipo** e a **validade fiscal**.
+   A correção fica registada e uma re-extração não a desfaz.
+5. Fornecedores → `GET /parties/duplicates` (ADMIN) lista entidades que são o
+   mesmo fornecedor; `POST /parties/:id/merge` com `{"sourceId":"…"}` funde-as.
+6. Carregar uma foto tirada de lado → o PDF de arquivo sai direito e abaixo de
+   500 KB, com o QR ainda legível.
 
 **O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos.
 

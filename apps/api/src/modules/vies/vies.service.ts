@@ -41,6 +41,41 @@ export function splitVat(raw: string): { countryCode: string; vatNumber: string 
   return { countryCode: cc, vatNumber: m[2] };
 }
 
+/**
+ * Fase 4.1 — o NIF-IVA a consultar no VIES para uma entidade.
+ *
+ * Bug real apanhado no smoke: para fornecedores estrangeiros o prefixo
+ * do país já está dentro de `nif` (`ESB09802059`), e colar-lhe o país à
+ * frente produzia `ESESB09802059`. O `splitVat` partia isso em
+ * cc=`ES` + número=`ESB09802059`, o VIES respondia "não existe", e
+ * TODOS os fornecedores estrangeiros apareciam como inválidos — mais: o
+ * valor corrompido ficava gravado em `vatNumber`. A Clima Hostelería
+ * escapou por já ter `vatNumber` preenchido e não passar por aqui.
+ */
+export function resolvePartyVat(party: {
+  vatNumber?: string | null;
+  nif?: string | null;
+  country?: string | null;
+}): string | null {
+  const clean = (v: string) => v.replace(/[\s.\-/]/g, '').toUpperCase();
+  if (party.vatNumber) return clean(party.vatNumber);
+  const nif = party.nif ? clean(party.nif) : '';
+  if (!nif) return null;
+  // Já traz prefixo de país comunitário → usa-se tal como está.
+  const prefix = nif.slice(0, 2);
+  if (/^[A-Z]{2}$/.test(prefix) && EU_VAT_COUNTRIES.has(prefix === 'GR' ? 'EL' : prefix)) {
+    return nif;
+  }
+  // Só prefixamos com países que o VIES conhece — um "US"+número nunca
+  // seria consultável e só serviria para gravar lixo em `vatNumber`.
+  const country = party.country?.trim().toUpperCase();
+  if (country && country !== 'PT' && EU_VAT_COUNTRIES.has(country === 'GR' ? 'EL' : country)) {
+    return `${country}${nif}`;
+  }
+  if (/^\d{9}$/.test(nif)) return `PT${nif}`;
+  return null;
+}
+
 @Injectable()
 export class ViesService {
   private readonly logger = new Logger(ViesService.name);
@@ -92,13 +127,7 @@ export class ViesService {
       select: { id: true, vatNumber: true, nif: true, country: true },
     });
     if (!party) return null;
-    const vat =
-      party.vatNumber ??
-      (party.country && party.nif && party.country.toUpperCase() !== 'PT'
-        ? `${party.country.toUpperCase()}${party.nif}`
-        : party.nif && /^\d{9}$/.test(party.nif)
-          ? `PT${party.nif}`
-          : null);
+    const vat = resolvePartyVat(party);
     if (!vat) return { partyId, result: null, reason: 'no_vat_number' };
     const result = await this.check(vat, { force, tenantId });
     if (!result) return { partyId, result: null, reason: 'invalid_vat_syntax' };

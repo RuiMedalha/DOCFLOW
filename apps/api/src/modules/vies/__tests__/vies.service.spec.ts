@@ -1,4 +1,4 @@
-import { ViesService, splitVat, VIES_CACHE_TTL_MS } from "../vies.service";
+import { ViesService, splitVat, resolvePartyVat, VIES_CACHE_TTL_MS } from "../vies.service";
 
 /**
  * Fase 4 — VIES service: request shape, response mapping, 30-day cache,
@@ -107,5 +107,38 @@ describe("ViesService (Fase 4)", () => {
     expect(prisma.party.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ vatRegime: "PT", vatNumber: "PT500842019" }) }),
     );
+  });
+});
+
+/**
+ * Fase 4.1 — bug real apanhado no smoke de produção: TODOS os
+ * fornecedores estrangeiros apareciam como inválidos no VIES porque o
+ * país era colado a um NIF-IVA que já o trazia (`ES` + `ESB09802059` =
+ * `ESESB09802059`), e o valor corrompido ainda ficava gravado em
+ * `vatNumber`.
+ */
+describe('resolvePartyVat() — Fase 4.1', () => {
+  it('não duplica o prefixo de país num NIF-IVA que já o traz', () => {
+    expect(resolvePartyVat({ nif: 'ESB09802059', country: 'ES' })).toBe('ESB09802059');
+    expect(resolvePartyVat({ nif: 'FR04540090727', country: 'FR' })).toBe('FR04540090727');
+    expect(resolvePartyVat({ nif: 'ESB20869152', country: 'PT' })).toBe('ESB20869152');
+  });
+
+  it('acrescenta o prefixo quando o NIF não o tem', () => {
+    expect(resolvePartyVat({ nif: 'B09802059', country: 'ES' })).toBe('ESB09802059');
+  });
+
+  it('trata o NIF português de 9 dígitos', () => {
+    expect(resolvePartyVat({ nif: '500842019', country: 'PT' })).toBe('PT500842019');
+    expect(resolvePartyVat({ nif: '500842019' })).toBe('PT500842019');
+  });
+
+  it('prefere o vatNumber quando existe, normalizando-o', () => {
+    expect(resolvePartyVat({ vatNumber: 'es-b098 020 59', nif: '999' })).toBe('ESB09802059');
+  });
+
+  it('devolve null quando não há por onde pegar', () => {
+    expect(resolvePartyVat({})).toBeNull();
+    expect(resolvePartyVat({ nif: 'ABC', country: 'US' })).toBeNull();
   });
 });

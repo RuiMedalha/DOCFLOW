@@ -34,7 +34,7 @@ describe("VisionService — provider routing", () => {
     expect(result).toBeNull();
   });
 
-  it("detects OPENROUTER_API_KEY as a fallback (only used when Gemini is unavailable — Fase 2 order)", () => {
+  it("detects OPENROUTER_API_KEY as the PRIMARY vision provider (Gemini via OpenRouter)", () => {
     const svc = new VisionService(
       makeConfig({ OPENROUTER_API_KEY: "sk-or" }),
     );
@@ -52,7 +52,7 @@ describe("VisionService — provider routing", () => {
     expect(svc.hasMinimax).toBe(true);
   });
 
-  it("detects GEMINI_API_KEY as the PRIMARY vision provider (Fase 2, prompt mestre 2026-09-11)", () => {
+  it("detects GEMINI_API_KEY (direct Google gateway) as an optional provider", () => {
     const svc = new VisionService(
       makeConfig({ GEMINI_API_KEY: "gem-key" }),
     );
@@ -60,18 +60,18 @@ describe("VisionService — provider routing", () => {
     expect(svc.resolveProvider()).toBe("gemini");
   });
 
-  it("prefers OpenRouter over MiniMax in auto routing (Fase 2 order: gemini > openrouter > minimax)", () => {
+  it("prefers OpenRouter over MiniMax in auto routing (order: openrouter > gemini > minimax)", () => {
     const svc = new VisionService(
       makeConfig({ MINIMAX_API_KEY: "sk-cp", OPENROUTER_API_KEY: "sk-or" }),
     );
     expect(svc.resolveProvider()).toBe("openrouter");
   });
 
-  it("prefers Gemini over OpenRouter when both keys exist (Gemini principal, OpenRouter só se a chave existir)", () => {
+  it("prefers OpenRouter over a direct Gemini key when both exist (Gemini é acedido via OpenRouter)", () => {
     const svc = new VisionService(
       makeConfig({ GEMINI_API_KEY: "gem", OPENROUTER_API_KEY: "sk-or", MINIMAX_API_KEY: "sk-cp" }),
     );
-    expect(svc.resolveProvider()).toBe("gemini");
+    expect(svc.resolveProvider()).toBe("openrouter");
   });
 
   it("honours VISION_PROVIDER_ORDER and appends unmentioned providers in default order", () => {
@@ -82,6 +82,8 @@ describe("VisionService — provider routing", () => {
     expect(VisionService.parseProviderOrder("minimax, bogus ,gemini")).toEqual([
       "minimax", "gemini", "openrouter", "openai", "anthropic",
     ]);
+    expect(VisionService.parseProviderOrder(undefined)[0]).toBe("openrouter");
+    expect(VisionService.parseProviderOrder(undefined)[0]).toBe("openrouter");
     expect(VisionService.parseProviderOrder(undefined)).toEqual(VisionService.DEFAULT_PROVIDER_ORDER);
   });
 
@@ -156,8 +158,8 @@ describe("VisionService — provider routing", () => {
     expect(svc.resolveProvider("gemini")).toBe("gemini");
     expect(svc.resolveProvider("openrouter")).toBe("openrouter");
     expect(svc.resolveProvider("minimax")).toBe("minimax");
-    // Auto → Gemini primary (Fase 2, prompt mestre 2026-09-11).
-    expect(svc.resolveProvider("auto")).toBe("gemini");
+    // Auto → OpenRouter primary (Gemini via OpenRouter).
+    expect(svc.resolveProvider("auto")).toBe("openrouter");
   });
 
   it("returns null when preferredProvider has no matching key", () => {

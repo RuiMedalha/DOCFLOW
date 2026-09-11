@@ -1,6 +1,6 @@
 # Benchmark de leitura — Fase 2 (2026-09-11)
 
-Todos os documentos de `C:\Projetos\docflow-mvp\samples` (19 ficheiros, ver `docs/SAMPLES_INVENTORY.md`) foram carregados/re-extraídos **em produção** (commit `1d97ba6`, provider ativo: OpenRouter `google/gemini-2.5-flash`; `GEMINI_API_KEY` ainda vazia no Coolify) e comparados com a verdade de terreno lida visualmente a partir das páginas rasterizadas (NIF do emitente, total, data de emissão, nº do documento).
+Todos os documentos de `C:\Projetos\docflow-mvp\samples` (19 ficheiros, ver `docs/SAMPLES_INVENTORY.md`) foram carregados/re-extraídos **em produção** (commit `1d97ba6`, provider de vision: **OpenRouter** com `google/gemini-2.5-flash` — o Gemini é acedido via OpenRouter, não há chave direta da Google) e comparados com a verdade de terreno lida visualmente a partir das páginas rasterizadas (NIF do emitente, total, data de emissão, nº do documento).
 
 Método: `POST /documents/upload` (409 → `POST /extraction/documents/:id` síncrono para re-extrair o documento já existente) → `GET /documents/:id` → comparação campo a campo. Script no scratchpad da sessão (`benchmark-prod.mjs`), não commitado por conter credenciais de demo.
 
@@ -54,7 +54,7 @@ Método: `POST /documents/upload` (409 → `POST /extraction/documents/:id` sín
 
 ## Comparação com `gemini-documental`
 
-**Não foi possível correr.** O `gemini-documental` (`C:\Users\Rui Medalha\gemini-documental\apps\api\src\app.service.ts`) é uma única chamada a `gemini-2.0-flash` (`generateContent`, JSON, temperatura 0,1) com um prompt de auditor e sem QR, sem rasterização e sem validação determinística. Precisa de `GEMINI_API_KEY`, que não existe nem localmente nem no Coolify (bloqueio registado desde a Fase 0). O que se portou dele: nada de código — o prompt não traz campos que o DocFlow não extraia já (o DocFlow tem ainda ATCUD, IVA por taxa, IBAN validado e categoria). Quando a chave existir, o benchmark pode ser repetido com `VISION_PROVIDER_ORDER=gemini` e `GEMINI_MODEL=gemini-2.0-flash` para comparar diretamente sem tocar no código.
+**Não foi corrido tal e qual.** O `gemini-documental` (`C:\Users\Rui Medalha\gemini-documental\apps\api\src\app.service.ts`) é uma única chamada à API **direta** da Google (`generativelanguage.googleapis.com`, `gemini-2.0-flash`, JSON, temperatura 0,1) com um prompt de auditor e sem QR, sem rasterização e sem validação determinística. No DocFlow o Gemini é acedido via OpenRouter (decisão do Rui, 2026-09-11) e não existe chave direta da Google — por isso não há comparação 1:1. O que se portou dele: nada de código — o prompt não traz campos que o DocFlow não extraia já (o DocFlow tem ainda ATCUD, IVA por taxa, IBAN validado e categoria). Comparação equivalente possível sem tocar no código: `OPENROUTER_MODEL=google/gemini-2.0-flash-001` e repetir o benchmark.
 
 ## Limitações conhecidas
 

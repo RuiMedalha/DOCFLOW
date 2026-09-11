@@ -94,18 +94,13 @@ services:
       JWT_ACCESS_TTL: 15m
       CRON_SECRET: ${CRON_SECRET}
       # Vision / LLM providers — gateway {URL, TOKEN, MODEL}; empty = inactive
-      VISION_PROVIDER_ORDER: ${VISION_PROVIDER_ORDER:-gemini,openrouter,minimax,openai,anthropic}
+      # Gemini is reached via OpenRouter (OPENROUTER_API_KEY) — no direct Google key.
+      VISION_PROVIDER_ORDER: ${VISION_PROVIDER_ORDER:-openrouter,gemini,minimax,openai,anthropic}
       VISION_SECOND_OPINION_CONFIDENCE: ${VISION_SECOND_OPINION_CONFIDENCE:-0.7}
-      GEMINI_URL: ${GEMINI_URL:-https://generativelanguage.googleapis.com/v1beta}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_VISION_MODEL: ${GEMINI_VISION_MODEL}
       OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1/chat/completions}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_VISION_MODEL: ${OPENROUTER_VISION_MODEL:-google/gemini-2.5-flash}
       OPENROUTER_VISION_MODEL_ESCALATE: ${OPENROUTER_VISION_MODEL_ESCALATE:-google/gemini-2.5-pro}
-      MINIMAX_URL: ${MINIMAX_URL:-https://api.minimax.io/v1/chat/completions}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
-      MINIMAX_VISION_MODEL: ${MINIMAX_VISION_MODEL}
       # Object storage
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       UPLOADS_DIR: /repo/apps/api/uploads

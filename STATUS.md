@@ -42,7 +42,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 - Upload multipart (PDF/JPEG/PNG/**HEIC→JPEG**), hash SHA-256 com `@@unique([tenantId, fileHash])`, PDF derivado de fotos.
 - Pipeline assíncrono `RECEIVED → EXTRACTING → ENRICHING → ROUTING → COMPLETED` com SSE (`/documents/:id/processing/stream`).
 - QR-AT: decoder ZXing cascade + jsQR fallback (em worker thread) + parser determinístico; em PDFs sem QR no texto rasteriza pág. 1 (@2/@3) e última. QR lido pela IA só é aceite com cross-check (`isAiQrConsistent`). Benchmark: `docs/READING_BENCHMARK.md` (19/19).
-- Vision IA: gateway {URL, TOKEN, MODEL} por provider (Gemini, OpenRouter, MiniMax, OpenAI, Anthropic), ordem por `VISION_PROVIDER_ORDER` (default Gemini primeiro), 2.ª opinião quando confidence < `VISION_SECOND_OPINION_CONFIDENCE` (0,7). Em produção só OpenRouter tem token.
+- Vision IA: **OpenRouter é o provider de vision de todo o pipeline** (`OPENROUTER_API_KEY`, `google/gemini-2.5-flash`, escalada `google/gemini-2.5-pro`); gateway {URL, TOKEN, MODEL} por provider (OpenRouter, Gemini direto opcional, MiniMax, OpenAI, Anthropic), ordem por `VISION_PROVIDER_ORDER` (default OpenRouter primeiro), 2.ª opinião quando confidence < `VISION_SECOND_OPINION_CONFIDENCE` (0,7).
 - Fornecedores (`Party`) com resolução por NIF, enriquecimento, categorias por fornecedor (`party-categories`), regras de pastas.
 - Categorias de despesa (9 PT seedadas, `ivaDeductibilityPct`).
 - Validade fiscal determinística (`fiscalStatus` FISCAL/NAO_FISCAL/INDETERMINADO + `fiscalReason`, `extraction/fiscal-status.ts`), tipos PROFORMA/ORCAMENTO/AVISO_PAGAMENTO/EXTRATO_FORNECEDOR/FATURA_SIMPLIFICADA, duplicados por chave fiscal (NIF + nº normalizado | ATCUD) → `DUPLICADO` ligado ao original; índice único parcial `documents_fiscal_key_unique`. NAO_FISCAL e DUPLICADO fora do apuramento de IVA.
@@ -61,7 +61,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | # | Problema | Onde | Fase que resolve |
 |---|----------|------|------------------|
 | 1 | ~~3 testes falham~~ **Resolvido na Fase 1** (`14ebc3a`): verificação ECDSA passou a `crypto.verify` com `ieee-p1363` (o DER manual rejeitava ~75 % das assinaturas válidas); expectativas de folder-routing atualizadas | `apps/api` | ✅ |
-| 2 | `GEMINI_API_KEY` existe agora no Coolify mas **vazia** (criada na Fase 1, o compose já a passa ao `api`). Produção continua a usar OpenRouter com `google/gemini-2.5-flash` até o Rui preencher a chave | Coolify | Bloqueio → ver secção abaixo |
+| 2 | ~~`GEMINI_API_KEY` em falta~~ **Não era bloqueio** (correção do Rui, 2026-09-11): o Gemini é acedido **via OpenRouter** (`OPENROUTER_API_KEY`, 73 chars, presente no Coolify e no container; modelo `google/gemini-2.5-flash`, escalada `google/gemini-2.5-pro`). Não existe nem é preciso chave direta da Google. Variáveis vazias `GEMINI_*`/`MINIMAX_VISION_MODEL` criadas por mim foram removidas do Coolify; `VISION_PROVIDER_ORDER` = `openrouter,…` | Coolify | ✅ |
 | 3 | Produção corre a partir de `docker-compose.yml` (Postgres + Redis dentro do compose). A DB `docflow-db` (postgres:18) e o Redis do ambiente 5 do Coolify estão `exited:unhealthy` — restos não usados | Coolify | Fase 7 (limpeza, com confirmação do Rui) |
 | 4 | ~~audit high/critical~~ **Resolvido na Fase 1** (`c95e8ea`): api 0 high/critical (2 moderate restantes), web 0 high/critical (1 low) | ambos | ✅ |
 | 5 | Rate limiting desligado (`ThrottlerModule` comentado em `app.module.ts`) por causa de 429s | api | Fase 7 (reativar com limites sensatos + `SkipThrottle` nas rotas de listagem) |
@@ -103,9 +103,9 @@ Branches com 0 commits à frente podem ser apagadas com segurança — **aguarda
 
 ## Bloqueios (preciso do Rui)
 
-1. **`GEMINI_API_KEY` no Coolify.** O prompt diz que existe; não existia. Na Fase 1 criei a variável **vazia** na app `docflow-production` e o compose já a passa ao `api`. Para a Fase 2 (Gemini como provider principal) o Rui só tem de preencher o valor em Coolify → docflow-production → Environment Variables → `GEMINI_API_KEY` e fazer redeploy. Entretanto a extração funciona via OpenRouter (`google/gemini-2.5-flash`).
+1. ~~`GEMINI_API_KEY` no Coolify~~ **Resolvido por esclarecimento do Rui (2026-09-11):** o Gemini é usado através do OpenRouter (`OPENROUTER_API_KEY`), que existe e tem valor; não há nem é preciso chave direta da Google. Provider de vision em todo o pipeline = OpenRouter (`VISION_PROVIDER_ORDER=openrouter,…`).
 2. **Um HEIC real** (foto de iPhone) para o smoke de produção do caminho HEIC→JPEG — só testei a rejeição de um HEIC inválido (400 claro) e o conversor com stub. Enviar para `samples/`.
-3. Benchmark comparativo com `gemini-documental` depende da mesma `GEMINI_API_KEY`.
+3. Benchmark comparativo com `gemini-documental`: esse repo chama a API direta da Google (`generativelanguage.googleapis.com`), que não usamos. Comparação equivalente possível via OpenRouter com `OPENROUTER_MODEL=google/gemini-2.0-flash-001` — fica como opcional.
 
 ---
 
@@ -125,7 +125,7 @@ Feito: inventário do repo, branches, testes, builds, audit, Coolify (apps/env/c
 Verificado em produção: `/api/v1/health` 200 (db up), `/api/v1/health/full` (db+redis up), web `/login` 200; commit em produção = `main` HEAD.
 Testes: 1115 verdes / 1118 total (3 falhas pré-existentes, detalhadas acima). Builds: api ✅, web ✅ (só standalone-symlink falha no Windows).
 Falhou / adiado: nada nesta fase.
-Bloqueios (preciso do Rui): `GEMINI_API_KEY` não está no Coolify (ver secção Bloqueios).
+Bloqueios (preciso do Rui): ~~`GEMINI_API_KEY` não está no Coolify~~ — corrigido a 2026-09-11: o Gemini é acedido via OpenRouter (`OPENROUTER_API_KEY` presente); não era bloqueio.
 Próximo: Fase 1 — Storage MinIO + deploy limpo.
 
 ## Fase 1 — Storage MinIO + deploy limpo — 2026-09-11
@@ -133,7 +133,7 @@ Feito: 3 testes vermelhos corrigidos (`14ebc3a`); audit high/critical a zero + p
 Verificado em produção: deploy 1 com `STORAGE_DRIVER=local` → `minio-init` criou bucket + utilizador; migração dos 3 ficheiros existentes (`--dry-run` → live → re-run = 3 skipped); deploy 2 com `STORAGE_DRIVER=s3` → `/health/full` `{db:up, redis:up, storage:up, storageDriver:s3}`. Smoke com 6 amostras reais (Miranda e Serra 6384, AAA26_05582, FT 4 83 5638, LIZOTEL 1944, foto WhatsApp, VFV26000793): 6/6 upload 201 → objeto no MinIO → `GET /documents/:id/url` devolve presigned URL → download 200 com bytes iguais ao original (o último com TLS estrito). 5/6 com NIF do emitente e total corretos; 1 (PDF 4 págs) sem total → Fase 2. Localmente: 19/19 checks e2e contra MinIO em docker-compose (put/get/move/presign/tamper 403/list/policy do utilizador de serviço/migração idempotente).
 Testes: 1139 verdes / 1139 (api). Build api ✅, web ✅ (Next 15.5.25).
 Falhou / adiado: `expose` em vez de `ports` para api/web não foi alterado — o Coolify usa `ports` para descobrir a porta a rotear e a firewall já bloqueia o acesso direto; fica para a Fase 7. Chaves de storage mantidas no esquema existente (`_inbox/<tenant>/…` → `fornecedores/<slug>/<ano>/…`) em vez de `{tenantId}/{ano}/{sha256}.{ext}`: mudar o esquema partiria a relocalização na aprovação e o browser de pastas; o driver é agnóstico da chave.
-Bloqueios (preciso do Rui): `GEMINI_API_KEY` continua vazia no Coolify (ver Bloqueios).
+Bloqueios (preciso do Rui): ~~`GEMINI_API_KEY` continua vazia no Coolify~~ — não era bloqueio (Gemini via OpenRouter; ver Bloqueios).
 Próximo: Fase 2 — Leitura robusta.
 
 ## Fase 2 — Leitura robusta — 2026-09-11
@@ -141,7 +141,7 @@ Feito: HEIC/HEIF → JPEG no upload/email/scanner (`813c93d`); QR-AT determinís
 Verificado em produção: benchmark das 19 amostras reais → **19/19 com NIF + total + data corretos (100 %)**, 11 PDFs com QR descodificado deterministicamente (6 scans), 3 faturas espanholas por IA com NIF-IVA correto, fotos direitas (EXIF) e lidas; upload de HEIC inválido → 400 com mensagem clara; `/health/full` ok durante toda a corrida depois do worker (antes o Traefik devolveu "no available server" a meio).
 Testes: 1161 verdes / 1161 (api). Build api ✅, web typecheck ✅.
 Falhou / adiado: comparação com `gemini-documental` — sem `GEMINI_API_KEY` não corre (documentado no benchmark, sem código a portar). Fotos demoram ~2 min (não bloqueia). Primeira corrida do benchmark deu 79 % e revelou os dois defeitos corrigidos acima (QR alucinado como autoridade; event loop bloqueado).
-Bloqueios (preciso do Rui): `GEMINI_API_KEY` (Gemini principal + benchmark comparativo); um HEIC real para smoke.
+Bloqueios (preciso do Rui): ~~`GEMINI_API_KEY`~~ (não era bloqueio — Gemini via OpenRouter, que é o provider de vision de todo o pipeline); um HEIC real para smoke.
 Próximo: Fase 3 — Validade fiscal, tipos e duplicados.
 
 ## Fase 3 — Validade fiscal, tipos e duplicados — 2026-09-11
@@ -149,7 +149,7 @@ Feito: schema + 2 migrations à mão (enums/colunas e índice único parcial em 
 Verificado em produção: backup `pg_dump` antes do deploy; migrations aplicadas pelo entrypoint (`_prisma_migrations` + `documents_fiscal_key_unique` confirmados por SQL); smoke 8/8: proforma sintética da Miranda & Serra → `NAO_FISCAL / PROFORMA` (não duplicada da fatura real), Miranda FT 2026A92/6384 → `FISCAL (qr_at_valid)`, foto IKEA #2 → `DUPLICADO` da foto #1, Clima Hostelería (ES) → `INDETERMINADO (vies_pending:ESB06612386)`.
 Testes: 1193 verdes / 1193 (api). Build api ✅, web typecheck ✅.
 Falhou / adiado: 1.º deploy falhou no build Docker (chave `FS` duplicada no aliasMap — o build local incremental não a apanhou; corrigido em `4e86b28`, tsbuildinfo agora limpo antes do build). Smoke de proforma feito com PDF sintético — não há proforma real nas amostras.
-Bloqueios (preciso do Rui): nenhum novo (GEMINI_API_KEY e HEIC real continuam pendentes).
+Bloqueios (preciso do Rui): nenhum novo (só o HEIC real continua pendente).
 Próximo: Fase 4 — Fornecedores completos.
 
 ---

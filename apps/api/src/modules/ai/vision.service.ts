@@ -298,9 +298,13 @@ export class VisionService {
   /** Fase 2 — below this confidence a second provider is consulted. */
   private readonly secondOpinionThreshold: number;
 
+  // Gemini is reached THROUGH OpenRouter (OPENROUTER_API_KEY, model
+  // google/gemini-2.5-flash) — there is no direct Google key in this
+  // deployment. A direct `gemini` gateway stays supported as an optional
+  // second provider.
   static readonly DEFAULT_PROVIDER_ORDER: VisionProviderName[] = [
-    'gemini',
     'openrouter',
+    'gemini',
     'minimax',
     'openai',
     'anthropic',
@@ -481,8 +485,8 @@ export class VisionService {
     if (preferred === 'openrouter' && this.hasOpenrouter) return 'openrouter';
     if (preferred === 'minimax' && this.hasMinimax) return 'minimax';
     if (preferred !== 'auto') return null;
-    // Fase 2 — Gemini is the primary vision provider; OpenRouter only when
-    // its key exists; the rest follow VISION_PROVIDER_ORDER.
+    // Fase 2 — OpenRouter (Gemini 2.5 Flash via OpenRouter) is the primary
+    // vision provider; the rest follow VISION_PROVIDER_ORDER.
     for (const p of this.providerOrder) {
       if (this.hasProvider(p)) return p;
     }

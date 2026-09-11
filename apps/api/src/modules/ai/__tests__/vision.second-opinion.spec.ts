@@ -32,27 +32,27 @@ describe("VisionService — second opinion below the confidence threshold (Fase 
     const calls: string[] = [];
     jest.spyOn(svc as any, "tryProvider").mockImplementation(async (p: unknown) => {
       calls.push(p as string);
-      return p === "gemini" ? result("gemini", 0.55) : result("openrouter", 0.9);
+      return p === "openrouter" ? result("openrouter", 0.55) : result("gemini", 0.9);
     });
     const out = await svc.analyze(REQ as any);
-    expect(calls).toEqual(["gemini", "openrouter"]);
-    expect(out?.provider).toBe("openrouter");
-    expect(out?.secondOpinion).toEqual({ provider: "gemini", confidence: 0.55 });
+    expect(calls).toEqual(["openrouter", "gemini"]);
+    expect(out?.provider).toBe("gemini");
+    expect(out?.secondOpinion).toEqual({ provider: "openrouter", confidence: 0.55 });
   });
 
   it("keeps the primary when the second opinion is not more confident, and records it", async () => {
     const svc = new VisionService(makeConfig({ GEMINI_API_KEY: "g", OPENROUTER_API_KEY: "o" }));
     jest.spyOn(svc as any, "tryProvider").mockImplementation(async (p: unknown) =>
-      p === "gemini" ? result("gemini", 0.6) : result("openrouter", 0.4),
+      p === "openrouter" ? result("openrouter", 0.6) : result("gemini", 0.4),
     );
     const out = await svc.analyze(REQ as any);
-    expect(out?.provider).toBe("gemini");
-    expect(out?.secondOpinion).toEqual({ provider: "openrouter", confidence: 0.4 });
+    expect(out?.provider).toBe("openrouter");
+    expect(out?.secondOpinion).toEqual({ provider: "gemini", confidence: 0.4 });
   });
 
   it("does NOT call a second provider when confidence >= threshold", async () => {
     const svc = new VisionService(makeConfig({ GEMINI_API_KEY: "g", OPENROUTER_API_KEY: "o" }));
-    const spy = jest.spyOn(svc as any, "tryProvider").mockImplementation(async () => result("gemini", 0.85));
+    const spy = jest.spyOn(svc as any, "tryProvider").mockImplementation(async () => result("openrouter", 0.85));
     const out = await svc.analyze(REQ as any);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(out?.secondOpinion).toBeUndefined();
@@ -71,12 +71,12 @@ describe("VisionService — second opinion below the confidence threshold (Fase 
       makeConfig({ GEMINI_API_KEY: "g", OPENROUTER_API_KEY: "o", VISION_SECOND_OPINION_CONFIDENCE: "0.9" }),
     );
     const spy = jest.spyOn(svc as any, "tryProvider").mockImplementation(async (p: unknown) => {
-      if (p === "gemini") return result("gemini", 0.8);
-      throw new Error("openrouter down");
+      if (p === "openrouter") return result("openrouter", 0.8);
+      throw new Error("gemini down");
     });
     const out = await svc.analyze(REQ as any);
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(out?.provider).toBe("gemini");
+    expect(out?.provider).toBe("openrouter");
     expect(out?.secondOpinion).toBeUndefined();
   });
 });

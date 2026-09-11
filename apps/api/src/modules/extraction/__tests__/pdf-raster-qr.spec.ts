@@ -40,7 +40,7 @@ function svcWithBuffer(buffer: Buffer): ExtractionService {
 }
 
 describe("ExtractionService.decodeQrFromPdfRaster() — Fase 2", () => {
-  jest.setTimeout(60_000);
+  jest.setTimeout(240_000);
 
   it("decodes an AT-QR drawn as an image on page 1", async () => {
     const svc = svcWithBuffer(await buildPdf({ qrOnPage: 1, pages: 1 }));

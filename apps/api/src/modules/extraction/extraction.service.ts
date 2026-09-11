@@ -733,19 +733,45 @@ export class ExtractionService implements OnModuleDestroy {
       if (aiQrRaw && this.findAtQrInText(aiQrRaw)) {
         const validated = this.findAtQrInText(aiQrRaw);
         if (validated) {
-          this.logger.log(
-            `[processDocumentAsync] using AI-returned atQrRaw as QR candidate ` +
-              `(document=${documentId}, payload len=${validated.length})`,
-          );
           const qrFields = this.extractFromQr(validated, doc);
-          // Reset source so the merge can re-write it to "at_qr+ai".
-          const mergedFromAiQr = await this.mergeQrWithAi(qrFields, doc, loaded, tenantId);
-          // Preserve any AI-only fields (line items, discounts, supplier
-          // name, IBAN) the original AI-only pass captured but the
-          // merge-from-QR pass wouldn't otherwise see. mergeQrWithAi
-          // already re-runs the AI path internally; mergedFromAiQr is
-          // the authoritative result.
-          fields = mergedFromAiQr;
+          // Fase 2 — an LLM "reading" a QR is NOT a QR decode: the Fase 2
+          // benchmark caught a hallucinated NIF (valid check digit!) and a
+          // total of 5.20 on a 38.10 receipt. The read-back is only trusted
+          // when it agrees with the fields the same model extracted from the
+          // visible text (NIF, total, date). Otherwise the structured AI
+          // fields stay and the document is flagged for review.
+          const check = this.isAiQrConsistent(qrFields, fields);
+          if (check.ok) {
+            this.logger.log(
+              `[processDocumentAsync] using AI-returned atQrRaw as QR candidate ` +
+                `(document=${documentId}, payload len=${validated.length}, cross-checked with AI fields)`,
+            );
+            const mergedFromAiQr = await this.mergeQrWithAi(
+              qrFields,
+              doc,
+              loaded,
+              tenantId,
+              fields,
+            );
+            mergedFromAiQr.hints = [
+              ...(mergedFromAiQr.hints ?? []),
+              "qrOrigin:ai_vision_readback",
+            ];
+            fields = mergedFromAiQr;
+          } else {
+            this.logger.warn(
+              `[processDocumentAsync] AI-returned atQrRaw REJECTED for document=${documentId}: ` +
+                `${check.reasons.join(", ")} — keeping AI structured fields, flagging review`,
+            );
+            fields = {
+              ...fields,
+              hints: [...(fields.hints ?? []), "qrOrigin:ai_vision_readback_rejected"],
+              warnings: [
+                ...(fields.warnings ?? []),
+                `ai_qr_inconsistent_with_ai_fields:${check.reasons.join("|")}`,
+              ],
+            };
+          }
         }
       }
     }
@@ -1840,15 +1866,20 @@ export class ExtractionService implements OnModuleDestroy {
   ): Promise<string | null> {
     if (!this.storage) return null;
     const obj = await this.storage.getBuffer(doc.fileKey);
-    const pages: number[] = [1];
-    if (pageCount && pageCount > 1) pages.push(pageCount);
-    for (const pageNo of pages) {
+    // Scale 2 (~1190 px on A4) decodes most; scale 3 recovered a
+    // vector-drawn QR that scale 2 missed (Fase 2 benchmark, Miranda 6384).
+    // Order: page 1 @2 → last page @2 → page 1 @3 (the @3 pass is the
+    // slowest, so it runs only after the cheap ones failed).
+    const attempts: Array<{ pageNo: number; scale: number }> = [{ pageNo: 1, scale: 2 }];
+    if (pageCount && pageCount > 1) attempts.push({ pageNo: pageCount, scale: 2 });
+    attempts.push({ pageNo: 1, scale: 3 });
+    for (const { pageNo, scale } of attempts) {
       const parser = new PDFParse({ data: obj.buffer });
       let png: Buffer | null = null;
       try {
         const shot = await parser.getScreenshot({
           partial: [pageNo],
-          scale: 2,
+          scale,
           imageBuffer: true,
         });
         const page = shot?.pages?.[0];
@@ -2602,6 +2633,32 @@ export class ExtractionService implements OnModuleDestroy {
     return merged;
   }
 
+  /**
+   * Fase 2 — cross-check an LLM-read QR payload against the structured
+   * fields the same LLM extracted from the document. Both come from the
+   * model, so agreement is evidence the read-back is real; disagreement
+   * means at least one of them is a hallucination and the QR must not be
+   * promoted to "at_qr" authority. Requires NIF + total in the QR.
+   */
+  isAiQrConsistent(
+    qr: Pick<ExtractedFields, "supplierNif" | "total" | "docDate">,
+    ai: Pick<ExtractedFields, "supplierNif" | "total" | "docDate">,
+  ): { ok: boolean; reasons: string[] } {
+    const reasons: string[] = [];
+    const norm = (v?: string) => (v ?? "").replace(/^PT/i, "").replace(/\s/g, "");
+    if (!qr.supplierNif || qr.total == null) reasons.push("qr_missing_nif_or_total");
+    if (qr.supplierNif && ai.supplierNif && norm(qr.supplierNif) !== norm(ai.supplierNif)) {
+      reasons.push(`nif:${norm(qr.supplierNif)}!=${norm(ai.supplierNif)}`);
+    }
+    if (qr.total != null && ai.total != null && Math.abs(qr.total - ai.total) >= 0.01) {
+      reasons.push(`total:${qr.total}!=${ai.total}`);
+    }
+    if (qr.docDate && ai.docDate && qr.docDate !== ai.docDate) {
+      reasons.push(`date:${qr.docDate}!=${ai.docDate}`);
+    }
+    return { ok: reasons.length === 0, reasons };
+  }
+
   /** Parse a known-AT-QR payload string into Document fields. */
   extractFromQr(qrText: string, doc: { type: string }): ExtractedFields {
     const cleaned = (qrText ?? "").replace(/\s+/g, "");
@@ -2729,6 +2786,7 @@ export class ExtractionService implements OnModuleDestroy {
     doc: { fileKey: string; mimeType: string; fileName: string },
     loaded: LoadedText,
     tenantId?: string,
+    precomputedAi?: ExtractedFields,
   ): Promise<ExtractedFields> {
     // No vision provider configured → the QR is the only signal we
     // have. Tag the warning so the operator sees WHY supplier is
@@ -2755,10 +2813,16 @@ export class ExtractionService implements OnModuleDestroy {
     // supplier / IBAN / line-items merge we ALSO need access to the
     // raw vision `extracted` payload — captured via a sidecar hook
     // on the tryVisionAnalysis call.
-    this.lastVisionExtracted = null;
     let aiFields: ExtractedFields | null = null;
+    if (precomputedAi && this.lastVisionExtracted != null) {
+      // Fase 2 — the caller already ran the AI path for this document;
+      // reuse it instead of paying for a second vision call.
+      aiFields = precomputedAi;
+    } else {
+      this.lastVisionExtracted = null;
+    }
     try {
-      aiFields = await this.runAiOrRegexPath(doc, loaded, tenantId);
+      if (!aiFields) aiFields = await this.runAiOrRegexPath(doc, loaded, tenantId);
     } catch (err) {
       this.logger.warn(
         `[mergeQrWithAi] AI path threw for document=${doc.fileName}: ` +

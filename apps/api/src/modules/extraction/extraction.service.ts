@@ -854,7 +854,12 @@ export class ExtractionService implements OnModuleDestroy {
     // when both exist — the user explicitly asked for "QR first for
     // certainty of fiscal data". Only fall back to aiQrRaw when ZXing
     // didn't decode anything.
-    const qrPayloadOverride = zxingQr ?? aiQrRawForRow ?? undefined;
+    // Fase 2 — an AI read-back is only persisted as the row's qrPayload when
+    // it passed the cross-check (see isAiQrConsistent). A rejected read-back
+    // must never become the "stored QR" that short-circuits future re-runs.
+    const aiQrAccepted = (fields.hints ?? []).includes("qrOrigin:ai_vision_readback");
+    const qrPayloadOverride =
+      zxingQr ?? (aiQrAccepted ? aiQrRawForRow : undefined) ?? undefined;
     const updateData = this.buildUpdateData(fields, {
       // Persist the freshly-decoded payload to the row so re-runs don't
       // re-prompt Gemini. Existing doc.qrPayload (already on the row)

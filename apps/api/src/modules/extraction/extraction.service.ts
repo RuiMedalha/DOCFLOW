@@ -3408,7 +3408,6 @@ export class ExtractionService implements OnModuleDestroy {
       // only runs on the supplier-invoice (received) extraction path.
       FT: DocumentType.FATURA_RECEBIDA,
       FR: DocumentType.FATURA_RECEBIDA,
-      FS: DocumentType.FATURA_RECEBIDA,
       FATURA: DocumentType.FATURA_RECEBIDA,
       FATURA_RECEBIDA: DocumentType.FATURA_RECEBIDA,
       FACTURA: DocumentType.FATURA_RECEBIDA,

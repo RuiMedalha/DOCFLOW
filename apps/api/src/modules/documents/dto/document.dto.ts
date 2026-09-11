@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -189,6 +190,22 @@ export class UpdateDocumentDto {
   @IsOptional()
   @IsEnum(FiscalStatus)
   fiscalStatus?: FiscalStatus;
+
+  /**
+   * Fase 4.1 — desfazer a correção manual.
+   *
+   * Sem isto, um operador que se enganasse a marcar o tipo ou a validade
+   * fiscal ficava preso: a correção manual tem prioridade sobre a IA e
+   * nunca mais era recalculada. Com `true`, as marcas são limpas e a
+   * próxima re-extração volta a decidir.
+   */
+  @ApiPropertyOptional({
+    description: 'Limpa as correções manuais de tipo/validade fiscal para a re-extração voltar a decidir.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  resetClassificationOverride?: boolean;
 
   @ApiPropertyOptional({
     description:

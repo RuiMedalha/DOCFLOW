@@ -855,10 +855,18 @@ export class DocumentsService {
     // ── Fase 4.1 (P2.2) — correção manual tem prioridade sobre a IA ───
     // Marcamos a coluna para que uma re-extração não reverta a decisão
     // do operador.
-    if (dto.type !== undefined) data.typeManualOverride = true;
+    if (dto.resetClassificationOverride) {
+      // Desfazer: a próxima re-extração volta a decidir tipo e validade.
+      data.typeManualOverride = false;
+      data.fiscalStatusManualOverride = false;
+      delete data.resetClassificationOverride;
+    } else {
+      delete data.resetClassificationOverride;
+    }
+    if (dto.type !== undefined && !dto.resetClassificationOverride) data.typeManualOverride = true;
     if (dto.fiscalStatus !== undefined) {
       data.fiscalStatus = dto.fiscalStatus;
-      data.fiscalStatusManualOverride = true;
+      if (!dto.resetClassificationOverride) data.fiscalStatusManualOverride = true;
       data.fiscalReason = `manual:${userId}`;
       data.isNonFiscalDoc = dto.fiscalStatus === 'NAO_FISCAL';
     }

@@ -14,6 +14,11 @@ import { ExtractionController } from './extraction.controller';
 import { ExtractionProcessor } from './extraction.processor';
 import { ExtractionService } from './extraction.service';
 import { SupplierResolver } from './supplier-resolver';
+// Fase 4.1 — providos aqui directamente (são folhas, sem dependências
+// próprias) para o ExtractionService os receber mesmo com o forwardRef
+// do DocumentsModule pelo meio.
+import { ImageToPdfService } from '../documents/image-to-pdf/image-to-pdf.service';
+import { ArchiveImageService } from '../documents/image-to-pdf/archive-image.service';
 import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constants';
 import { QueueModule } from '../../common/queue/queue.module';
 import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
@@ -82,7 +87,7 @@ import { EnrichmentModule } from '../enrichment/enrichment.module';
     }),
   ],
   controllers: [ExtractionController],
-  providers: [ExtractionService, ExtractionProcessor, SupplierResolver],
+  providers: [ExtractionService, ExtractionProcessor, SupplierResolver, ImageToPdfService, ArchiveImageService],
   exports: [ExtractionService, SupplierResolver, BullModule],
 })
 export class ExtractionModule {

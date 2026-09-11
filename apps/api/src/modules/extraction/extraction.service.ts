@@ -60,8 +60,15 @@ import { ViesService } from "../vies/vies.service";
 import { EcbFxService } from "../../common/fx/ecb-fx.service";
 import { pickAutoCategory } from "../parties/auto-category";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
-import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
-import type { ArchiveImageService } from "../documents/image-to-pdf/archive-image.service";
+// Fase 4.1 — estes dois eram importados com `import type`, que apaga a
+// classe em tempo de execução: o `design:paramtypes` ficava `Object`,
+// o Nest não resolvia nada e o `@Optional()` escondia a falha. O
+// derivado PDF NUNCA era reconstruído — era por isso que as fotos
+// continuavam deitadas e com 3 MB no arquivo. Ambos os ficheiros são
+// folhas (só dependem de pdf-lib / jimp), por isso importá-los por
+// valor não cria ciclo de módulos.
+import { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
+import { ArchiveImageService } from "../documents/image-to-pdf/archive-image.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
 // EXTRACTING → ENRICHING handler runs. Previously the extraction service
 // returned its result but never told the pipeline to advance — documents
@@ -3261,7 +3268,15 @@ export class ExtractionService implements OnModuleDestroy {
     doc: { mimeType: string; fileName: string },
     uprightBytes: Buffer,
   ): Promise<void> {
-    if (!this.archiveImage || !this.imageToPdf || !this.storage?.put) return;
+    if (!this.archiveImage || !this.imageToPdf || !this.storage?.put) {
+      // Alto e bom som: um silêncio aqui custou fotos de 3 MB deitadas
+      // no arquivo sem ninguém dar por isso.
+      this.logger.warn(
+        `[archive] skipped for ${doc.fileName} — archiveImage=${Boolean(this.archiveImage)} ` +
+          `imageToPdf=${Boolean(this.imageToPdf)} storage.put=${Boolean(this.storage?.put)}`,
+      );
+      return;
+    }
     if (!this.imageToPdf.supports(doc.mimeType)) return;
     try {
       const prepared = await this.archiveImage.prepare(uprightBytes, doc.mimeType);

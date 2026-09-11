@@ -44,7 +44,7 @@ import {
   ExtractionJobResult,
 } from "./extraction.constants";
 import { autoOrientImage } from "./qr-decode/qr-decoder";
-import { classifyFiscalStatus, normalizeDocNumber } from "./fiscal-status";
+import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-status";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
@@ -674,7 +674,19 @@ export class ExtractionService implements OnModuleDestroy {
     // camera capture) OVER everything; then a freshly ZXing-decoded QR
     // from this image; then the text layer of the PDF (which can carry
     // the QR string on a digital PDF export).
-    const storedQr = doc.qrPayload ? this.findAtQrInText(doc.qrPayload) : null;
+    // Fase 3 — a stored payload is only trusted when it is a complete AT-QR
+    // (valid issuer NIF, ATCUD, Q hash, R certificate). Rows written before
+    // the Fase 2 cross-check may hold an LLM-mangled read-back; those are
+    // ignored so the deterministic decoders run again.
+    const storedParsed = doc.qrPayload ? parseAtQr(doc.qrPayload) : null;
+    const storedQrTrusted = isValidAtQr(storedParsed);
+    if (doc.qrPayload && !storedQrTrusted) {
+      this.logger.warn(
+        `[processDocumentAsync] stored qrPayload for document=${documentId} is not a complete AT-QR ` +
+          `(missing Q/R/ATCUD or invalid NIF) — ignoring it and re-decoding`,
+      );
+    }
+    const storedQr = storedQrTrusted && doc.qrPayload ? this.findAtQrInText(doc.qrPayload) : null;
     let zxingCandidate = storedQr ? null : (zxingQr ? this.findAtQrInText(zxingQr) : null);
     const textQr = storedQr || zxingCandidate ? null : this.findAtQrInText(loaded.text);
     // Fase 2 — deterministic QR for PDFs: when neither the stored payload
@@ -924,11 +936,11 @@ export class ExtractionService implements OnModuleDestroy {
     // [+ ATCUD when both sides have one]). The partial unique index
     // documents_fiscal_key_unique is the race-proof backstop (P2002 below).
     let duplicateOfDoc: { id: string; fileName: string } | null = null;
-    if (fields.supplierNif && docNumberNorm) {
+    if ((fields.supplierNif && docNumberNorm) || fields.atcud) {
       duplicateOfDoc = await this.findFiscalKeyOriginal(
         tenantId,
         documentId,
-        fields.supplierNif,
+        fields.supplierNif ?? null,
         docNumberNorm,
         fields.atcud ?? null,
       );
@@ -1156,11 +1168,11 @@ export class ExtractionService implements OnModuleDestroy {
       // Re-resolve the original and store this row as DUPLICADO instead of
       // failing the pipeline.
       const code = (err as { code?: string }).code;
-      if (code !== "P2002" || duplicateOfDoc || !fields.supplierNif || !docNumberNorm) throw err;
+      if (code !== "P2002" || duplicateOfDoc || !((fields.supplierNif && docNumberNorm) || fields.atcud)) throw err;
       const original = await this.findFiscalKeyOriginal(
         tenantId,
         documentId,
-        fields.supplierNif,
+        fields.supplierNif ?? null,
         docNumberNorm,
         fields.atcud ?? null,
       );
@@ -2753,27 +2765,35 @@ export class ExtractionService implements OnModuleDestroy {
   async findFiscalKeyOriginal(
     tenantId: string,
     documentId: string,
-    supplierNif: string,
-    docNumberNorm: string,
+    supplierNif: string | null,
+    docNumberNorm: string | null,
     atcud: string | null,
   ): Promise<{ id: string; fileName: string } | null> {
     const finder = (this.prisma.document as unknown as { findMany?: unknown }).findMany;
     if (typeof finder !== "function") return null;
+    const keys: Prisma.DocumentWhereInput[] = [];
+    if (supplierNif && docNumberNorm) keys.push({ supplierNif, docNumberNorm });
+    // The ATCUD alone identifies a certified document (series code + number),
+    // so two rows sharing it are the same invoice even when the human-readable
+    // number was read differently (photo vs scan).
+    if (atcud) keys.push({ atcud });
+    if (keys.length === 0) return null;
     try {
       const rows = await this.prisma.document.findMany({
         where: {
           tenantId,
-          supplierNif,
-          docNumberNorm,
           deletedAt: null,
           id: { not: documentId },
           status: { not: DocumentStatus.DUPLICADO },
+          OR: keys,
         },
         select: { id: true, fileName: true, atcud: true },
         orderBy: { createdAt: "asc" },
         take: 10,
       });
-      const hit = rows.find((r) => !r.atcud || !atcud || r.atcud === atcud);
+      const hit =
+        rows.find((r) => atcud && r.atcud === atcud) ??
+        rows.find((r) => !r.atcud || !atcud);
       return hit ? { id: hit.id, fileName: hit.fileName } : null;
     } catch (err) {
       this.logger.warn(
@@ -2849,7 +2869,9 @@ export class ExtractionService implements OnModuleDestroy {
       customerNif,
       supplier: undefined, // QR payload does not carry the supplier name
       customer: undefined,
-      docNumber: parsed.uniqueDocId ?? parsed.atcud,
+      // Fase 3 — the ATCUD is NOT a document number; when G: is missing the
+      // AI/regex docNumber fills in during the merge instead.
+      docNumber: parsed.uniqueDocId,
       atcud: parsed.atcud,
       docDate: parsed.documentDate,
       dueDate: undefined,

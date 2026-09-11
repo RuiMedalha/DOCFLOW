@@ -20,11 +20,10 @@ describe("ExtractionService.findFiscalKeyOriginal() — Fase 3", () => {
     const where = findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
       tenantId: "t1",
-      supplierNif: "500842019",
-      docNumberNorm: "2026A926384",
       deletedAt: null,
       id: { not: "new" },
       status: { not: "DUPLICADO" },
+      OR: [{ supplierNif: "500842019", docNumberNorm: "2026A926384" }],
     });
   });
 
@@ -35,6 +34,17 @@ describe("ExtractionService.findFiscalKeyOriginal() — Fase 3", () => {
     ]);
     const out = await svc.findFiscalKeyOriginal("t1", "new", "500842019", "2026A926384", "J66V9C9T-6384");
     expect(out?.id).toBe("same");
+  });
+
+  it("matches by ATCUD alone when the human-readable number was read differently (photo vs scan)", async () => {
+    const { svc, findMany } = svcWith([{ id: "orig", fileName: "a.jpg", atcud: "JJY2HD8C-0000428" }]);
+    const out = await svc.findFiscalKeyOriginal("t1", "new", "505416654", "00103220250000428", "JJY2HD8C-0000428");
+    expect(out?.id).toBe("orig");
+    expect(findMany.mock.calls[0][0].where.OR).toEqual([
+      { supplierNif: "505416654", docNumberNorm: "00103220250000428" },
+      { atcud: "JJY2HD8C-0000428" },
+    ]);
+    expect(await svc.findFiscalKeyOriginal("t1", "new", null, null, null)).toBeNull();
   });
 
   it("a row without ATCUD (scan read by AI) still matches a certified original", async () => {

@@ -11,7 +11,7 @@ FROM node:22-alpine AS shared
 WORKDIR /repo
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 COPY packages/shared ./packages/shared
 WORKDIR /repo/packages/shared
 RUN pnpm install --no-frozen-lockfile --ignore-scripts
@@ -22,9 +22,9 @@ FROM node:22-alpine AS deps
 WORKDIR /repo
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 COPY --from=shared /repo/packages ./packages
-COPY apps/web/package.json apps/web/pnpm-lock.yaml ./apps/web/
+COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./apps/web/
 WORKDIR /repo/apps/web
 RUN --mount=type=cache,id=pnpm-store-web,target=/pnpm/store \
     pnpm install --frozen-lockfile --ignore-scripts
@@ -34,7 +34,7 @@ FROM node:22-alpine AS build
 WORKDIR /repo
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 COPY --from=deps /repo ./
 COPY apps/web ./apps/web
 WORKDIR /repo/apps/web

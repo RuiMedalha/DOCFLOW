@@ -11,7 +11,11 @@ export type DocumentStatus =
   | 'em_revisao'
   | 'arquivado'
   | 'conciliado'
-  | 'erro';
+  | 'erro'
+  | 'DUPLICADO';
+
+/** Fase 3 — validade fiscal determinística (backend `FiscalStatus`). */
+export type FiscalStatus = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO';
 
 export type DocumentType =
   | 'fatura'
@@ -60,6 +64,9 @@ export interface DocumentRecord {
   tags?: string[];
   rank?: number | null;
   createdAt: string;
+  fiscalStatus?: FiscalStatus | null;
+  fiscalReason?: string | null;
+  duplicateOfId?: string | null;
 }
 
 export interface DocumentListResponse {
@@ -83,6 +90,19 @@ export const DOCUMENT_STATUS_LABEL: Record<DocumentStatus, string> = {
   arquivado: 'Arquivado',
   conciliado: 'Conciliado',
   erro: 'Erro',
+  DUPLICADO: 'Duplicado',
+};
+
+export const FISCAL_STATUS_LABEL: Record<FiscalStatus, string> = {
+  FISCAL: 'Fiscal',
+  NAO_FISCAL: 'Não fiscal',
+  INDETERMINADO: 'Por confirmar',
+};
+
+export const FISCAL_STATUS_BADGE: Record<FiscalStatus, string> = {
+  FISCAL: 'badge-emerald',
+  NAO_FISCAL: 'badge-rose',
+  INDETERMINADO: 'badge-amber',
 };
 
 export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {

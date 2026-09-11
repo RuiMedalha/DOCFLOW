@@ -630,6 +630,7 @@ export default function DocumentDetailPage() {
   // (nothing to review / nothing to approve / nothing to reject yet).
   const heroStatusCopy: Record<string, { copy: string; tone: 'ok' | 'warn' | 'alert' | 'neutral'; icon: 'shield' | 'check' | 'x' | null }> = {
     EM_REVISAO: { copy: 'Pronto para revisar', tone: 'warn', icon: 'shield' },
+    DUPLICADO: { copy: 'Duplicado · já existe um documento com esta chave fiscal', tone: 'alert', icon: 'x' },
     APROVADO: {
       copy: `Aprovado · ${fmtTime((doc as any).approvedAt) || '—'}`,
       tone: 'ok',
@@ -868,6 +869,34 @@ export default function DocumentDetailPage() {
               primary actions so the operator sees the workflow
               state at a glance. Hidden when the doc is still NOVO
               (nothing to review / nothing to decide yet). */}
+          {/* Fase 3 — validade fiscal (determinística) + ligação ao original quando duplicado */}
+          {(doc.fiscalStatus || doc.status === 'DUPLICADO') && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              {doc.fiscalStatus && (
+                <span
+                  className={
+                    doc.fiscalStatus === 'FISCAL'
+                      ? 'badge-emerald'
+                      : doc.fiscalStatus === 'NAO_FISCAL'
+                        ? 'badge-rose'
+                        : 'badge-amber'
+                  }
+                  title={doc.fiscalReason ?? undefined}
+                >
+                  {doc.fiscalStatus === 'FISCAL'
+                    ? 'Documento fiscal'
+                    : doc.fiscalStatus === 'NAO_FISCAL'
+                      ? 'Não fiscal — não vai ao TOC nem ao IVA'
+                      : 'Validade fiscal por confirmar'}
+                </span>
+              )}
+              {doc.status === 'DUPLICADO' && doc.duplicateOfId && (
+                <a className="badge-rose underline" href={`/documents/${doc.duplicateOfId}`}>
+                  Duplicado — ver original
+                </a>
+              )}
+            </div>
+          )}
           {doc.status !== 'NOVO' && doc.status !== 'EM_REVISAO' && (
             <div
               className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 text-xs"

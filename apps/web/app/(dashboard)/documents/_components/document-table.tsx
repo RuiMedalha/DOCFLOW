@@ -21,6 +21,8 @@ import { ChevronDown, ChevronUp, ChevronsUpDown, FileText, Folder } from 'lucide
 import {
   DOCUMENT_STATUS_LABEL,
   DOCUMENT_TYPE_LABEL,
+  FISCAL_STATUS_BADGE,
+  FISCAL_STATUS_LABEL,
   type DocumentOrigin,
   type DocumentRecord,
   type DocumentStatus,
@@ -33,6 +35,7 @@ const STATUS_BADGE: Record<DocumentStatus, string> = {
   arquivado: 'badge-violet',
   conciliado: 'badge-emerald',
   erro: 'badge-rose',
+  DUPLICADO: 'badge-rose',
 };
 
 /**
@@ -199,9 +202,20 @@ export function DocumentTable({
       }),
       columnHelper.accessor('status', {
         header: 'Estado',
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row }) => {
           const v = getValue();
-          return <span className={STATUS_BADGE[v]}>{DOCUMENT_STATUS_LABEL[v] ?? v}</span>;
+          const fiscal = row.original.fiscalStatus;
+          return (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              <span className={STATUS_BADGE[v]}>{DOCUMENT_STATUS_LABEL[v] ?? v}</span>
+              {/* Fase 3 — validade fiscal determinística; INDETERMINADO fica implícito */}
+              {fiscal && fiscal !== 'INDETERMINADO' && (
+                <span className={FISCAL_STATUS_BADGE[fiscal]} title={row.original.fiscalReason ?? undefined}>
+                  {FISCAL_STATUS_LABEL[fiscal]}
+                </span>
+              )}
+            </span>
+          );
         },
       }),
       columnHelper.accessor((row) => row.folder?.name ?? null, {

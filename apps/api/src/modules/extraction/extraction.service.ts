@@ -44,6 +44,7 @@ import {
   ExtractionJobResult,
 } from "./extraction.constants";
 import { autoOrientImage } from "./qr-decode/qr-decoder";
+import { classifyFiscalStatus, normalizeDocNumber } from "./fiscal-status";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
@@ -861,6 +862,7 @@ export class ExtractionService implements OnModuleDestroy {
     const aiQrAccepted = (fields.hints ?? []).includes("qrOrigin:ai_vision_readback");
     const qrPayloadOverride =
       zxingQr ?? (aiQrAccepted ? aiQrRawForRow : undefined) ?? undefined;
+
     const updateData = this.buildUpdateData(fields, {
       // Persist the freshly-decoded payload to the row so re-runs don't
       // re-prompt Gemini. Existing doc.qrPayload (already on the row)
@@ -871,6 +873,73 @@ export class ExtractionService implements OnModuleDestroy {
       // model's attempt at reading QR modules visually.
       qrPayloadOverride,
     });
+    // ── Fase 3 — validade fiscal determinística + chave fiscal ──────────
+    // The classifier is pure code (extraction/fiscal-status.ts). The AI
+    // only contributed the *inputs* (supplier NIF/VAT, doc number, date,
+    // raw document type); whether the document is FISCAL is decided by the
+    // QR-AT (real decode only) and by deterministic keyword rules.
+    const qrOriginForFiscal: "zxing" | "stored" | "pdf-text" | "ai" | null = zxingQr
+      ? "zxing"
+      : storedQr
+        ? "stored"
+        : textQr
+          ? "pdf-text"
+          : aiQrAccepted
+            ? "ai"
+            : null;
+    const qrForFiscal = qrPayloadOverride ?? doc.qrPayload ?? null;
+    const parsedForFiscal = qrForFiscal ? parseAtQr(qrForFiscal) : null;
+    const fiscal = classifyFiscalStatus({
+      qr: parsedForFiscal
+        ? {
+            issuerNif: parsedForFiscal.issuerNif,
+            atcud: parsedForFiscal.atcud,
+            hash4: parsedForFiscal.hash4,
+            softwareCert: parsedForFiscal.softwareCert,
+            documentType: parsedForFiscal.documentType,
+          }
+        : null,
+      qrOrigin: qrOriginForFiscal,
+      supplierNif: fields.supplierNif ?? null,
+      supplierVatId: fields.supplierVatId ?? null,
+      docNumber: fields.docNumber ?? null,
+      docDate: fields.docDate ?? null,
+      text: [
+        loaded.text,
+        doc.fileName,
+        fields.documentType ?? "",
+        ...(fields.hints ?? []).filter((h) => /^(aiDocType|documentType|aiDocumentType):/i.test(h)),
+      ].join(String.fromCharCode(10)),
+      viesValidated: false, // Fase 4 liga o VIES; até lá as estrangeiras ficam INDETERMINADO
+    });
+    (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
+    (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
+    (updateData as Record<string, unknown>).isNonFiscalDoc = fiscal.fiscalStatus === "NAO_FISCAL";
+    if (fiscal.documentType) updateData.type = fiscal.documentType as DocumentType;
+    const docNumberNorm = normalizeDocNumber(fields.docNumber);
+    if (docNumberNorm) (updateData as Record<string, unknown>).docNumberNorm = docNumberNorm;
+    fields.hints = [...(fields.hints ?? []), `fiscalStatus:${fiscal.fiscalStatus}:${fiscal.reason}`];
+
+    // Duplicate by fiscal key (tenant + supplier NIF + normalised number
+    // [+ ATCUD when both sides have one]). The partial unique index
+    // documents_fiscal_key_unique is the race-proof backstop (P2002 below).
+    let duplicateOfDoc: { id: string; fileName: string } | null = null;
+    if (fields.supplierNif && docNumberNorm) {
+      duplicateOfDoc = await this.findFiscalKeyOriginal(
+        tenantId,
+        documentId,
+        fields.supplierNif,
+        docNumberNorm,
+        fields.atcud ?? null,
+      );
+      if (duplicateOfDoc) {
+        this.logger.warn(
+          `[processDocumentAsync] document=${documentId} is a DUPLICATE of ${duplicateOfDoc.id} ` +
+            `(${duplicateOfDoc.fileName}) by fiscal key nif=${fields.supplierNif} nr=${docNumberNorm}`,
+        );
+        fields.warnings = [...(fields.warnings ?? []), `duplicate_fiscal_key:${duplicateOfDoc.id}`];
+      }
+    }
     let ibanCheck: IbanCheckResult | null = null;
 
     if (fields.iban && doc.partyId) {
@@ -1058,23 +1127,58 @@ export class ExtractionService implements OnModuleDestroy {
       finalStatus = DocumentStatus.EM_REVISAO;
     }
 
-    const updated = await this.prisma.document.update({
-      where: { id: documentId },
-      data: {
-        ...updateData,
-        metadata: this.composeMetadata(
-          doc.metadata,
-          fields,
-          ibanCheck,
-          undefined,
-          loaded,
-          { supplierReview: supplierReviewFlag, supplierReason: supplierResolveReason },
-          aiFiledExpenseCategory,
-        ),
-        ocrConfidence: fields.confidence,
-        status: finalStatus,
-      },
-    });
+    const composeFinalMetadata = () =>
+      this.composeMetadata(
+        doc.metadata,
+        fields,
+        ibanCheck,
+        undefined,
+        loaded,
+        { supplierReview: supplierReviewFlag, supplierReason: supplierResolveReason },
+        aiFiledExpenseCategory,
+      );
+    if (duplicateOfDoc) finalStatus = DocumentStatus.DUPLICADO;
+    let updated;
+    try {
+      updated = await this.runFinalUpdate(
+        documentId,
+        {
+          ...updateData,
+          ...(duplicateOfDoc ? { duplicateOf: { connect: { id: duplicateOfDoc.id } } } : {}),
+        },
+        finalStatus,
+        composeFinalMetadata,
+        fields.confidence,
+      );
+    } catch (err) {
+      // Race: two uploads of the same invoice extracted concurrently — the
+      // partial unique index documents_fiscal_key_unique rejected this one.
+      // Re-resolve the original and store this row as DUPLICADO instead of
+      // failing the pipeline.
+      const code = (err as { code?: string }).code;
+      if (code !== "P2002" || duplicateOfDoc || !fields.supplierNif || !docNumberNorm) throw err;
+      const original = await this.findFiscalKeyOriginal(
+        tenantId,
+        documentId,
+        fields.supplierNif,
+        docNumberNorm,
+        fields.atcud ?? null,
+      );
+      if (!original) throw err;
+      this.logger.warn(
+        `[processDocumentAsync] P2002 on fiscal key — document=${documentId} stored as DUPLICATE of ${original.id}`,
+      );
+      fields.warnings = [...(fields.warnings ?? []), `duplicate_fiscal_key:${original.id}`];
+      duplicateOfDoc = original;
+      finalStatus = DocumentStatus.DUPLICADO;
+      updated = await this.runFinalUpdate(
+        documentId,
+        { ...updateData, duplicateOf: { connect: { id: original.id } } },
+        finalStatus,
+        composeFinalMetadata,
+        fields.confidence,
+      );
+    }
 
     // Post-extraction rename: swap the upload-time filename (e.g.
     // `image.jpg`, `<hash>.pdf`) for a human-friendly slug like
@@ -2640,6 +2744,60 @@ export class ExtractionService implements OnModuleDestroy {
   }
 
   /**
+   * Fase 3 — find the "live" original for a fiscal key. Excludes soft-deleted
+   * rows and rows already marked DUPLICADO; when both sides carry an ATCUD
+   * they must match (different ATCUD = different certified document even if
+   * the human-readable number collides across series). Tolerates prisma
+   * test doubles without `findMany`.
+   */
+  async findFiscalKeyOriginal(
+    tenantId: string,
+    documentId: string,
+    supplierNif: string,
+    docNumberNorm: string,
+    atcud: string | null,
+  ): Promise<{ id: string; fileName: string } | null> {
+    const finder = (this.prisma.document as unknown as { findMany?: unknown }).findMany;
+    if (typeof finder !== "function") return null;
+    try {
+      const rows = await this.prisma.document.findMany({
+        where: {
+          tenantId,
+          supplierNif,
+          docNumberNorm,
+          deletedAt: null,
+          id: { not: documentId },
+          status: { not: DocumentStatus.DUPLICADO },
+        },
+        select: { id: true, fileName: true, atcud: true },
+        orderBy: { createdAt: "asc" },
+        take: 10,
+      });
+      const hit = rows.find((r) => !r.atcud || !atcud || r.atcud === atcud);
+      return hit ? { id: hit.id, fileName: hit.fileName } : null;
+    } catch (err) {
+      this.logger.warn(
+        `[findFiscalKeyOriginal] lookup failed for document=${documentId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Fase 3 — the single place that writes the extraction result row. */
+  private runFinalUpdate(
+    documentId: string,
+    data: Prisma.DocumentUpdateInput,
+    status: DocumentStatus,
+    metadata: () => Prisma.InputJsonValue,
+    ocrConfidence: number,
+  ) {
+    return this.prisma.document.update({
+      where: { id: documentId },
+      data: { ...data, metadata: metadata(), ocrConfidence, status },
+    });
+  }
+
+  /**
    * Fase 2 — cross-check an LLM-read QR payload against the structured
    * fields the same LLM extracted from the document. Both come from the
    * model, so agreement is evidence the read-back is real; disagreement
@@ -3206,6 +3364,25 @@ export class ExtractionService implements OnModuleDestroy {
     //    specific (NC / ND / RECIBO / etc.) come before the generic
     //    "FATURA" so we don't misclassify a credit note as an invoice.
     const aliasMap: Record<string, DocumentType> = {
+      // Fase 3 — non-fiscal / simplified kinds the vision model may name.
+      PRO_FORMA: DocumentType.PROFORMA,
+      PROFORMA_INVOICE: DocumentType.PROFORMA,
+      FATURA_PROFORMA: DocumentType.PROFORMA,
+      FATURA_PRO_FORMA: DocumentType.PROFORMA,
+      QUOTATION: DocumentType.ORCAMENTO,
+      QUOTE: DocumentType.ORCAMENTO,
+      DEVIS: DocumentType.ORCAMENTO,
+      PRESUPUESTO: DocumentType.ORCAMENTO,
+      AVISO: DocumentType.AVISO_PAGAMENTO,
+      AVISO_DE_PAGAMENTO: DocumentType.AVISO_PAGAMENTO,
+      PAYMENT_NOTICE: DocumentType.AVISO_PAGAMENTO,
+      EXTRATO: DocumentType.EXTRATO_FORNECEDOR,
+      EXTRATO_DE_CONTA: DocumentType.EXTRATO_FORNECEDOR,
+      ACCOUNT_STATEMENT: DocumentType.EXTRATO_FORNECEDOR,
+      STATEMENT: DocumentType.EXTRATO_FORNECEDOR,
+      FS: DocumentType.FATURA_SIMPLIFICADA,
+      FATURA_SIMPLIFICADA: DocumentType.FATURA_SIMPLIFICADA,
+      SIMPLIFIED_INVOICE: DocumentType.FATURA_SIMPLIFICADA,
       // Credit notes / debit notes — must precede FATURA.
       NC: DocumentType.NOTA_CREDITO,
       NOTA_CREDITO: DocumentType.NOTA_CREDITO,

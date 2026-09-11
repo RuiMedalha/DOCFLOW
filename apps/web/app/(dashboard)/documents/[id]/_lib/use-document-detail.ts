@@ -34,8 +34,13 @@ export const API_BASE = (typeof process !== 'undefined' && process.env.NEXT_PUBL
 
 export interface DocumentDetail extends ExtractedFields {
   id: string;
-  status: 'NOVO' | 'EM_REVISAO' | 'APROVADO' | 'REJEITADO' | 'CONCILIADO' | 'PAGO';
+  status: 'NOVO' | 'EM_REVISAO' | 'APROVADO' | 'REJEITADO' | 'CONCILIADO' | 'PAGO' | 'PENDING_APPROVAL' | 'CHANGES_REQUESTED' | 'DUPLICADO';
   type?: string;
+  /** Fase 3 — validade fiscal determinística + motivo legível. */
+  fiscalStatus?: 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO' | null;
+  fiscalReason?: string | null;
+  /** Fase 3 — quando status = DUPLICADO, id do documento original. */
+  duplicateOfId?: string | null;
   fileName?: string;
   fileKey?: string;
   fileSize?: number;

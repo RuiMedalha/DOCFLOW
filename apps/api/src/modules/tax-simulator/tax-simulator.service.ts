@@ -98,7 +98,9 @@ export class TaxSimulatorService {
         tenantId,
         docDate: { gte: windowStart, lt: windowEnd },
         // Excluded: drafts/archives that never had tax extracted.
-        status: { notIn: ['ARQUIVADO'] as never[] },
+        // Fase 3 — documentos não fiscais e duplicados nunca entram no IVA.
+        status: { notIn: ['ARQUIVADO', 'DUPLICADO'] as never[] },
+        fiscalStatus: { not: 'NAO_FISCAL' as never },
       },
       select: {
         id: true,

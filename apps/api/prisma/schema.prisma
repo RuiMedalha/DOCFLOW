@@ -57,6 +57,25 @@ enum DocumentType {
   ENCOMENDA
   GUIA_TRANSPORTE
   OUTRO
+  // Fase 3 — tipos não fiscais / simplificados detetados de forma
+  // determinística (palavras-chave ou código D: do QR-AT).
+  PROFORMA
+  ORCAMENTO
+  AVISO_PAGAMENTO
+  EXTRATO_FORNECEDOR
+  FATURA_SIMPLIFICADA
+}
+
+// Fase 3 — validade fiscal determinística (ver extraction/fiscal-status.ts).
+//   FISCAL         QR-AT válido (NIF emitente mod-11, ATCUD, Q e R) ou fatura
+//                  estrangeira com NIF-IVA validado no VIES + nº + data
+//   NAO_FISCAL     proforma / orçamento / aviso / extrato — nunca vai ao TOC
+//                  nem entra no IVA
+//   INDETERMINADO  tudo o resto → revisão
+enum FiscalStatus {
+  FISCAL
+  NAO_FISCAL
+  INDETERMINADO
 }
 
 enum DocumentStatus {
@@ -72,6 +91,10 @@ enum DocumentStatus {
   // for legacy rows that pre-date the workflow.
   PENDING_APPROVAL
   CHANGES_REQUESTED
+  // Fase 3 — segundo documento com a mesma chave fiscal
+  // (tenant + NIF emitente + nº documento [+ ATCUD]); fica ligado ao
+  // original via duplicateOfId e nunca é apagado.
+  DUPLICADO
 }
 
 // Sprint H — async processing pipeline state machine.
@@ -451,6 +474,16 @@ model Document {
   ivaDeductibilityPct   Int?
   docNature      String?
   isNonFiscalDoc Boolean        @default(false)
+  // Fase 3 — validade fiscal determinística + motivo legível.
+  fiscalStatus   FiscalStatus   @default(INDETERMINADO)
+  fiscalReason   String?
+  // Fase 3 — nº de documento normalizado (maiúsculas, sem separadores,
+  // sem prefixo de tipo) usado na chave fiscal de duplicados.
+  docNumberNorm  String?
+  // Fase 3 — quando status = DUPLICADO, aponta para o documento original.
+  duplicateOfId  String?
+  duplicateOf    Document?      @relation("DocumentDuplicateOf", fields: [duplicateOfId], references: [id])
+  duplicates     Document[]     @relation("DocumentDuplicateOf")
   isIntracommunity Boolean      @default(false)
 
   tags           String[]       @default([])
@@ -566,6 +599,10 @@ model Document {
   @@index([tenantId, partyId])
   @@index([tenantId, paymentStatus])
   @@index([tenantId, atcud])
+  // Fase 3 — chave fiscal (o índice ÚNICO PARCIAL vive na migration em SQL
+  // porque o Prisma não exprime índices parciais/expressões).
+  @@index([tenantId, supplierNif, docNumberNorm])
+  @@index([tenantId, fiscalStatus])
   @@index([tenantId, docNumber, total, docDate])
   @@index([tenantId, supplierVerifiedAt])
   // Trash listing / per-tenant restore lookups filter on `deletedAt`

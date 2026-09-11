@@ -51,6 +51,8 @@ import {
   resolveDocumentCountry,
   resolveTaxIds,
   sanitizeAtcud,
+  shouldClearStoredAtcud,
+  shouldClearStoredNif,
 } from "./field-validation";
 import { ViesService } from "../vies/vies.service";
 import { EcbFxService } from "../../common/fx/ecb-fx.service";
@@ -979,6 +981,31 @@ export class ExtractionService implements OnModuleDestroy {
     // Só um valor cruzado com algo (QR-AT, módulo 11, VIES) pode mostrar
     // confiança alta. O que vem só do modelo fica com teto baixo.
     const identityValidated = taxIds.validation === 'PT_MOD11' || taxIds.validation === 'VIES';
+    const updateDataPreClean: Record<string, unknown> = {};
+    // O saneamento tem de LIMPAR o que já está gravado, não apenas
+    // recusar-se a escrever por cima. O `buildUpdateData` é aditivo (só
+    // escreve valores truthy), por isso uma linha antiga com lixo ficava
+    // lá para sempre: em produção havia documentos com o TOTAL gravado
+    // na coluna do ATCUD ("1012.30", "155.00") e NIFs que falham o
+    // módulo 11, escritos antes destas regras existirem. Um operador
+    // nunca confirmaria nenhum desses valores, por isso limpá-los não
+    // apaga trabalho humano.
+    if (shouldClearStoredAtcud(doc.atcud, docCountry, atcudSan.atcud)) {
+      updateDataPreClean.atcud = null;
+      this.logger.warn(
+        `[processDocumentAsync] document=${documentId} clearing stored ATCUD ` +
+          `"${doc.atcud}" — fails the AT format or the document is not PT`,
+      );
+    }
+    if (shouldClearStoredNif(doc.supplierNif, docCountry, taxIds.nif, viesValidatedForDoc)) {
+      updateDataPreClean.supplierNif = null;
+      updateDataPreClean.nifValid = false;
+      this.logger.warn(
+        `[processDocumentAsync] document=${documentId} clearing stored supplier NIF ` +
+          `"${doc.supplierNif}" — did not pass mod-11 / VIES`,
+      );
+    }
+
     const confidenceSources = {
       nif: (atcudTrusted && parsedForFiscal?.issuerNif === taxIds.nif
         ? 'qr'
@@ -999,6 +1026,9 @@ export class ExtractionService implements OnModuleDestroy {
       // model's attempt at reading QR modules visually.
       qrPayloadOverride,
     });
+    // As limpezas explícitas (null) entram DEPOIS do buildUpdateData,
+    // que é aditivo e nunca escreve null por si.
+    Object.assign(updateData, updateDataPreClean);
     // ── Fase 3 — validade fiscal determinística + chave fiscal ──────────
     // The classifier is pure code (extraction/fiscal-status.ts). The AI
     // only contributed the *inputs* (supplier NIF/VAT, doc number, date,

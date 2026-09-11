@@ -7,6 +7,8 @@ import {
   resolveDocumentCountry,
   resolveTaxIds,
   sanitizeAtcud,
+  shouldClearStoredAtcud,
+  shouldClearStoredNif,
   vatCountry,
 } from '../field-validation';
 import { detectNonFiscalKind } from '../fiscal-status';
@@ -181,6 +183,48 @@ describe('detectNonFiscalKind() — palavras-chave acrescentadas na Fase 4.1', (
   it('não marca uma fatura normal como não fiscal', () => {
     expect(detectNonFiscalKind('FATURA FT 2026/1234')).toBeNull();
     expect(detectNonFiscalKind('FACTURA SIMPLIFICADA')).toBeNull();
+  });
+});
+
+describe('shouldClearStoredAtcud / shouldClearStoredNif — limpar o lixo já gravado', () => {
+  it('limpa os totais que ficaram gravados na coluna do ATCUD (caso real em produção)', () => {
+    // Documentos reais: "1012.30", "155.00", "32.40", "1.94", "918.60"
+    // estavam no campo atcud — são totais, não códigos da AT.
+    for (const junk of ['1012.30', '155.00', '32.40', '1.94', '918.60']) {
+      expect(shouldClearStoredAtcud(junk, 'PT', null)).toBe(true);
+    }
+  });
+
+  it('limpa um ATCUD válido que esteja num documento não-PT', () => {
+    expect(shouldClearStoredAtcud('JFXG7XVG-7018', 'ES', null)).toBe(true);
+  });
+
+  it('não mexe num ATCUD válido de um documento PT', () => {
+    expect(shouldClearStoredAtcud('JFXG7XVG-7018', 'PT', null)).toBe(false);
+  });
+
+  it('não limpa quando vamos escrever um valor bom por cima', () => {
+    expect(shouldClearStoredAtcud('1012.30', 'PT', 'J66V9C9T-6781')).toBe(false);
+  });
+
+  it('não faz nada quando não havia nada gravado', () => {
+    expect(shouldClearStoredAtcud(null, 'PT', null)).toBe(false);
+    expect(shouldClearStoredNif(null, 'PT', null, false)).toBe(false);
+  });
+
+  it('limpa os NIFs que falham o módulo 11 e mantém os que passam', () => {
+    expect(shouldClearStoredNif('507290608', 'PT', null, false)).toBe(true);
+    expect(shouldClearStoredNif('507298808', 'PT', null, false)).toBe(true);
+    expect(shouldClearStoredNif('507298608', 'PT', null, false)).toBe(false);
+  });
+
+  it('limpa um NIF-IVA comunitário que o VIES não confirma, e mantém o que confirma', () => {
+    expect(shouldClearStoredNif('ESB09802059', 'ES', null, false)).toBe(true);
+    expect(shouldClearStoredNif('ESB09802059', 'ES', null, true)).toBe(false);
+  });
+
+  it('limpa um identificador extra-UE — nunca é um NIF confirmado', () => {
+    expect(shouldClearStoredNif('GB123456789', 'GB', null, true)).toBe(true);
   });
 });
 

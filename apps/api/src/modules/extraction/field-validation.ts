@@ -221,6 +221,47 @@ export function resolveTaxIds(input: TaxIdInput): TaxIdResolution {
 }
 
 /**
+ * Fase 4.1 — o saneamento tem de LIMPAR o que já está gravado, não
+ * apenas recusar-se a escrever por cima.
+ *
+ * A escrita da extração é aditiva (só persiste valores truthy), por isso
+ * uma linha antiga com lixo ficava lá para sempre. Em produção havia
+ * documentos com o TOTAL gravado na coluna do ATCUD ("1012.30",
+ * "155.00", "32.40") e NIFs que falham o módulo 11 — escritos antes
+ * destas regras existirem. Um operador nunca confirmaria nenhum desses
+ * valores, por isso limpá-los não apaga trabalho humano; e um valor que
+ * um humano tenha corrigido à mão passa a validação e sobrevive.
+ */
+export function shouldClearStoredAtcud(
+  stored: string | null | undefined,
+  country: string | null | undefined,
+  incoming: string | null,
+): boolean {
+  if (!stored) return false;
+  if (incoming) return false; // vamos escrever um valor bom por cima
+  return sanitizeAtcud(stored, { country, fromTrustedQr: false }).atcud === null;
+}
+
+export function shouldClearStoredNif(
+  stored: string | null | undefined,
+  country: string | null | undefined,
+  incoming: string | null,
+  viesValidated: boolean,
+): boolean {
+  if (!stored) return false;
+  if (incoming) return false;
+  const isPrefixed = /^[A-Z]{2}/.test(stored);
+  return (
+    resolveTaxIds({
+      supplierNif: isPrefixed ? null : stored,
+      supplierVatId: isPrefixed ? stored : null,
+      country,
+      viesValidated,
+    }).nif === null
+  );
+}
+
+/**
  * Teto de confiança por origem do valor.
  *
  *   qr         veio de um QR-AT realmente descodificado → é prova.

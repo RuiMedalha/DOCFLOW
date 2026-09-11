@@ -46,6 +46,12 @@ import {
 } from "./extraction.constants";
 import { autoOrientImage } from "./qr-decode/qr-decoder";
 import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-status";
+import {
+  fieldConfidence,
+  resolveDocumentCountry,
+  resolveTaxIds,
+  sanitizeAtcud,
+} from "./field-validation";
 import { ViesService } from "../vies/vies.service";
 import { EcbFxService } from "../../common/fx/ecb-fx.service";
 import { pickAutoCategory } from "../parties/auto-category";
@@ -127,6 +133,24 @@ export interface ExtractedFields {
    * that without evidence.
    */
   documentType?: DocumentType;
+  /**
+   * Fase 4.1 — cabeçalho do documento transcrito à letra pelo modelo
+   * ("OFERTA DE VENTA", "PRESUPUESTO", "FACTURA", "NOTA DE CRÉDITO"…).
+   * É só texto: a decisão de fiscal/não-fiscal continua a ser tomada
+   * em código por `detectNonFiscalKind`. Indispensável para as fotos,
+   * onde o OCR devolve vazio e não há mais nada para a regra ler.
+   */
+  documentTitle?: string;
+  /**
+   * Fase 4.1 — numa nota de crédito, o número da fatura que retifica
+   * (campo "documento retificado"). Usado para ligar a NC à fatura.
+   */
+  correctedDocumentNumber?: string;
+  /**
+   * Fase 4.1 — true quando soma(linhas) − descontos + IVA = total ao
+   * cêntimo. Só então os totais podem mostrar confiança alta.
+   */
+  totalsReconciled?: boolean;
   confidence: number;
   /**
    * Origin of the fields:
@@ -883,21 +907,6 @@ export class ExtractionService implements OnModuleDestroy {
     const qrPayloadOverride =
       zxingQr ?? (aiQrAccepted ? aiQrRawForRow : undefined) ?? undefined;
 
-    const updateData = this.buildUpdateData(fields, {
-      // Persist the freshly-decoded payload to the row so re-runs don't
-      // re-prompt Gemini. Existing doc.qrPayload (already on the row)
-      // is preserved by NOT passing an override — the field stays
-      // untouched when we trusted the stored value. ZXing-decode
-      // takes priority over the AI-returned atQrRaw because the
-      // deterministic decoder is more reliable than the vision
-      // model's attempt at reading QR modules visually.
-      qrPayloadOverride,
-    });
-    // ── Fase 3 — validade fiscal determinística + chave fiscal ──────────
-    // The classifier is pure code (extraction/fiscal-status.ts). The AI
-    // only contributed the *inputs* (supplier NIF/VAT, doc number, date,
-    // raw document type); whether the document is FISCAL is decided by the
-    // QR-AT (real decode only) and by deterministic keyword rules.
     const qrOriginForFiscal: "zxing" | "stored" | "pdf-text" | "ai" | null = zxingQr
       ? "zxing"
       : storedQr
@@ -923,6 +932,78 @@ export class ExtractionService implements OnModuleDestroy {
         this.logger.warn(`[processDocumentAsync] VIES check failed: ${(err as Error).message}`);
       }
     }
+
+    // ── Fase 4.1 — saneamento determinístico de NIF e ATCUD ──────────
+    // Um NIF ou um ATCUD inventados pelo modelo que sigam para a
+    // contabilidade são o pior erro possível neste sistema. Nada do que
+    // a IA leu nestes dois campos é persistido sem passar por código:
+    //   ATCUD  só existe em Portugal e só com o formato oficial da AT;
+    //   NIF    PT → módulo 11; UE → VIES; extra-UE → nunca confirmado.
+    const docCountry = resolveDocumentCountry({
+      country: fields.country,
+      supplierVatId: fields.supplierVatId,
+      supplierNif: fields.supplierNif,
+      qrIssuerNif: parsedForFiscal?.issuerNif,
+    });
+    const taxIds = resolveTaxIds({
+      supplierNif: fields.supplierNif ?? null,
+      supplierVatId: fields.supplierVatId ?? null,
+      country: docCountry,
+      viesValidated: viesValidatedForDoc,
+    });
+    const atcudSan = sanitizeAtcud(fields.atcud ?? null, {
+      country: docCountry,
+      fromTrustedQr: atcudTrusted && Boolean(parsedForFiscal?.atcud),
+    });
+    if (taxIds.rejected) {
+      this.logger.warn(
+        `[processDocumentAsync] document=${documentId} tax id rejected ` +
+          `(${taxIds.reason}) — NOT persisted, document goes to review`,
+      );
+    }
+    if (fields.atcud && !atcudSan.atcud) {
+      this.logger.warn(
+        `[processDocumentAsync] document=${documentId} ATCUD dropped (${atcudSan.reason})`,
+      );
+    }
+    fields = {
+      ...fields,
+      supplierNif: taxIds.nif ?? undefined,
+      atcud: atcudSan.atcud ?? undefined,
+      hints: [
+        ...(fields.hints ?? []),
+        `taxId:${taxIds.validation}:${taxIds.reason}`,
+        `atcud:${atcudSan.reason}`,
+      ],
+    };
+    // Só um valor cruzado com algo (QR-AT, módulo 11, VIES) pode mostrar
+    // confiança alta. O que vem só do modelo fica com teto baixo.
+    const identityValidated = taxIds.validation === 'PT_MOD11' || taxIds.validation === 'VIES';
+    const confidenceSources = {
+      nif: (atcudTrusted && parsedForFiscal?.issuerNif === taxIds.nif
+        ? 'qr'
+        : identityValidated
+          ? 'validated'
+          : 'ai') as 'qr' | 'validated' | 'ai',
+      qrBacked: (atcudTrusted && Boolean(parsedForFiscal) ? 'qr' : 'ai') as 'qr' | 'ai',
+    };
+
+    const updateData = this.buildUpdateData(fields, {
+      confidenceSources,
+      // Persist the freshly-decoded payload to the row so re-runs don't
+      // re-prompt Gemini. Existing doc.qrPayload (already on the row)
+      // is preserved by NOT passing an override — the field stays
+      // untouched when we trusted the stored value. ZXing-decode
+      // takes priority over the AI-returned atQrRaw because the
+      // deterministic decoder is more reliable than the vision
+      // model's attempt at reading QR modules visually.
+      qrPayloadOverride,
+    });
+    // ── Fase 3 — validade fiscal determinística + chave fiscal ──────────
+    // The classifier is pure code (extraction/fiscal-status.ts). The AI
+    // only contributed the *inputs* (supplier NIF/VAT, doc number, date,
+    // raw document type); whether the document is FISCAL is decided by the
+    // QR-AT (real decode only) and by deterministic keyword rules.
     const fiscal = classifyFiscalStatus({
       qr: parsedForFiscal
         ? {
@@ -938,11 +1019,17 @@ export class ExtractionService implements OnModuleDestroy {
       supplierVatId: fields.supplierVatId ?? null,
       docNumber: fields.docNumber ?? null,
       docDate: fields.docDate ?? null,
+      // Fase 4.1 — nas fotos o OCR devolve vazio (`textSource: none`), e
+      // era por isso que a regra de palavras-chave corria às cegas e uma
+      // "oferta de venta" espanhola passava por fatura. O `documentTitle`
+      // é o cabeçalho transcrito à letra pelo modelo: dá texto à regra
+      // sem lhe dar a decisão, que continua a ser tomada aqui em código.
       text: [
         loaded.text,
+        fields.documentTitle ?? "",
         doc.fileName,
         fields.documentType ?? "",
-        ...(fields.hints ?? []).filter((h) => /^(aiDocType|documentType|aiDocumentType):/i.test(h)),
+        ...(fields.hints ?? []).filter((h) => /^(aiDocType|documentType|aiDocumentType|aiDocTitle):/i.test(h)),
       ].join(String.fromCharCode(10)),
       viesValidated: viesValidatedForDoc,
     });
@@ -1549,6 +1636,9 @@ export class ExtractionService implements OnModuleDestroy {
       "discountAmount",
       "isEuIntracommunity",
       "documentLocale",
+      "documentTitle",
+      "correctedDocumentNumber",
+      "totalsReconciled",
     ];
     for (const k of allowed) {
       const v = fields[k];
@@ -2747,6 +2837,15 @@ export class ExtractionService implements OnModuleDestroy {
       }
       if (typeof pick("isEuIntracommunity") === "boolean") {
         merged.isEuIntracommunity = pick("isEuIntracommunity");
+      }
+      // Fase 4.1 — cabeçalho literal + referência da fatura retificada.
+      const docTitle = pick("documentTitle") as string | undefined;
+      if (docTitle && docTitle.trim().length > 0) {
+        merged.documentTitle = docTitle.trim().slice(0, 200);
+      }
+      const correctedRef = pick("correctedDocumentNumber") as string | undefined;
+      if (correctedRef && correctedRef.trim().length > 0) {
+        merged.correctedDocumentNumber = correctedRef.trim().slice(0, 100);
       }
       const suggestedCategory = pick("suggestedCategory") as string | undefined;
       if (suggestedCategory && suggestedCategory.trim().length > 0) {
@@ -4474,7 +4573,18 @@ export class ExtractionService implements OnModuleDestroy {
    */
   private buildUpdateData(
     fields: ExtractedFields,
-    options?: { qrPayloadOverride?: string },
+    options?: {
+      qrPayloadOverride?: string;
+      /**
+       * Fase 4.1 — origem de cada família de campos, para o teto de
+       * confiança. Sem isto assume-se `ai` (teto baixo), que é a
+       * posição segura: quem não prova, não mostra 90 %.
+       */
+      confidenceSources?: {
+        nif: 'qr' | 'validated' | 'ai';
+        qrBacked: 'qr' | 'ai';
+      };
+    },
   ): Prisma.DocumentUpdateInput {
     const data: Prisma.DocumentUpdateInput = {};
     if (fields.supplierNif) data.supplierNif = fields.supplierNif;
@@ -4514,27 +4624,35 @@ export class ExtractionService implements OnModuleDestroy {
     // mod-97 are cheap enough that running them here is free, and the
     // review screen needs the verdict alongside the value to flag
     // "AI is confident but the checksum disagrees" cases.
-    const fan = (column: string) => {
-      if (
-        typeof fields.confidence !== "number" ||
-        !Number.isFinite(fields.confidence)
-      ) {
-        return;
-      }
-      (data as Record<string, unknown>)[column] = fields.confidence;
+    //
+    // Fase 4.1 — a confiança reportada tem de refletir a validação. Um
+    // campo que não foi cruzado com nada (só o modelo o viu) fica com
+    // teto em UNVALIDATED_CONFIDENCE_CAP, para a interface não mostrar
+    // 90 % num valor que ninguém verificou.
+    const src = options?.confidenceSources;
+    const fan = (column: string, source: "qr" | "validated" | "ai" = "ai") => {
+      const value = fieldConfidence(fields.confidence, source);
+      if (value == null) return;
+      (data as Record<string, unknown>)[column] = value;
     };
 
     if (fields.supplierNif) {
-      fan("supplierNifConfidence");
+      // Chegou aqui → já passou o resolveTaxIds (módulo 11 / VIES).
+      fan("supplierNifConfidence", src?.nif ?? "validated");
       data.nifValid = this.isValidPortugueseNifLocal(fields.supplierNif);
     }
     if (fields.iban) {
-      fan("supplierIbanConfidence");
-      data.ibanValid = this.isValidIbanLocal(fields.iban);
+      const ibanValid = this.isValidIbanLocal(fields.iban);
+      fan("supplierIbanConfidence", ibanValid ? "validated" : "ai");
+      data.ibanValid = ibanValid;
     }
     if (fields.supplier) fan("supplierNameConfidence");
-    if (fields.total != null) fan("totalAmountConfidence");
-    if (fields.docDate) fan("issueDateConfidence");
+    if (fields.total != null) {
+      // Os totais só são "validados" quando fecham entre si ao cêntimo
+      // (soma − descontos + IVA = total) ou vieram do QR-AT.
+      fan("totalAmountConfidence", fields.totalsReconciled ? "validated" : (src?.qrBacked ?? "ai"));
+    }
+    if (fields.docDate) fan("issueDateConfidence", src?.qrBacked ?? "ai");
     if (fields.dueDate) fan("dueDateConfidence");
     if (fields.suggestedCategory) fan("categoryConfidence");
     return data;

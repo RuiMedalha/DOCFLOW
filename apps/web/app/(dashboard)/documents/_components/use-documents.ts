@@ -29,6 +29,7 @@ function buildQuery(
   if (filters.search) sp.set('search', filters.search);
   if (filters.status) sp.set('status', filters.status);
   if (filters.type) sp.set('type', filters.type);
+  if (filters.fiscalStatus) sp.set('fiscalStatus', filters.fiscalStatus);
   if (filters.dateFrom) sp.set('dateFrom', filters.dateFrom);
   if (filters.dateTo) sp.set('dateTo', filters.dateTo);
   // Origin filter (Sprint F): the backend DTO accepts both CSV strings

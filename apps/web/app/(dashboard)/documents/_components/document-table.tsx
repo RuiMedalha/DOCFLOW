@@ -3,8 +3,8 @@
 /**
  * DocFlow — DocumentTable.
  *
- * TanStack Table with columns: file, type, supplier, NIF, date, total,
- * IVA, status, folder. Supports selection (used by bulk actions),
+ * TanStack Table with columns: file, type, supplier, NIF, ATCUD, date,
+ * total, IVA, status (+ fiscal validity), folder. Supports selection (used by bulk actions),
  * empty/loading states, and pagination via the parent.
  */
 
@@ -29,12 +29,14 @@ import {
 } from './types';
 
 const STATUS_BADGE: Record<DocumentStatus, string> = {
-  novo: 'badge-amber',
-  processado: 'badge-emerald',
-  em_revisao: 'badge-sky',
-  arquivado: 'badge-violet',
-  conciliado: 'badge-emerald',
-  erro: 'badge-rose',
+  NOVO: 'badge-amber',
+  PROCESSADO: 'badge-emerald',
+  EM_REVISAO: 'badge-sky',
+  APROVADO: 'badge-emerald',
+  REJEITADO: 'badge-rose',
+  ARQUIVADO: 'badge-violet',
+  PENDING_APPROVAL: 'badge-amber',
+  CHANGES_REQUESTED: 'badge-amber',
   DUPLICADO: 'badge-rose',
 };
 
@@ -168,7 +170,7 @@ export function DocumentTable({
           </span>
         ),
       }),
-      columnHelper.accessor('nif', {
+      columnHelper.accessor('supplierNif', {
         header: 'NIF',
         cell: ({ getValue }) => (
           <span className="text-sm tabular-nums" style={{ color: 'var(--text-muted)' }}>
@@ -176,7 +178,17 @@ export function DocumentTable({
           </span>
         ),
       }),
-      columnHelper.accessor('documentDate', {
+      // Fase 4.1 — o ATCUD estava só no detalhe; na listagem é o que
+      // distingue de relance um documento certificado pela AT.
+      columnHelper.accessor('atcud', {
+        header: 'ATCUD',
+        cell: ({ getValue }) => (
+          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+            {getValue() ?? '—'}
+          </span>
+        ),
+      }),
+      columnHelper.accessor('docDate', {
         header: 'Data',
         cell: ({ getValue }) => (
           <span className="text-sm tabular-nums" style={{ color: 'var(--text-muted)' }}>
@@ -192,7 +204,7 @@ export function DocumentTable({
           </span>
         ),
       }),
-      columnHelper.accessor('iva', {
+      columnHelper.accessor('taxAmount', {
         header: 'IVA',
         cell: ({ getValue }) => (
           <span className="text-sm tabular-nums" style={{ color: 'var(--text-muted)' }}>
@@ -207,7 +219,17 @@ export function DocumentTable({
           const fiscal = row.original.fiscalStatus;
           return (
             <span className="inline-flex flex-wrap items-center gap-1">
-              <span className={STATUS_BADGE[v]}>{DOCUMENT_STATUS_LABEL[v] ?? v}</span>
+              {row.original.duplicateOfId ? (
+                <Link
+                  href={`/documents/${row.original.duplicateOfId}`}
+                  className={STATUS_BADGE[v]}
+                  title="Duplicado — abrir o documento original"
+                >
+                  {DOCUMENT_STATUS_LABEL[v] ?? v}
+                </Link>
+              ) : (
+                <span className={STATUS_BADGE[v]}>{DOCUMENT_STATUS_LABEL[v] ?? v}</span>
+              )}
               {/* Fase 3 — validade fiscal determinística; INDETERMINADO fica implícito */}
               {fiscal && fiscal !== 'INDETERMINADO' && (
                 <span className={FISCAL_STATUS_BADGE[fiscal]} title={row.original.fiscalReason ?? undefined}>

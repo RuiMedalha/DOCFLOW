@@ -13,6 +13,7 @@ import { PartyPaymentsController } from './payments/party-payments.controller';
 import { PartyPaymentsService } from './payments/party-payments.service';
 import { PartyImportService } from './party-import.service';
 import { PartyProductsService } from './party-products.service';
+import { PartyMergeService } from './party-merge.service';
 
 /**
  * PartiesModule — supplier/customer master + PT chart of accounts + IBAN
@@ -59,6 +60,7 @@ import { PartyProductsService } from './party-products.service';
     PartyPaymentsService,
     PartyImportService,
     PartyProductsService,
+    PartyMergeService,
   ],
   exports: [
     PartiesService,
@@ -66,6 +68,7 @@ import { PartyProductsService } from './party-products.service';
     PartyAddressesService,
     PartyTimelineService,
     PartyPaymentsService,
+    PartyMergeService,
   ],
 })
 export class PartiesModule {}

@@ -20,7 +20,12 @@
 import { isValidPortugueseNif } from '../../common/validation/tax-id.validator';
 
 export type FiscalStatusValue = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO';
-export type NonFiscalType = 'PROFORMA' | 'ORCAMENTO' | 'AVISO_PAGAMENTO' | 'EXTRATO_FORNECEDOR';
+export type NonFiscalType =
+  | 'PROFORMA'
+  | 'ORCAMENTO'
+  | 'AVISO_PAGAMENTO'
+  | 'EXTRATO_FORNECEDOR'
+  | 'ENCOMENDA';
 
 export interface FiscalClassificationInput {
   /** Parsed AT-QR (from packages/shared parseAtQr), when a real payload exists. */
@@ -51,9 +56,14 @@ export interface FiscalClassification {
 
 const NON_FISCAL_RULES: Array<{ type: NonFiscalType; pattern: RegExp }> = [
   { type: 'PROFORMA', pattern: /\b(pro[\s-]?forma|pr[oó][\s-]?forma|fatura\s+pro[\s-]?forma|proforma\s+invoice)\b/i },
-  { type: 'ORCAMENTO', pattern: /\b(or[çc]amento|quotation|quote\s*(?:n[ºo°.]|#|no\.?)|devis|presupuesto|preventivo|kostenvoranschlag|angebot)\b/i },
+  // Fase 4.1 — "oferta de venta" (ES) é o cabeçalho da TEFCOLD que o
+  // sistema deixou passar como fatura; "quote"/"quotation" e as formas
+  // alemãs entram aqui pela mesma razão.
+  { type: 'ORCAMENTO', pattern: /\b(or[çc]amento|quota(?:tion|ç[ãa]o)|quote|devis|presupuesto|oferta\s+de\s+ven[dt]a|oferta\s+comercial|preventivo|kostenvoranschlag|angebot)\b/i },
   { type: 'AVISO_PAGAMENTO', pattern: /\b(aviso\s+de\s+(?:pagamento|cobran[çc]a|vencimento|d[eé]bito|lan[çc]amento)|payment\s+(?:notice|reminder|advice)|avis\s+de\s+paiement|aviso\s+de\s+pago)\b/i },
   { type: 'EXTRATO_FORNECEDOR', pattern: /\b(extra[ct]o\s+(?:de\s+)?(?:conta|fornecedor|cliente|movimentos)|account\s+statement|statement\s+of\s+account|relev[eé]\s+de\s+compte|extracto\s+de\s+cuenta)\b/i },
+  // Fase 4.1 — uma nota de encomenda não é documento fiscal.
+  { type: 'ENCOMENDA', pattern: /\b(nota\s+de\s+encomenda|purchase\s+order|pedido\s+de\s+compra|bon\s+de\s+commande|bestellung)\b/i },
 ];
 
 /** Detect a non-fiscal document kind from free text. Order matters (first hit wins). */
@@ -79,10 +89,18 @@ export function isSyntacticallyValidEuVat(vat: string | null | undefined): boole
   return /^[A-Z0-9+*]{2,13}$/.test(rest);
 }
 
+/**
+ * Formato oficial do ATCUD: `<código de validação>-<nº sequencial>`. O
+ * código de validação atribuído pela AT tem 8 ou mais caracteres
+ * alfanuméricos — o `ABC1234-56789` que o modelo inventou tem 7 e é
+ * rejeitado por esta regra (Fase 4.1).
+ */
+export const ATCUD_PATTERN = /^[A-Z0-9]{8,}-\d+$/;
+
 export function isValidAtQr(qr: FiscalClassificationInput['qr']): boolean {
   if (!qr) return false;
   if (!qr.issuerNif || !isValidPortugueseNif(qr.issuerNif)) return false;
-  if (!qr.atcud || !/^[A-Z0-9]{4,}-\d+$/i.test(qr.atcud.trim())) return false;
+  if (!qr.atcud || !ATCUD_PATTERN.test(qr.atcud.trim().toUpperCase())) return false;
   if (!qr.hash4 || qr.hash4.trim().length < 4) return false;
   if (!qr.softwareCert || !/^\d{1,5}$/.test(qr.softwareCert.trim())) return false;
   return true;

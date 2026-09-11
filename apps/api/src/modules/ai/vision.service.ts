@@ -99,6 +99,19 @@ export interface VisionExtractedFields {
   ivaBreakdown?: Array<{ rate: number; base: number; tax: number }>;
   documentType?: string; // FATURA / RECIBO / NOTA_CREDITO / NOTA_DEBITO / FATURA_RECIBO / ...
   /**
+   * Fase 4.1 — cabeçalho do documento transcrito à letra ("OFERTA DE
+   * VENTA", "PRESUPUESTO", "FACTURA"…). É texto, não é classificação:
+   * quem decide se o documento é fiscal é `detectNonFiscalKind` em
+   * código. Nas fotos, onde o OCR devolve vazio, é a única fonte de
+   * texto que a regra determinística tem.
+   */
+  documentTitle?: string;
+  /**
+   * Fase 4.1 — numa nota de crédito, o número da fatura que retifica,
+   * tal como impresso. Null em qualquer outro tipo de documento.
+   */
+  correctedDocumentNumber?: string;
+  /**
    * Invoice-level (global) discount amount — a single line "Desconto
    * global" or "Desconto de cabeçalho" the supplier subtracts from the
    * subtotal before VAT. Distinct from `lineItems[i].discount` which is
@@ -198,6 +211,8 @@ const VISION_JSON_SCHEMA_DESCRIPTION = `Return ONLY a valid JSON object (no mark
   "discountAmount": number|null,      // DESCONTO GLOBAL da fatura (cabeçalho), em moeda do documento. Nulo quando não aplicável. DISTINCT from per-line discount which is per line item. null (not 0) when the invoice has no global discount.
   "ivaBreakdown": [{ "rate": number, "base": number, "tax": number }]|null,    // per-rate VAT breakdown — REQUIRED when the invoice has more than one VAT rate. base = sum of net amounts at that rate AFTER line-level discounts (before VAT). tax = base * rate/100. tax values must reconcile with taxAmount.
   "documentType": string|null,        // "FATURA" | "RECIBO" | "NOTA_CREDITO" | "NOTA_DEBITO" | "FACTURA" | "INVOICE" | ...
+  "documentTitle": string|null,       // The document's own heading, TRANSCRIBED VERBATIM, exactly as printed at the top of the page — "FACTURA", "OFERTA DE VENTA", "PRESUPUESTO", "NOTA DE CRÉDITO", "ORÇAMENTO", "PROFORMA", "ALBARÁN", "PURCHASE ORDER", "STATEMENT OF ACCOUNT". Copy the characters you see; do NOT translate, normalise, expand or interpret it. This is raw text for a downstream deterministic rule — an accurate transcription matters far more than a tidy label.
+  "correctedDocumentNumber": string|null, // For a CREDIT NOTE / NOTA DE CRÉDITO only: the number of the invoice it rectifies, as printed ("Ref. FT 2026/123", "Rectifica factura A-4471"). Return just the invoice number. null on every other document type.
   "lineItems": [                      // structured line items (best-effort; null when the document has none)
     {
       "description": string|null,    // product/service description
@@ -228,6 +243,9 @@ Your job: extract the structured fields from whatever document the user provides
 
 Accounting framing:
 - Decide \`documentType\` (FATURA / RECIBO / NOTA_CREDITO / NOTA_DEBITO / FATURA_RECIBO / etc.) from the document's own header, not from the file name.
+- ALWAYS fill \`documentTitle\` with the heading exactly as printed, character for character, in the document's own language. This is not a classification — it is a transcription. A downstream deterministic rule reads it to decide whether the document is fiscal at all, so a quotation whose heading reads "OFERTA DE VENTA" must come back as "OFERTA DE VENTA" and not as "FACTURA".
+- A Portuguese ATCUD exists ONLY on Portuguese AT-certified documents. NEVER produce an ATCUD-shaped code for a non-Portuguese document, and never invent one: if you cannot read it from the document, the corresponding field stays null.
+- NEVER invent a tax number. If the NIF / VAT / CIF is not legible, return null. A guessed identifier is far worse than a missing one.
 - Map every expense onto an SNC/PGC account in \`suggestedCategory\`. Common mappings for supplier invoices (FSE — Fornecimentos e Serviços Externos): "62.2.1 — Trabalhos especializados", "62.2.2 — Publicidade e propaganda", "62.2.3 — Vigilância e segurança", "62.2.4 — Honorários", "62.2.5 — Comissões", "62.2.6 — Conservação e reparação", "62.3.1 — Ferramentas e utensílios", "62.3.2 — Livros e documentação técnica", "62.3.3 — Material de escritório", "62.4.1 — Eletricidade", "62.4.2 — Combustíveis", "62.4.3 — Água", "62.4.4 — Gás", "62.5 — Deslocações, estadas e transporte", "62.6 — Serviços diversos". Common mappings for goods (CMVMC): "31.1 — Mercadorias", "31.2 — Matérias-primas". Use the most specific code you can justify. When in doubt pick a generic parent (e.g. "62 — Fornecimentos e serviços externos"). \`suggestedCategory\` is the signal that drives auto-filing into the correct accounting folder — be precise.
 - Set \`isEuIntracommunity\` to true ONLY when the supplier is a non-Portuguese EU entity (any country in the EU except Portugal), the document is a true invoice (not a simplified receipt), and Portuguese VAT is NOT being charged (reverse charge / autoliquidação). A Spanish supplier charging 21% Spanish VAT is NOT intracommunity. A Spanish supplier issuing an invoice with no VAT for an EU B2B customer IS intracommunity.
 - Extract \`lineItems\` from every line of the table — description, quantity, unit price, VAT rate, line total, AND per-line discount when printed ("Desconto" / "Desc" / "Discount" / "Rabatt" / "Remise"). Cap at the most informative 30 rows when the invoice is very long, but never drop the totals rows.
@@ -2119,6 +2137,18 @@ export function normalizeExtractedFields(
   // isEuIntracommunity — only set when the model emitted an explicit boolean.
   if (typeof raw['isEuIntracommunity'] === 'boolean') {
     out.isEuIntracommunity = raw['isEuIntracommunity'];
+  }
+  // Fase 4.1 — documentTitle: transcrição literal do cabeçalho. Só texto
+  // (a decisão fiscal/não-fiscal é tomada por código a jusante).
+  if (typeof raw['documentTitle'] === 'string') {
+    const title = raw['documentTitle'].trim();
+    if (title.length > 0) out.documentTitle = title.slice(0, 200);
+  }
+  // Fase 4.1 — correctedDocumentNumber: a fatura que uma nota de crédito
+  // retifica, tal como impressa no documento.
+  if (typeof raw['correctedDocumentNumber'] === 'string') {
+    const ref = raw['correctedDocumentNumber'].trim();
+    if (ref.length > 0) out.correctedDocumentNumber = ref.slice(0, 100);
   }
   // suggestedCategory — single free-form string. Trim and length-cap so a
   // chatty model can't bloat the metadata blob.

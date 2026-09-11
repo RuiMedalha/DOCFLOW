@@ -28,6 +28,7 @@ import { PartiesService } from './parties.service';
 import { ViesService } from '../vies/vies.service';
 import { PartyImportService } from './party-import.service';
 import { PartyProductsService } from './party-products.service';
+import { PartyMergeService } from './party-merge.service';
 import { UploadedFile, UseInterceptors, BadRequestException as PartiesBadRequest } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentsService } from '../documents/documents.service';
@@ -40,6 +41,7 @@ import {
   CreatePartyDto,
   FlagIbanDto,
   MarkVerifiedIbanDto,
+  MergePartyDto,
   PartyQueryDto,
   UpdatePartyDto,
 } from './dto/party.dto';
@@ -88,6 +90,7 @@ export class PartiesController {
     private readonly vies: ViesService,
     private readonly partyImport: PartyImportService,
     private readonly partyProducts: PartyProductsService,
+    private readonly partyMerge: PartyMergeService,
   ) {}
 
   // ── Fase 4 ─────────────────────────────────────────────────────────
@@ -131,6 +134,40 @@ export class PartiesController {
     @Query('force') force?: string,
   ) {
     return this.vies.validateParty(user.tenantId, id, force === 'true' || force === '1');
+  }
+
+  // ── Fase 4.1 — fundir entidades ────────────────────────────────────
+  // Em produção o mesmo fornecedor ficou partido por várias Party (três
+  // "CreateInfor"). Esta rota corrige o que já está partido; o
+  // party-identity impede que volte a acontecer.
+  @Get('parties/duplicates')
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Grupos de entidades que parecem ser o mesmo fornecedor',
+    description:
+      'Agrupa por NIF ou por nome normalizado (sem acentos, sem formas jurídicas) + país. '
+      + 'Sugere como destino a mais antiga que tenha NIF.',
+  })
+  duplicates(@CurrentUser() user: AuthenticatedUser) {
+    return this.partyMerge.findDuplicates(user.tenantId);
+  }
+
+  @Post('parties/:id/merge')
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Fundir outra entidade nesta (move documentos, contactos, IBANs e histórico)',
+    description:
+      'O `:id` é o DESTINO (sobrevive); `sourceId` no corpo é a entidade absorvida, '
+      + 'que fica inativa mas nunca é apagada. Recusa fundir entidades que não partilhem '
+      + 'NIF nem nome normalizado. Fica registado na auditoria.',
+  })
+  mergeParty(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: MergePartyDto,
+  ) {
+    return this.partyMerge.merge(user.tenantId, user.id, id, dto.sourceId);
   }
 
   @Get('parties/:id/products')

@@ -18,6 +18,7 @@ import {
   DocumentOrigin,
   DocumentStatus,
   DocumentType,
+  FiscalStatus,
 } from '@prisma/client';
 import { EXPENSE_CATEGORIES } from '../folder-rules/folder-rules.types';
 
@@ -185,6 +186,16 @@ export class DocumentQueryDto {
   @IsOptional()
   @IsEnum(DocumentStatus)
   status?: DocumentStatus;
+
+  /**
+   * Fase 4.1 — filtro por validade fiscal determinística. O teste real
+   * mostrou que a listagem não deixava separar o que já é fiscal do que
+   * ainda está por confirmar.
+   */
+  @ApiPropertyOptional({ enum: FiscalStatus })
+  @IsOptional()
+  @IsEnum(FiscalStatus)
+  fiscalStatus?: FiscalStatus;
 
   @ApiPropertyOptional({ enum: DocumentType })
   @IsOptional()

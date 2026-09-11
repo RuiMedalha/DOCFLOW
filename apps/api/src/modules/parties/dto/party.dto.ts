@@ -284,3 +284,17 @@ export class FlagIbanDto {
   @Min(0)
   riskScore?: number;
 }
+
+/**
+ * Fase 4.1 — corpo de POST /parties/:id/merge. O `:id` da rota é o
+ * DESTINO (a entidade que sobrevive); `sourceId` é a que é absorvida.
+ */
+export class MergePartyDto {
+  @ApiProperty({
+    description: 'Id da entidade a absorver. Fica inativa, nunca é apagada.',
+    example: 'cmtwuhdh70041p307tjybmg5t',
+  })
+  @IsString()
+  @MaxLength(50)
+  sourceId!: string;
+}

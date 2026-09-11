@@ -4,6 +4,7 @@ import { isValidNif, normalizeNif, normalizeIban } from "@docflow/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { NifLookupService } from "../nif-lookup/nif-lookup.service";
 import { ViesProvider } from "../enrichment/providers/vies.provider";
+import { normalizePartyName } from "../parties/party-identity";
 
 /**
  * Inputs the extractor feeds into the supplier auto-resolve step.
@@ -116,19 +117,27 @@ export class SupplierResolver {
       // Foreign VATs are stored in the `nif` column with their country
       // prefix so future lookups can match on (nif + country). PT NIFs
       // are stored as the bare 9-digit string.
-      const taxIdToStore =
+      // Fase 4.1 — nada de identificadores não validados na Party. Um
+      // NIF-IVA estrangeiro só se torna a identidade do fornecedor
+      // depois de o VIES o confirmar (ver `viesConfirmed` abaixo); até
+      // lá fica em `vatNumber` como texto não validado e a identidade é
+      // o nome normalizado + país.
+      let taxIdToStore =
         countryCode === "PT"
           ? taxIdValid
             ? normalizedNif
             : null
-          : normalizedVat || null;
+          : null;
 
       // Look up by NIF (PT) OR VAT (foreign). Tenant scoping is mandatory.
       const existing = await this.lookupParty({
         tenantId,
-        nif: normalizedNif || null,
-        vatId: normalizedVat || null,
+        // Só procuramos por NIF quando ele é válido — procurar por um
+        // NIF que falhou o módulo 11 é procurar por lixo.
+        nif: taxIdValid ? normalizedNif || null : null,
+        vatId: taxIdValid ? normalizedVat || null : null,
         country: countryCode,
+        name: supplierName,
       });
 
       const confidenceOk = (aiConfidence ?? 0) > SupplierResolver.CONFIDENCE_FLOOR;
@@ -146,6 +155,14 @@ export class SupplierResolver {
         taxIdValid,
         iban,
       });
+
+      // Para fornecedores comunitários, o VIES confirmou a inscrição
+      // sempre que devolveu dados oficiais (`source === 'vies'`).
+      const viesConfirmed =
+        countryCode !== "PT" && Boolean(normalizedVat) && officialData?.source === "vies";
+      if (viesConfirmed) {
+        taxIdToStore = normalizedVat;
+      }
 
       let partyRow: { id: string; isRecurring: boolean; name: string; nif: string | null; address?: string | null; city?: string | null; postalCode?: string | null; country?: string | null } | null = existing;
 
@@ -165,6 +182,11 @@ export class SupplierResolver {
               type: PartyType.FORNECEDOR,
               name: nameToStore,
               nif: taxIdToStore,
+              // Texto não validado fica visível como tal: `vatNumber`
+              // com `viesValid` a dizer a verdade sobre ele.
+              ...(normalizedVat && countryCode !== "PT"
+                ? { vatNumber: normalizedVat, viesValid: viesConfirmed ? true : null }
+                : {}),
               iban: ibanToStore,
               address: officialData?.address ?? null,
               city: officialData?.city ?? null,
@@ -186,6 +208,7 @@ export class SupplierResolver {
             nif: countryCode === "PT" ? taxIdToStore : null,
             vatId: countryCode !== "PT" ? normalizedVat : null,
             country: countryCode,
+            name: supplierName,
           });
           if (raced) {
             partyRow = raced;
@@ -283,8 +306,15 @@ export class SupplierResolver {
     nif: string | null;
     vatId: string | null;
     country: string;
+    /**
+     * Fase 4.1 — nome extraído, para o fallback por nome normalizado
+     * quando não há NIF validado. Sem isto, um NIF mal lido pela IA
+     * criava uma Party nova a cada documento (três `CreateInfor` em
+     * produção).
+     */
+    name?: string | null;
   }): Promise<{ id: string; name: string; nif: string | null; isRecurring: boolean } | null> {
-    const { tenantId, nif, vatId, country } = args;
+    const { tenantId, nif, vatId, country, name } = args;
 
     // Prefer NIF lookup (most common in PT).
     if (nif) {
@@ -314,6 +344,40 @@ export class SupplierResolver {
         select: { id: true, name: true, nif: true, isRecurring: true },
       });
       if (byPrefix) return byPrefix;
+    }
+
+    // ── Fase 4.1 — fallback por nome normalizado + país ──────────────
+    // Sem NIF validado, a identidade é o nome normalizado (maiúsculas,
+    // sem acentos, sem formas jurídicas LDA/SA/S.L./LTD/GMBH, sem
+    // pontuação) mais o país. Fazemos o filtro de nome em memória
+    // porque a normalização (remoção de formas jurídicas) não tem
+    // equivalente em SQL — o conjunto por tenant+país é pequeno.
+    const normalized = normalizePartyName(name);
+    if (normalized) {
+      try {
+        const candidates = await this.prisma.party.findMany({
+          where: { tenantId, country, type: PartyType.FORNECEDOR },
+          select: { id: true, name: true, nif: true, isRecurring: true },
+          orderBy: { createdAt: "asc" },
+          take: 500,
+        });
+        // Preferimos a Party que já tem NIF — é a que sobrevive à fusão.
+        const matches = candidates.filter((c) => normalizePartyName(c.name) === normalized);
+        const byName = matches.find((c) => c.nif) ?? matches[0];
+        if (byName) {
+          this.logger.log(
+            `[lookupParty] matched party=${byName.id} by normalized name ` +
+              `"${normalized}" (${country}) — no validated tax id available`,
+          );
+          return byName;
+        }
+      } catch (err) {
+        // O fallback por nome é um extra: se falhar, seguimos para a
+        // criação de uma Party nova em vez de abortar a resolução.
+        this.logger.warn(
+          `[lookupParty] name fallback failed for "${normalized}": ${(err as Error).message}`,
+        );
+      }
     }
 
     return null;

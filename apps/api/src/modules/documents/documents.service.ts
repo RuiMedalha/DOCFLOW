@@ -2975,6 +2975,7 @@ export class DocumentsService {
     };
     if (query.status) where.status = query.status;
     if (query.type) where.type = query.type;
+    if (query.fiscalStatus) where.fiscalStatus = query.fiscalStatus;
     if (query.partyId) {
       where.OR = [
         { partyId: query.partyId },

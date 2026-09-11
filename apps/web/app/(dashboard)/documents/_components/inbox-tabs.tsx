@@ -33,6 +33,7 @@ const EMPTY_FILTERS: DocumentFiltersState = {
   search: '',
   status: '',
   type: '',
+  fiscalStatus: '',
   dateFrom: '',
   dateTo: '',
 };

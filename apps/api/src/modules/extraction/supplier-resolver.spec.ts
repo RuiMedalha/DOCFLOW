@@ -58,6 +58,24 @@ function buildPrismaStub() {
       }
       return null;
     }),
+    /**
+     * Fase 4.1 — o resolver passou a procurar por nome normalizado
+     * quando não há NIF validado (fallback que evita as três
+     * `CreateInfor` que apareceram em produção).
+     */
+    findMany: jest.fn(async ({ where }: any) => {
+      const out: any[] = [];
+      for (const p of dbParties.values()) {
+        if (
+          (!where?.tenantId || p.tenantId === where.tenantId) &&
+          (!where?.country || p.country === where.country) &&
+          (!where?.type || p.type === where.type)
+        ) {
+          out.push({ id: p.id, name: p.name, nif: p.nif, isRecurring: p.isRecurring });
+        }
+      }
+      return out;
+    }),
     create: jest.fn(async ({ data }: any) => {
       const id = `party-${++partyCounter}`;
       const now = new Date();
@@ -295,7 +313,13 @@ describe("SupplierResolver", () => {
     expect(party.nif).toBeNull();
   });
 
-  it("creates a Party with a country-prefixed VAT for foreign suppliers (no PT NIF)", async () => {
+  /**
+   * Fase 4.1 — um NIF-IVA estrangeiro deixou de se tornar a identidade
+   * do fornecedor só por ter a sintaxe certa. Sem confirmação do VIES
+   * fica em `vatNumber` como texto não validado (`viesValid: null`) e a
+   * coluna `nif` — que é a chave de identificação — não é preenchida.
+   */
+  it("keeps a foreign VAT as unvalidated text until VIES confirms it", async () => {
     const prisma = buildPrismaStub();
     const resolver = new SupplierResolver(prisma as any);
 
@@ -308,12 +332,73 @@ describe("SupplierResolver", () => {
     });
 
     expect(prisma.dbParties.size).toBe(1);
-    const party = Array.from(prisma.dbParties.values())[0];
+    const party: any = Array.from(prisma.dbParties.values())[0];
     expect(party.country).toBe("FR");
-    // The helper stores the VAT as the `nif` column with its country
-    // prefix so future lookups can match.
+    expect(party.nif).toBeNull();
+    expect(party.vatNumber).toBe("FR12345678901");
+    expect(party.viesValid).toBeNull();
+    expect(result.party).not.toBeNull();
+  });
+
+  it("promotes a foreign VAT to the identity column once VIES returns official data", async () => {
+    const prisma = buildPrismaStub();
+    const viesProvider = {
+      fetch: jest.fn(async () => ({
+        ok: true,
+        fields: { name: "SOCIETE FRANCAISE SARL", address: "1 Rue de Paris", city: "Paris", postalCode: "75001" },
+      })),
+    };
+    const resolver = new SupplierResolver(prisma as any, undefined, viesProvider as any);
+
+    await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "FR",
+      supplierName: "Société Française SARL",
+      supplierVatId: "FR12345678901",
+      aiConfidence: 0.91,
+    });
+
+    const party: any = Array.from(prisma.dbParties.values())[0];
     expect(party.nif).toBe("FR12345678901");
-    expect(result.supplierReview).toBe(false);
+    expect(party.vatNumber).toBe("FR12345678901");
+    expect(party.viesValid).toBe(true);
+  });
+
+  /**
+   * Fase 4.1 — a causa das três `CreateInfor` em produção: a IA trocou
+   * um dígito do NIF, o módulo 11 falhou, não se gravou NIF nenhum e a
+   * procura seguinte criou outra entidade. Agora o nome normalizado
+   * apanha-a.
+   */
+  it("links to the existing party by normalized name when the AI's NIF fails mod-11", async () => {
+    const prisma = buildPrismaStub();
+    const resolver = new SupplierResolver(prisma as any);
+
+    // 1º documento: NIF válido → cria a Party com NIF.
+    await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "CreateInfor",
+      supplierNif: "507298608",
+      aiConfidence: 0.95,
+    });
+    expect(prisma.dbParties.size).toBe(1);
+
+    // 2º documento: mesma empresa, NIF mal lido (507290608 falha mod-11)
+    // e nome com a forma jurídica — tem de ligar à MESMA Party.
+    const again = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "CreateInfor, Lda",
+      supplierNif: "507290608",
+      aiConfidence: 0.95,
+    });
+
+    expect(prisma.dbParties.size).toBe(1);
+    const party: any = Array.from(prisma.dbParties.values())[0];
+    expect(again.party?.id).toBe(party.id);
+    expect(party.nif).toBe("507298608");
+    expect(again.supplierReview).toBe(true); // o NIF inválido continua a pedir revisão
   });
 
   it("returns { party: null, supplierReview: true } on DB failure (no crash)", async () => {

@@ -78,6 +78,28 @@ export class ArchiveImageService {
       }
       if (!out) return null;
 
+      // Uma foto que já era pequena e já estava direita não tem nada a
+      // ganhar em ser re-codificada: só perderia qualidade e, com o
+      // invólucro do PDF, ainda acabava maior (262KB → 348KB no teste
+      // real). Nesse caso ficamos com os bytes originais.
+      if (
+        decision.rotate === 0 &&
+        !fit.scaled &&
+        buffer.length <= ARCHIVE_MAX_BYTES &&
+        out.length >= buffer.length
+      ) {
+        return {
+          buffer,
+          rotation: 0,
+          rotationReason: `${decision.reason};kept_original_already_small`,
+          quality: 100,
+          width: img.bitmap.width,
+          height: img.bitmap.height,
+          originalBytes: buffer.length,
+          withinBudget: true,
+        };
+      }
+
       return {
         buffer: out,
         rotation: decision.rotate,

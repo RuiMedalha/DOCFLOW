@@ -899,7 +899,11 @@ export class ExtractionService implements OnModuleDestroy {
           : aiQrAccepted
             ? "ai"
             : null;
-    const qrForFiscal = qrPayloadOverride ?? doc.qrPayload ?? null;
+    const qrForFiscal = qrPayloadOverride ?? (storedQrTrusted ? doc.qrPayload : null) ?? null;
+    // An ATCUD is authoritative only when it came from a real QR decode; an
+    // LLM read-back can flip a character (JJY2HD8C vs JJY2HD80 on the same
+    // IKEA receipt), so it may confirm a duplicate but never veto one.
+    const atcudTrusted = qrOriginForFiscal !== null && qrOriginForFiscal !== "ai";
     const parsedForFiscal = qrForFiscal ? parseAtQr(qrForFiscal) : null;
     const fiscal = classifyFiscalStatus({
       qr: parsedForFiscal
@@ -943,6 +947,7 @@ export class ExtractionService implements OnModuleDestroy {
         fields.supplierNif ?? null,
         docNumberNorm,
         fields.atcud ?? null,
+        atcudTrusted,
       );
       if (duplicateOfDoc) {
         this.logger.warn(
@@ -1175,6 +1180,7 @@ export class ExtractionService implements OnModuleDestroy {
         fields.supplierNif ?? null,
         docNumberNorm,
         fields.atcud ?? null,
+        atcudTrusted,
       );
       if (!original) throw err;
       this.logger.warn(
@@ -2768,6 +2774,7 @@ export class ExtractionService implements OnModuleDestroy {
     supplierNif: string | null,
     docNumberNorm: string | null,
     atcud: string | null,
+    atcudTrusted = true,
   ): Promise<{ id: string; fileName: string } | null> {
     const finder = (this.prisma.document as unknown as { findMany?: unknown }).findMany;
     if (typeof finder !== "function") return null;
@@ -2793,7 +2800,7 @@ export class ExtractionService implements OnModuleDestroy {
       });
       const hit =
         rows.find((r) => atcud && r.atcud === atcud) ??
-        rows.find((r) => !r.atcud || !atcud);
+        rows.find((r) => !r.atcud || !atcud || !atcudTrusted);
       return hit ? { id: hit.id, fileName: hit.fileName } : null;
     } catch (err) {
       this.logger.warn(

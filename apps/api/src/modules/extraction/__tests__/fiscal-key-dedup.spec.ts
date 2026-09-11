@@ -47,6 +47,14 @@ describe("ExtractionService.findFiscalKeyOriginal() — Fase 3", () => {
     expect(await svc.findFiscalKeyOriginal("t1", "new", null, null, null)).toBeNull();
   });
 
+  it("an untrusted (AI-read) ATCUD never vetoes a number match; a trusted one does", async () => {
+    const rows = [{ id: "orig", fileName: "a.jpg", atcud: "JJY2HD8C-0000428" }];
+    const ai = await svcWith(rows).svc.findFiscalKeyOriginal("t1", "new", "505416654", "00103220250000428", "JJY2HD80-0000428", false);
+    expect(ai?.id).toBe("orig");
+    const trusted = await svcWith(rows).svc.findFiscalKeyOriginal("t1", "new", "505416654", "00103220250000428", "JJY2HD80-0000428", true);
+    expect(trusted).toBeNull();
+  });
+
   it("a row without ATCUD (scan read by AI) still matches a certified original", async () => {
     const { svc } = svcWith([{ id: "orig", fileName: "a.pdf", atcud: "J66V9C9T-6384" }]);
     const out = await svc.findFiscalKeyOriginal("t1", "new", "500842019", "2026A926384", null);

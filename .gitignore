@@ -87,3 +87,6 @@ tunnel-*.log
 **/*.webm
 **/*.log.lcov
 .playwright-mcp/
+
+samples/
+.coolify.env

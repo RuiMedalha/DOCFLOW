@@ -13,7 +13,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `7afa312` (Fase 1). Deploy 2026-09-11 02:06 UTC + restart 02:14 UTC |
+| Commit em produção | `1d97ba6` (Fase 2). Deploy 2026-09-11 03:55 UTC |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
@@ -31,7 +31,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1139 verdes / 1139** (103 suites) |
+| `apps/api` `pnpm test` | **1161 verdes / 1161** (107 suites) |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
 | Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
@@ -39,10 +39,10 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 ### Funcionalidades existentes (por código + testes; smoke em produção fica para a Fase 1)
 
-- Upload multipart (PDF/JPEG/PNG), hash SHA-256 com `@@unique([tenantId, fileHash])`, PDF derivado de fotos.
+- Upload multipart (PDF/JPEG/PNG/**HEIC→JPEG**), hash SHA-256 com `@@unique([tenantId, fileHash])`, PDF derivado de fotos.
 - Pipeline assíncrono `RECEIVED → EXTRACTING → ENRICHING → ROUTING → COMPLETED` com SSE (`/documents/:id/processing/stream`).
-- QR-AT: decoder ZXing cascade + jsQR fallback + parser determinístico (`packages/shared/src/portuguese/qr-at.util.ts`).
-- Vision IA: `VisionService` suporta Anthropic, Gemini (`GOOGLE_API_KEY`/`GEMINI_API_KEY`), OpenRouter, MiniMax; URLs configuráveis (`OPENROUTER_URL`, `MINIMAX_URL`).
+- QR-AT: decoder ZXing cascade + jsQR fallback (em worker thread) + parser determinístico; em PDFs sem QR no texto rasteriza pág. 1 (@2/@3) e última. QR lido pela IA só é aceite com cross-check (`isAiQrConsistent`). Benchmark: `docs/READING_BENCHMARK.md` (19/19).
+- Vision IA: gateway {URL, TOKEN, MODEL} por provider (Gemini, OpenRouter, MiniMax, OpenAI, Anthropic), ordem por `VISION_PROVIDER_ORDER` (default Gemini primeiro), 2.ª opinião quando confidence < `VISION_SECOND_OPINION_CONFIDENCE` (0,7). Em produção só OpenRouter tem token.
 - Fornecedores (`Party`) com resolução por NIF, enriquecimento, categorias por fornecedor (`party-categories`), regras de pastas.
 - Categorias de despesa (9 PT seedadas, `ivaDeductibilityPct`).
 - Aprovação com workflow (`PENDING_APPROVAL`/`CHANGES_REQUESTED`), RBAC, auditoria hash-chained.
@@ -71,9 +71,9 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | 10 | Sem backups de Postgres nem de uploads | VPS | Fase 7 |
 | 11 | Sem campo `fiscalStatus`; `DocumentType` não tem PROFORMA/ORCAMENTO/AVISO/EXTRATO/FATURA_SIMPLIFICADA; dedup só por hash (há índice `[tenantId, atcud]` mas não único) | schema | Fase 3 |
 | 12 | `Party` sem `vatNumber/vatRegime/currency/paymentTermsDays/directDebit/viesValidatedAt…` | schema | Fase 4 |
-| 13 | HEIC não é aceite (sem `sharp`/`heic-convert` na api) | api | Fase 2 |
+| 13 | ~~HEIC não é aceite~~ **Resolvido na Fase 2** (`813c93d`, heic-convert) — falta um HEIC real para smoke (ver Bloqueios) | api | ✅ |
 | 14 | `/storage/tree` mostra vazio na raiz: as chaves são `_inbox/<tenantId>/…` e `fornecedores/…`, mas o browser lista `<tenantId>/…`. Comportamento pré-existente (também com driver local) | api | Fase 7 (ou quando a UI de pastas for revista) |
-| 15 | Extração do PDF de 4 páginas `FT 4 83 5638` demorou > 2 min e ficou sem `total` (NIF e nº doc certos). Fotos WhatsApp ≈ 2 min | extraction | Fase 2 |
+| 15 | ~~PDF 4 páginas sem total~~ **Resolvido na Fase 2** (QR rasterizado: 6,7 s, total certo). Fotos continuam ≈ 2 min (cascade a várias escalas + vision) — já não bloqueia a API | extraction | Fase 7 (otimização opcional) |
 | 16 | Volume `docflow-uploads` continua montado com os 3 ficheiros antigos (já copiados para o MinIO) — manter até ao fim do MVP como rollback; remover na Fase 7 | compose | Fase 7 |
 
 ---
@@ -101,7 +101,8 @@ Branches com 0 commits à frente podem ser apagadas com segurança — **aguarda
 ## Bloqueios (preciso do Rui)
 
 1. **`GEMINI_API_KEY` no Coolify.** O prompt diz que existe; não existia. Na Fase 1 criei a variável **vazia** na app `docflow-production` e o compose já a passa ao `api`. Para a Fase 2 (Gemini como provider principal) o Rui só tem de preencher o valor em Coolify → docflow-production → Environment Variables → `GEMINI_API_KEY` e fazer redeploy. Entretanto a extração funciona via OpenRouter (`google/gemini-2.5-flash`).
-2. Nenhum outro bloqueio para as Fases 1–3.
+2. **Um HEIC real** (foto de iPhone) para o smoke de produção do caminho HEIC→JPEG — só testei a rejeição de um HEIC inválido (400 claro) e o conversor com stub. Enviar para `samples/`.
+3. Benchmark comparativo com `gemini-documental` depende da mesma `GEMINI_API_KEY`.
 
 ---
 
@@ -132,15 +133,23 @@ Falhou / adiado: `expose` em vez de `ports` para api/web não foi alterado — o
 Bloqueios (preciso do Rui): `GEMINI_API_KEY` continua vazia no Coolify (ver Bloqueios).
 Próximo: Fase 2 — Leitura robusta.
 
+## Fase 2 — Leitura robusta — 2026-09-11
+Feito: HEIC/HEIF → JPEG no upload/email/scanner (`813c93d`); QR-AT determinístico em PDFs digitalizados por rasterização (pág. 1 @2/@3 + última) antes da vision; IBAN da IA só com MOD-97; gateway {URL,TOKEN,MODEL} por provider + `VISION_PROVIDER_ORDER` (Gemini principal) + 2.ª opinião < 0,7; QR lido pela IA só com cross-check contra os campos da própria IA e só persiste se aceite (`8c164d9`, `bb1d98b`); cascade de QR em worker thread + healthcheck tolerante (`1d97ba6`). Docs: `docs/READING_BENCHMARK.md`.
+Verificado em produção: benchmark das 19 amostras reais → **19/19 com NIF + total + data corretos (100 %)**, 9 PDFs com QR descodificado deterministicamente (8 scans), 3 faturas espanholas por IA com NIF-IVA correto, fotos direitas (EXIF) e lidas; upload de HEIC inválido → 400 com mensagem clara; `/health/full` ok durante toda a corrida depois do worker (antes o Traefik devolveu "no available server" a meio).
+Testes: 1161 verdes / 1161 (api). Build api ✅, web typecheck ✅.
+Falhou / adiado: comparação com `gemini-documental` — sem `GEMINI_API_KEY` não corre (documentado no benchmark, sem código a portar). Fotos demoram ~2 min (não bloqueia). Primeira corrida do benchmark deu 79 % e revelou os dois defeitos corrigidos acima (QR alucinado como autoridade; event loop bloqueado).
+Bloqueios (preciso do Rui): `GEMINI_API_KEY` (Gemini principal + benchmark comparativo); um HEIC real para smoke.
+Próximo: Fase 3 — Validade fiscal, tipos e duplicados.
+
 ---
 
 ## Próxima fase
 
-**Fase 2 — Leitura robusta.** Ordem prevista:
-1. HEIC/HEIF → JPEG (`sharp`/`heic-convert`) antes de vision e do PDF derivado.
-2. Pipeline fixo EXIF → QR-AT (ZXing) → texto nativo → vision → merge por campo com regras (QR manda em NIF/total/IVA/ATCUD/data/nº; IBAN só com MOD-97).
-3. Retry com 2.º provider quando `confidence < 0.7`; gateway `{URL, TOKEN, MODEL}` por provider.
-4. Benchmark com todas as amostras vs `gemini-documental` → `docs/READING_BENCHMARK.md` (≥ 90 % NIF+total+data).
+**Fase 3 — Validade fiscal, tipos e duplicados.** Ordem prevista:
+1. Migration: `fiscalStatus` (FISCAL | NAO_FISCAL | INDETERMINADO) + `DocumentType` alargado (PROFORMA, ORCAMENTO, AVISO_PAGAMENTO, EXTRATO_FORNECEDOR, FATURA_SIMPLIFICADA) + índice único parcial `(tenantId, supplierNif, docNumber, atcud)` + estado `DUPLICADO` ligado ao original.
+2. Regra determinística de `fiscalStatus` (QR válido / estrangeira com NIF-IVA + nº + data / palavras-chave proforma-orçamento-aviso) com testes por regra.
+3. Dedup por chave fiscal na extração (email vs papel: Miranda 6384 nativo vs scan; fotos IKEA ×2).
+4. `NAO_FISCAL` fora do envio ao TOC/IVA; smoke em produção com proforma + fatura do mesmo fornecedor (pedir proforma real ao Rui ou gerar).
 
 ---
 

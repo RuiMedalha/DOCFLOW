@@ -43,7 +43,8 @@ import {
   ExtractionJob,
   ExtractionJobResult,
 } from "./extraction.constants";
-import { autoOrientImage, decodeAtQr } from "./qr-decode/qr-decoder";
+import { autoOrientImage } from "./qr-decode/qr-decoder";
+import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
 import type { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
 // EXTRACTING → ENRICHING handler runs. Previously the extraction service

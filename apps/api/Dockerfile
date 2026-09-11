@@ -69,7 +69,7 @@ RUN mkdir -p uploads && chown docflow:docflow uploads
 USER docflow
 EXPOSE 4000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
   CMD wget -qO- http://127.0.0.1:4000/api/v1/health | grep -q '"status":"ok"' || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--", "./entrypoint.sh"]

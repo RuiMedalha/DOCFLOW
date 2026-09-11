@@ -401,6 +401,42 @@ describe("SupplierResolver", () => {
     expect(again.supplierReview).toBe(true); // o NIF inválido continua a pedir revisão
   });
 
+  /**
+   * Fase 4.1 — o smoke em produção mostrou entidades estrangeiras com o
+   * NIF-IVA na coluna `nif` mas `viesValid` nulo e regime PT: o resolver
+   * só gravava a prova do VIES ao CRIAR a entidade, nunca ao reencontrar
+   * uma já existente. Sem a prova, o identificador era inverificável.
+   */
+  it("records the VIES proof on an EXISTING party, not only when creating it", async () => {
+    const prisma = buildPrismaStub();
+    const viesProvider = {
+      fetch: jest.fn(async () => ({ ok: true, fields: { name: "TEFCOLD ES SL" } })),
+    };
+    const resolver = new SupplierResolver(prisma as any, undefined, viesProvider as any);
+    const input = {
+      tenantId: TENANT_ID,
+      country: "ES",
+      supplierName: "TEFCOLD ES, S.L.",
+      supplierVatId: "ESB09802059",
+      aiConfidence: 0.95,
+    };
+    await resolver.resolve(input);
+    // Simula a linha antiga: NIF-IVA gravado sem prova nenhuma.
+    const party: any = Array.from(prisma.dbParties.values())[0];
+    party.viesValid = null;
+    party.vatNumber = null;
+    party.vatRegime = "PT";
+
+    await resolver.resolve(input); // segundo documento do mesmo fornecedor
+
+    expect(prisma.dbParties.size).toBe(1);
+    const after: any = Array.from(prisma.dbParties.values())[0];
+    expect(after.viesValid).toBe(true);
+    expect(after.vatNumber).toBe("ESB09802059");
+    expect(after.vatRegime).toBe("UE_REVERSE_CHARGE");
+    expect(after.viesValidatedAt).toBeInstanceOf(Date);
+  });
+
   it("returns { party: null, supplierReview: true } on DB failure (no crash)", async () => {
     const prisma = buildPrismaStub();
     // Force every Party.create to throw — simulates a transient DB blip.

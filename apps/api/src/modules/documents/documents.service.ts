@@ -3452,7 +3452,16 @@ export class DocumentsService {
       delete nextFiling.vatDeductibilityHint;
     } else {
       nextFiling.expenseCategory = patch.expenseCategory;
-      nextFiling.vatDeductibilityHint = VAT_DEDUCTIBILITY_HINTS[patch.expenseCategory].reason;
+      // Fase 4.1 — a categoria já não vem só da lista fixa de despesa:
+      // o operador escolhe uma Category real (que pode ser "Mercadorias
+      // para revenda", inexistente em EXPENSE_CATEGORIES). Sem esta
+      // guarda o lookup devolvia undefined e o PATCH rebentava com 500.
+      // A dedutibilidade a sério é calculada por `resolveIvaDeductibility`
+      // (natureza + categoria) e gravada em `ivaDeductibilityPct`; esta
+      // dica é só o texto legado da metadata.
+      const hint = VAT_DEDUCTIBILITY_HINTS[patch.expenseCategory as ExpenseCategory];
+      if (hint) nextFiling.vatDeductibilityHint = hint.reason;
+      else delete nextFiling.vatDeductibilityHint;
     }
     nextFiling.source = patch.source;
 

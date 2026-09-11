@@ -224,31 +224,44 @@ export class SupplierResolver {
             };
           }
         }
-      } else if (officialData && partyRow) {
+      } else if (partyRow) {
         // Se a entidade já existir, atualizar os campos vazios ou enriquecer com os dados oficiais validados
         try {
           const updates: Record<string, any> = {};
-          if (!partyRow.address && officialData.address) {
+          // ── Fase 4.1 — o VIES tem de ficar registado na entidade ────
+          // As entidades criadas antes desta fase guardavam o NIF-IVA na
+          // coluna `nif` sem qualquer prova, e ficavam com `viesValid`
+          // nulo e regime PT — o que tornava impossível verificar que o
+          // identificador tinha sido validado. Quando o VIES confirma,
+          // gravamos a prova na própria entidade.
+          if (viesConfirmed && normalizedVat) {
+            if (partyRow.nif !== normalizedVat) updates.nif = normalizedVat;
+            updates.vatNumber = normalizedVat;
+            updates.viesValid = true;
+            updates.viesValidatedAt = new Date();
+            updates.vatRegime = 'UE_REVERSE_CHARGE';
+          }
+          if (officialData && !partyRow.address && officialData.address) {
             updates.address = officialData.address;
           }
-          if (!partyRow.city && officialData.city) {
+          if (officialData && !partyRow.city && officialData.city) {
             updates.city = officialData.city;
           }
-          if (!partyRow.postalCode && officialData.postalCode) {
+          if (officialData && !partyRow.postalCode && officialData.postalCode) {
             updates.postalCode = officialData.postalCode;
           }
-          if ((!partyRow.country || partyRow.country === 'PT') && officialData.country) {
+          if (officialData && (!partyRow.country || partyRow.country === 'PT') && officialData.country) {
             updates.country = officialData.country;
           }
           if (
-            officialData.officialName &&
+            officialData?.officialName &&
             (partyRow.name === 'Fornecedor por identificar' ||
               partyRow.name.toLowerCase().startsWith('fornecedor') ||
               partyRow.name === partyRow.nif)
           ) {
             updates.name = officialData.officialName.slice(0, 200);
           }
-          if (officialData.source) {
+          if (officialData?.source) {
             updates.enrichedAt = new Date();
             updates.enrichmentSource = officialData.source;
             updates.enrichmentError = null;

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { parsePostalAddress } from '../../vies/address-parser';
 import type {
   EnrichmentProvider,
   EnrichmentResult,
@@ -121,19 +122,16 @@ export class ViesProvider implements EnrichmentProvider {
     };
     const address = pick('address');
     const name = pick('name');
+    const parsed = parsePostalAddress(address);
     return {
       name: name ?? null,
       // VIES does not expose email/phone/mobile/website — leave null.
       email: null,
       phone: null,
       mobile: null,
-      // Address comes as a single string. We try to split into
-      // postalCode + city heuristically (last 4-5 digit chunk + last
-      // word before it) when possible so the UI can render structured
-      // fields; otherwise we put the whole string in `address`.
       address: address ?? null,
-      city: this.guessCity(address),
-      postalCode: this.guessPostalCode(address),
+      city: parsed.city ?? this.guessCity(address),
+      postalCode: parsed.postalCode ?? this.guessPostalCode(address),
       website: null,
       industry: null,
     };

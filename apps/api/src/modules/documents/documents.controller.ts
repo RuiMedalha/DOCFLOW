@@ -226,8 +226,9 @@ export class DocumentsController {
   async reExtract(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
+    @Body() body?: { model?: string; provider?: string },
   ): Promise<{ documentId: string; status: 're-extraction triggered' }> {
-    const doc = await this.documents.reExtract(user.tenantId, user.id, id);
+    const doc = await this.documents.reExtract(user.tenantId, user.id, id, body);
     return { documentId: doc.id, status: 're-extraction triggered' };
   }
 

@@ -23,6 +23,7 @@ import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constan
 import { QueueModule } from '../../common/queue/queue.module';
 import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
 import { EnrichmentModule } from '../enrichment/enrichment.module';
+import { PartiesModule } from '../parties/parties.module';
 
 /**
  * ExtractionModule — owns the AT-QR decode + OCR + IBAN anti-fraud flow.
@@ -64,6 +65,7 @@ import { EnrichmentModule } from '../enrichment/enrichment.module';
     // extraction.module.ts can see all of its dependencies at a glance.
     QueueModule.forRoot(),
     forwardRef(() => DocumentsModule),
+    forwardRef(() => PartiesModule),
     BullModule.registerQueueAsync({
       name: EXTRACTION_QUEUE,
       inject: [ConfigService],

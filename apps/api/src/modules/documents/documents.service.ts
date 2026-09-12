@@ -275,6 +275,9 @@ export class DocumentsService {
         // telemóvel; a correção pelo conteúdo (fotos sem EXIF) continua
         // a correr na extração, que também usa esta mesma orientação.
         const oriented = await autoOrientImage(file.buffer, file.mimetype, this.logger);
+        if (oriented !== file.buffer) {
+          await this.storage.put(fileKey, oriented, { contentType: file.mimetype });
+        }
         const pdfBuffer = await this.imageToPdf.convert(oriented, file.mimetype);
         await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
       } catch (err) {
@@ -990,6 +993,7 @@ export class DocumentsService {
     const doc = await this.prisma.document.findFirst({
       where: { id, tenantId },
       select: {
+        type: true,
         expenseNature: true,
         party: { select: { vatRegime: true } },
       },
@@ -998,6 +1002,7 @@ export class DocumentsService {
     return proposeAccountingEntry(
       doc.expenseNature as never,
       doc.party?.vatRegime as never,
+      doc.type,
     );
   }
 
@@ -1478,7 +1483,12 @@ export class DocumentsService {
    * surface; the previous /extraction/documents/:id queue trigger is
    * kept for direct QR/OCR reprompts.
    */
-  async reExtract(tenantId: string, userId: string, id: string) {
+  async reExtract(
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts?: { model?: string; provider?: string },
+  ) {
     const existing = await this.prisma.document.findFirst({
       where: { id, tenantId },
       select: {
@@ -1494,13 +1504,11 @@ export class DocumentsService {
 
     const triggerAt = new Date().toISOString();
 
-    // Reset processingStatus — the pipeline's handleReceived idempotency
-    // guard skips docs whose status !== RECEIVED. Bumping `startedAt`
-    // also gives the UI's "stuck on EXTRACTING" SSE consumer a fresh
-    // signal to refresh.
+    // Reset processingStatus and clear supplierVerifiedAt so full extraction cycle re-runs
     await this.prisma.document.update({
       where: { id },
       data: {
+        supplierVerifiedAt: null,
         processingStatus: DocumentProcessingStatus.RECEIVED,
         processingStartedAt: new Date(triggerAt),
         processingCompletedAt: null,
@@ -1510,7 +1518,9 @@ export class DocumentsService {
 
     this.logger.log(
       `[reExtract] pipeline trigger for document=${existing.id} ` +
-        `tenant=${tenantId} at=${triggerAt}`,
+        `tenant=${tenantId} at=${triggerAt}` +
+        (opts?.model ? ` modelOverride=${opts.model}` : '') +
+        (opts?.provider ? ` providerOverride=${opts.provider}` : ''),
     );
 
     // Same payload shape as upload() — handling is identical from the
@@ -1528,6 +1538,9 @@ export class DocumentsService {
         fileSize: existing.fileSize,
         originalFilename: existing.fileName,
         uploadedAt: triggerAt,
+        modelOverride: opts?.model,
+        providerOverride: opts?.provider,
+        forceReextract: true,
       });
       publishPromise
         .then(() => {
@@ -2718,7 +2731,7 @@ export class DocumentsService {
     await this.prisma.paymentEvent.upsert({
       where: { tenantId_documentId: { tenantId, documentId: document.id } },
       create: { tenantId, documentId: document.id, dueDate, amount },
-      update: {},
+      update: { dueDate, amount },
     });
   }
 

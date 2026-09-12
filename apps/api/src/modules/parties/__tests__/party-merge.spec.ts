@@ -139,10 +139,11 @@ describe('PartyMergeService.findDuplicates()', () => {
     const third = { ...CREATEINFOR_NO_NIF, id: 'p-orphan2', name: 'CREATEINFOR' };
     const { svc } = makeService([CREATEINFOR_NO_NIF, third, CREATEINFOR_WITH_NIF, OLITREM]);
     const out = await svc.findDuplicates('t1');
-    const group = out.groups.find((g) => g.key === 'name:PT:CREATEINFOR');
-    expect(group?.parties).toHaveLength(2); // as duas sem NIF partilham a chave de nome
-    const nifGroup = out.groups.find((g) => g.key.startsWith('nif:'));
-    expect(nifGroup).toBeUndefined(); // só há uma com esse NIF
+    expect(out.groups).toHaveLength(1);
+    const group = out.groups[0];
+    expect(group.parties).toHaveLength(3);
+    expect(group.suggestedTargetId).toBe('p-nif');
+    expect(group.key).toBe('nif:507298608');
   });
 
   it('não devolve grupos quando não há duplicados', async () => {

@@ -199,7 +199,7 @@ export class EnrichmentService {
     );
 
     let result: EnrichmentResult = await provider.fetch({
-      nif: party.nif,
+      nif: party.vatNumber || party.nif,
       country: party.country,
       iban: party.iban,
     });
@@ -231,10 +231,10 @@ export class EnrichmentService {
     }
 
     // Fallback 2: Tentar VIES diretamente se ainda não tiver dados
-    if (!result.ok && this.factory['vies'] && party.nif && (party.country || 'PT')) {
+    if (!result.ok && this.factory['vies'] && (party.vatNumber || party.nif) && (party.country || 'PT')) {
       try {
         const viesRes = await this.factory['vies'].fetch({
-          nif: party.nif,
+          nif: party.vatNumber || party.nif,
           country: party.country || 'PT',
           iban: party.iban,
         });

@@ -58,6 +58,9 @@ export interface DocumentUploadedEvent {
   fileSize: number;
   originalFilename: string;
   uploadedAt: string;
+  modelOverride?: string;
+  providerOverride?: string;
+  forceReextract?: boolean;
 }
 
 export interface DocumentExtractedEvent {
@@ -219,6 +222,9 @@ export class ProcessingService {
         tenantId: evt.tenantId,
         userId: evt.userId,
         documentId: evt.documentId,
+        modelOverride: evt.modelOverride,
+        providerOverride: evt.providerOverride,
+        forceReextract: evt.forceReextract,
       });
     }, evt, 'EXTRACTING');
   }

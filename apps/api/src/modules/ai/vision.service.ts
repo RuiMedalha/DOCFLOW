@@ -18,6 +18,7 @@ import {
   TenantIdentity,
 } from './tenant-identity';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FaturistaProvider } from './providers/faturista.provider';
 
 export interface VisionAnalysisRequest {
   /** Base64-encoded file bytes (PDF first page or rasterized image). */
@@ -42,7 +43,10 @@ export interface VisionAnalysisRequest {
     | 'gemini'
     | 'openrouter'
     | 'minimax'
+    | 'faturista'
     | 'auto';
+  /** Explicit model override chosen by user or task routing. */
+  modelOverride?: string;
   /** Hard timeout for the upstream call. Defaults to 30s. */
   timeoutMs?: number;
   /**
@@ -164,7 +168,7 @@ export interface VisionExtractedFields {
   notes?: string[];
 }
 
-export type VisionProviderName = 'gemini' | 'openrouter' | 'minimax' | 'openai' | 'anthropic';
+export type VisionProviderName = 'gemini' | 'openrouter' | 'minimax' | 'openai' | 'anthropic' | 'faturista';
 
 export interface VisionAnalysisResult {
   /** Fase 2 — set when a second provider was consulted for a weak result. */
@@ -177,6 +181,7 @@ export interface VisionAnalysisResult {
     | `openrouter/${string}`
     | 'minimax'
     | `minimax/${string}`
+    | 'faturista'
     | 'local-fallback';
   model: string;
   /** Aggregate confidence in [0,1]. */
@@ -188,6 +193,9 @@ export interface VisionAnalysisResult {
   processingTimeMs: number;
   /** True when the call hit a hard error and we degraded to regex. */
   fallbackUsed: boolean;
+  tokensIn?: number;
+  tokensOut?: number;
+  estimatedCostEur?: number;
 }
 
 /** Strict JSON shape we ask every provider to return. */
@@ -359,6 +367,8 @@ export class VisionService {
     private config: ConfigService,
     @Optional()
     private readonly prisma?: PrismaService,
+    @Optional()
+    private readonly faturista?: FaturistaProvider,
   ) {
     // Fase 2 — every provider is a gateway {URL, TOKEN, MODEL}. The
     // `<PROVIDER>_TOKEN` / `<PROVIDER>_MODEL` / `<PROVIDER>_URL` names are
@@ -429,7 +439,8 @@ export class VisionService {
       this.hasOpenAI ||
       this.hasGemini ||
       this.hasOpenrouter ||
-      this.hasMinimax
+      this.hasMinimax ||
+      Boolean(this.faturista?.isAvailable)
     );
   }
 
@@ -460,6 +471,8 @@ export class VisionService {
         return this.hasOpenAI;
       case 'anthropic':
         return this.hasAnthropic;
+      case 'faturista':
+        return Boolean(this.faturista?.isAvailable);
       default:
         return false;
     }
@@ -475,11 +488,8 @@ export class VisionService {
    *      photo with `MINIMAX_API_KEY` set. OpenAI-compatible response
    *      shape; tolerates a <think> block before the JSON.
    *   2. **OpenRouter** FALLBACK — `google/gemini-2.5-flash` via
-   *      OpenRouter. Kept on because OpenRouter has historically been
-   *      the most reliable path on real phone photos even though it
-   *      intermittently truncates long JSON payloads (the 3-attempt
-   *      retry loop in `callOpenRouterWithModel` mitigates this).
-   *   3. **direct Gemini** LAST-RESORT — only used when both
+   *      OpenRouter. Free, multimodal, fast, returns in 3-8s.
+   *   3. **Direct Gemini** COLD BACKUP — used only when BOTH
    *      MiniMax and OpenRouter are unreachable AND a direct Gemini
    *      key is configured. Direct keys have been quota-exhausted
    *      recently; this is the cold backup.
@@ -496,12 +506,14 @@ export class VisionService {
     | 'gemini'
     | 'openrouter'
     | 'minimax'
+    | 'faturista'
     | null {
     if (preferred === 'anthropic' && this.hasAnthropic) return 'anthropic';
     if (preferred === 'openai' && this.hasOpenAI) return 'openai';
     if (preferred === 'gemini' && this.hasGemini) return 'gemini';
     if (preferred === 'openrouter' && this.hasOpenrouter) return 'openrouter';
     if (preferred === 'minimax' && this.hasMinimax) return 'minimax';
+    if (preferred === 'faturista' && this.faturista?.isAvailable) return 'faturista';
     if (preferred !== 'auto') return null;
     // Fase 2 — OpenRouter (Gemini 2.5 Flash via OpenRouter) is the primary
     // vision provider; the rest follow VISION_PROVIDER_ORDER.
@@ -543,6 +555,10 @@ export class VisionService {
     const provider = this.resolveProvider(request.preferredProvider);
     if (!provider) {
       return null;
+    }
+
+    if (provider === 'faturista') {
+      return this.faturista?.extract(request) ?? null;
     }
 
     // If we got neither a multimodal payload nor text, refuse — the caller
@@ -762,18 +778,12 @@ export class VisionService {
       }
       case 'openrouter': {
         const r = await this.callOpenRouter(request, timeoutMs);
-        // Tag with the canonical composite provider string so the
-        // operator can tell which upstream answered (the AI call body
-        // already returns the leaf model name like `gemini-2.5-flash`
-        // via OpenRouter's `model` field).
-        r.provider = 'openrouter/gemini-2.5-flash';
+        r.provider = `openrouter/${r.model}`;
         return r;
       }
       case 'minimax': {
         const r = await this.callMinimax(request, timeoutMs);
-        // Tag with the canonical composite provider string the user
-        // agreed on (2026-09-01).
-        r.provider = `minimax/${this.minimaxModel}`;
+        r.provider = `minimax/${r.model}`;
         return r;
       }
     }
@@ -914,9 +924,9 @@ export class VisionService {
     });
 
     if (provider === 'openrouter') {
-      return this.callOpenRouterRaw(userContent, strippedText, timeoutMs);
+      return this.callOpenRouterRaw(userContent, strippedText, timeoutMs, request2.modelOverride);
     }
-    return this.callGeminiRaw(userContent, strippedText, timeoutMs);
+    return this.callGeminiRaw(userContent, strippedText, timeoutMs, request2.modelOverride);
   }
 
   /**
@@ -928,6 +938,7 @@ export class VisionService {
     userContent: Array<Record<string, unknown>>,
     systemPrompt: string,
     timeoutMs: number,
+    modelOverride?: string,
   ): Promise<VisionAnalysisResult> {
     if (!this.openrouterKey) throw new Error('OPENROUTER_API_KEY not set');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -935,8 +946,9 @@ export class VisionService {
     if (typeof f !== 'function') {
       throw new Error('global fetch() is not available');
     }
+    const model = modelOverride || this.openrouterModel;
     const body = {
-      model: this.openrouterModel,
+      model,
       temperature: 0.0,
       max_tokens: 2048,
       response_format: { type: 'json_object' },
@@ -969,7 +981,7 @@ export class VisionService {
         model?: string;
       };
       const raw = json.choices?.[0]?.message?.content ?? '';
-      const reportedModel = json.model ?? this.openrouterModel;
+      const reportedModel = json.model ?? model;
       const modelForResult = stripVendorPrefix(reportedModel);
       return this.shapeResult('openrouter', modelForResult, raw, json.usage?.prompt_tokens, json.usage?.completion_tokens);
     } finally {
@@ -988,6 +1000,7 @@ export class VisionService {
     userContent: Array<Record<string, unknown>>,
     systemPrompt: string,
     timeoutMs: number,
+    modelOverride?: string,
   ): Promise<VisionAnalysisResult> {
     if (!this.geminiKey) throw new Error('GOOGLE_API_KEY/GEMINI_API_KEY not set');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -995,9 +1008,10 @@ export class VisionService {
     if (typeof f !== 'function') {
       throw new Error('global fetch() is not available');
     }
+    const model = modelOverride || this.geminiModel;
     const url =
       `${this.geminiUrl}/models/` +
-      `${encodeURIComponent(this.geminiModel)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
+      `${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
     const body = {
       contents: [{ role: 'user', parts: userContent }],
       systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -1026,7 +1040,7 @@ export class VisionService {
       };
       const raw =
         json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-      return this.shapeResult('gemini', this.geminiModel, raw, json.usageMetadata?.promptTokenCount, json.usageMetadata?.candidatesTokenCount);
+      return this.shapeResult('gemini', model, raw, json.usageMetadata?.promptTokenCount, json.usageMetadata?.candidatesTokenCount);
     } finally {
       clearTimeout(timer);
     }
@@ -1180,9 +1194,10 @@ export class VisionService {
         (request.text ?? 'Extract the invoice fields from the attached document.'),
     });
 
+    const model = request.modelOverride || this.anthropicModel;
     const resp = (await this.withTimeout(
       client.messages.create({
-        model: this.anthropicModel,
+        model,
         max_tokens: 2048,
         temperature: 0.1,
         system: this.buildPrompt(request.documentContext),
@@ -1202,7 +1217,7 @@ export class VisionService {
 
     return this.shapeResult(
       'anthropic',
-      this.anthropicModel,
+      model,
       raw,
       resp.usage?.input_tokens,
       resp.usage?.output_tokens,
@@ -1244,8 +1259,9 @@ export class VisionService {
         (request.text ?? 'Extract the invoice fields from the attached document.'),
     });
 
+    const model = request.modelOverride || this.openaiModel;
     const body = {
-      model: this.openaiModel,
+      model,
       temperature: 0.1,
       max_tokens: 4096,
       response_format: { type: 'json_object' },
@@ -1280,7 +1296,7 @@ export class VisionService {
       const raw = json.choices?.[0]?.message?.content ?? '';
       return this.shapeResult(
         'openai',
-        this.openaiModel,
+        model,
         raw,
         json.usage?.prompt_tokens,
         json.usage?.completion_tokens,
@@ -1319,9 +1335,10 @@ export class VisionService {
         (request.text ?? 'Extract the invoice fields from the attached document.'),
     });
 
+    const model = request.modelOverride || this.geminiModel;
     const url =
       `${this.geminiUrl}/models/` +
-      `${encodeURIComponent(this.geminiModel)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
+      `${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.geminiKey)}`;
 
     const body = {
       contents: [{ role: 'user', parts }],
@@ -1362,7 +1379,7 @@ export class VisionService {
           .join('') ?? '';
       return this.shapeResult(
         'gemini',
-        this.geminiModel,
+        model,
         raw,
         json.usageMetadata?.promptTokenCount,
         json.usageMetadata?.candidatesTokenCount,
@@ -1389,7 +1406,8 @@ export class VisionService {
     request: VisionAnalysisRequest,
     timeoutMs: number,
   ): Promise<VisionAnalysisResult> {
-    return this.callOpenRouterWithModel(request, timeoutMs, this.openrouterModel);
+    const model = request.modelOverride || this.openrouterModel;
+    return this.callOpenRouterWithModel(request, timeoutMs, model);
   }
 
   /**
@@ -1777,8 +1795,9 @@ export class VisionService {
     // `stripThinkBlock` as a defensive safety net in case Opus 5 ever
     // reintroduces the reasoning block. Verified live against the
     // Américo Alves / 144.22 real-photo fixture.
+    const model = request.modelOverride || this.minimaxModel;
     const baseBody = {
-      model: this.minimaxModel,
+      model,
       temperature: 0.1,
       max_tokens: 8000,
       // Reasoning control — Opus 5 supports `thinking: { type:
@@ -1823,7 +1842,7 @@ export class VisionService {
           model?: string;
         };
         const raw = json.choices?.[0]?.message?.content ?? '';
-        const reportedModel = json.model ?? this.minimaxModel;
+        const reportedModel = json.model ?? model;
         const finishReason = json.choices?.[0]?.finish_reason;
         const shaped = this.shapeResult(
           'minimax',
@@ -1868,7 +1887,7 @@ export class VisionService {
         lastResult = shaped;
       } catch (err) {
         this.logger.warn(
-          `Vision: MiniMax/${this.minimaxModel} attempt ${attempt}/${maxAttempts} THREW: ` +
+          `Vision: MiniMax/${model} attempt ${attempt}/${maxAttempts} THREW: ` +
             `${(err as Error).message}. ${attempt < maxAttempts ? 'Retrying.' : 'Giving up.'}`,
         );
         if (attempt === maxAttempts) {
@@ -1884,7 +1903,7 @@ export class VisionService {
     }
     return {
       provider: 'minimax',
-      model: this.minimaxModel,
+      model,
       confidence: 0,
       extracted: {},
       rawResponse: '',
@@ -1969,6 +1988,28 @@ export class VisionService {
         ? clamp01(extracted.confidence)
         : 0.8;
 
+    const inTokens = tokensIn ?? 0;
+    const outTokens = tokensOut ?? 0;
+    let inRate = 0.2;
+    let outRate = 1.0;
+
+    const lowerModel = model.toLowerCase();
+    if (lowerModel.includes('sonnet')) {
+      inRate = 2.8; outRate = 14.0;
+    } else if (lowerModel.includes('haiku')) {
+      inRate = 0.75; outRate = 3.75;
+    } else if (lowerModel.includes('gpt-4o-mini')) {
+      inRate = 0.14; outRate = 0.56;
+    } else if (lowerModel.includes('gpt-4o')) {
+      inRate = 2.3; outRate = 9.2;
+    } else if (lowerModel.includes('flash')) {
+      inRate = 0.15; outRate = 0.6;
+    } else if (lowerModel.includes('pro')) {
+      inRate = 1.2; outRate = 4.8;
+    }
+
+    const estimatedCostEur = Number(((inTokens * inRate + outTokens * outRate) / 1_000_000).toFixed(6));
+
     return {
       provider,
       model,
@@ -1977,6 +2018,9 @@ export class VisionService {
       rawResponse: raw,
       processingTimeMs: 0, // overwritten by analyze() once the call returns
       fallbackUsed,
+      tokensIn: inTokens,
+      tokensOut: outTokens,
+      estimatedCostEur,
     };
   }
 }

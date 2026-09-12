@@ -35,6 +35,7 @@ import {
   Trash2,
   FileSearch,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react';
 import { DocumentViewer } from './_components/document-viewer';
 import { FieldPanel } from './_components/field-panel';
@@ -43,6 +44,8 @@ import { FraudWarning } from './_components/fraud-warning';
 import { QrBadge } from './_components/qr-badge';
 import { CorrectSupplierDialog } from './_components/correct-supplier-dialog';
 import { SupplierManualEditSection } from './_components/supplier-manual-edit-section';
+import { ReExtractDialog } from './_components/re-extract-dialog';
+import { AiTelemetryBadge } from './_components/ai-telemetry-badge';
 import { Dialog } from '../../../_components/ui';
 import { toastBus } from '../../../_components/ui';
 import {
@@ -249,6 +252,7 @@ export default function DocumentDetailPage() {
   // parent can orchestrate the mutation + toastBus feedback (mirrors
   // the hard-delete / soft-delete pattern).
   const [pendingReExtract, setPendingReExtract] = useState(false);
+  const [reExtractModalOpen, setReExtractModalOpen] = useState(false);
 
   // Sprint 1.B — pending approve decision (reject + request-changes
   // need a comment; the modal lives below the page body).
@@ -381,6 +385,27 @@ export default function DocumentDetailPage() {
       toastBus.error(`Re-extract failed: ${message}`);
     }
   }, [id, reExtract, qc]);
+
+  const onReExtractWithOptions = useCallback(
+    async (opts: { model?: string; provider?: string }) => {
+      if (!id) return;
+      try {
+        await reExtract.mutateAsync({ id, model: opts.model, provider: opts.provider });
+        setReExtractModalOpen(false);
+        setDraft(null);
+        toastBus.success(
+          `Re-extração com ${opts.model || 'modelo selecionado'} iniciada.`,
+        );
+      } catch (err: any) {
+        const message =
+          typeof err?.message === 'string' && err.message.length > 0
+            ? err.message
+            : 'Falha na re-extração.';
+        toastBus.error(`Re-extract failed: ${message}`);
+      }
+    },
+    [id, reExtract],
+  );
 
   /**
    * Sprint H+ Part 2.2 — "Re-extrair com IA" button on the supplier block.
@@ -798,7 +823,7 @@ export default function DocumentDetailPage() {
                 aria-busy={reExtract.isPending}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity"
                 style={{ color: 'var(--ed-ink-soft)' }}
-                title="Re-extrair (Gemini Vision)"
+                title="Re-extrair (Modelo padrão)"
               >
                 <RefreshCw
                   size={14}
@@ -806,6 +831,17 @@ export default function DocumentDetailPage() {
                   aria-hidden="true"
                 />
                 Re-extrair
+              </button>
+              <button
+                type="button"
+                onClick={() => setReExtractModalOpen(true)}
+                disabled={reExtract.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-70 transition-opacity"
+                style={{ color: 'var(--ed-accent-gold, #0ea5e9)' }}
+                title="Escolher modelo específico para re-extração"
+              >
+                <Sparkles size={14} aria-hidden="true" />
+                Re-extrair com...
               </button>
             </div>
           </div>
@@ -866,6 +902,7 @@ export default function DocumentDetailPage() {
 
         {/* RIGHT (col-span-8) — FieldPanel */}
         <section className="xl:col-span-8" style={{ borderLeft: '1px solid var(--ed-rule)', paddingLeft: '40px' }}>
+          <AiTelemetryBadge ai={(doc as any)?.metadata?.aiExtraction} />
           {/* Sprint 1.B — approval status badge. Sits above the
               primary actions so the operator sees the workflow
               state at a glance. Hidden when the doc is still NOVO
@@ -1664,6 +1701,13 @@ export default function DocumentDetailPage() {
           </div>
         )}
       </Dialog>
+
+      <ReExtractDialog
+        open={reExtractModalOpen}
+        onClose={() => setReExtractModalOpen(false)}
+        onConfirm={onReExtractWithOptions}
+        loading={reExtract.isPending}
+      />
     </div>
   );
 }

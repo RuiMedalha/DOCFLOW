@@ -42,8 +42,10 @@ export function parsePostalAddress(raw: string | null | undefined): ParsedAddres
 
   const ptMatch = lastLine.match(PT_POSTAL);
   if (ptMatch) {
+    const prefixOnLastLine = lastLine.slice(0, ptMatch.index).replace(/[,\s]+$/, '').trim();
+    const fullAddress = [rest, prefixOnLastLine].filter(Boolean).join(', ');
     return {
-      address: rest || null,
+      address: fullAddress || null,
       postalCode: ptMatch[1],
       city: ptMatch[2].trim() || null,
     };
@@ -51,8 +53,10 @@ export function parsePostalAddress(raw: string | null | undefined): ParsedAddres
 
   const genericMatch = lastLine.match(GENERIC_POSTAL);
   if (genericMatch) {
+    const prefixOnLastLine = lastLine.slice(0, genericMatch.index).replace(/[,\s]+$/, '').trim();
+    const fullAddress = [rest, prefixOnLastLine].filter(Boolean).join(', ');
     return {
-      address: rest || null,
+      address: fullAddress || null,
       postalCode: genericMatch[1],
       // Remove uma província entre parênteses quando presente (formato ES).
       city: genericMatch[2].replace(/\s*\([^)]*\)\s*$/, '').trim() || null,

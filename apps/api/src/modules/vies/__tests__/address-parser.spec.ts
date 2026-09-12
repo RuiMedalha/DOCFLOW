@@ -19,10 +19,18 @@ describe('parsePostalAddress()', () => {
     expect(out.city).toBe('MADRID');
   });
 
-  it('reconhece o formato DE numa única linha', () => {
+  it('reconhece o formato DE numa única linha preservando a rua', () => {
     const out = parsePostalAddress('Hauptstrasse 1, 10115 Berlin');
     expect(out.postalCode).toBe('10115');
     expect(out.city).toBe('Berlin');
+    expect(out.address).toBe('Hauptstrasse 1');
+  });
+
+  it('reconhece o formato PT numa única linha preservando a rua', () => {
+    const out = parsePostalAddress('Rua das Flores 123, 2660-001 FRIELAS');
+    expect(out.postalCode).toBe('2660-001');
+    expect(out.city).toBe('FRIELAS');
+    expect(out.address).toBe('Rua das Flores 123');
   });
 
   it('remove a província entre parênteses do formato ES', () => {

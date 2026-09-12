@@ -140,7 +140,7 @@ export default function PartyDetailPage() {
       {activeTab === 'identity' && (
         <div className="grid lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2 space-y-5">
-            <PartyForm initial={initial} partyId={params.id} isAdmin={isAdmin} />
+            <PartyForm key={`${party.id}-${party.updatedAt ?? ''}`} initial={initial} partyId={params.id} isAdmin={isAdmin} />
           </div>
           {/* The PartyIbanPanel previously lived here on the Identity tab.
               Sprint G moves it into the IBAN tab to avoid duplication. */}

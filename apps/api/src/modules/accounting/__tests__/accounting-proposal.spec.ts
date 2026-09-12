@@ -61,4 +61,19 @@ describe('proposeAccountingEntry()', () => {
     const ue = proposeAccountingEntry('DESPESA_OPERACIONAL', 'UE_REVERSE_CHARGE');
     expect(ue.credit.map((l) => l.code)).toEqual(['2212', '2433']);
   });
+
+  it('Fase 4.3 (P1.1) — nota de crédito nacional inverte o lançamento: debita 2211, credita 312 e 2432', () => {
+    const out = proposeAccountingEntry('MERCADORIAS_REVENDA', 'PT', 'NOTA_CREDITO');
+    expect(out.debit.map((l) => l.code)).toEqual(['2211']);
+    expect(out.debit[0].amount).toBe('total');
+    expect(out.credit.map((l) => l.code)).toEqual(['312', '2432']);
+    expect(out.reason).toBe('mercadorias_revenda_pt_nc');
+  });
+
+  it('Fase 4.3 (P1.1) — nota de crédito intra-UE inverte ambos os lados de autoliquidação', () => {
+    const out = proposeAccountingEntry('MERCADORIAS_REVENDA', 'UE_REVERSE_CHARGE', 'NOTA_CREDITO');
+    expect(out.debit.map((l) => l.code)).toEqual(['2212', '2433']);
+    expect(out.credit.map((l) => l.code)).toEqual(['312', '2432']);
+    expect(out.reason).toBe('mercadorias_revenda_ue_autoliquidacao_nc');
+  });
 });

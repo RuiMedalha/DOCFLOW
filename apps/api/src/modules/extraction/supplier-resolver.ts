@@ -6,6 +6,7 @@ import { NifLookupService } from "../nif-lookup/nif-lookup.service";
 import { ViesProvider } from "../enrichment/providers/vies.provider";
 import { normalizePartyName } from "../parties/party-identity";
 import { getTenantIdentity } from "../ai/tenant-identity";
+import { PartyMergeService } from "../parties/party-merge.service";
 
 /**
  * Inputs the extractor feeds into the supplier auto-resolve step.
@@ -88,6 +89,7 @@ export class SupplierResolver {
     private readonly prisma: PrismaService,
     @Optional() private readonly nifLookup?: NifLookupService,
     @Optional() private readonly viesProvider?: ViesProvider,
+    @Optional() private readonly partyMerge?: PartyMergeService,
   ) {}
 
   /**
@@ -192,6 +194,55 @@ export class SupplierResolver {
       }
 
       let partyRow: { id: string; isRecurring: boolean; name: string; nif: string | null; address?: string | null; city?: string | null; postalCode?: string | null; country?: string | null } | null = existing;
+
+      // P0.4 — Quando a entidade existente não tem NIF e o documento traz um NIF válido:
+      // 1) Verificar se já existe outra entidade com esse NIF no mesmo tenant.
+      //    Se sim, fundir a entidade sem NIF na entidade com NIF (a com NIF é o destino).
+      // 2) Se não existir outra, atualizar o NIF da existente.
+      if (partyRow && !partyRow.nif && taxIdValid && (normalizedNif || (viesConfirmed && normalizedVat))) {
+        const targetTaxId = normalizedNif || normalizedVat;
+        const otherPartyWithNif = await this.prisma.party.findFirst({
+          where: {
+            tenantId,
+            isActive: true,
+            OR: [
+              { nif: targetTaxId },
+              { vatNumber: targetTaxId },
+            ],
+            NOT: { id: partyRow.id },
+          },
+          select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true },
+        });
+
+        if (otherPartyWithNif) {
+          this.logger.log(
+            `[resolve] P0.4 auto-merge: existing party=${partyRow.id} ("${partyRow.name}", no NIF) ` +
+            `matches partyWithNif=${otherPartyWithNif.id} ("${otherPartyWithNif.name}", NIF ${targetTaxId}). Merging...`
+          );
+          if (this.partyMerge) {
+            try {
+              await this.partyMerge.merge(tenantId, 'system', otherPartyWithNif.id, partyRow.id);
+            } catch (mergeErr) {
+              this.logger.warn(`[resolve] auto-merge failed: ${(mergeErr as Error).message}`);
+            }
+          }
+          partyRow = otherPartyWithNif;
+        } else {
+          // Atualiza NIF da existente
+          try {
+            await this.prisma.party.update({
+              where: { id: partyRow.id },
+              data: {
+                nif: targetTaxId,
+                ...(viesConfirmed && normalizedVat ? { vatNumber: normalizedVat, viesValid: true, viesValidatedAt: new Date(), vatRegime: 'UE_REVERSE_CHARGE' } : {}),
+              },
+            });
+            partyRow.nif = targetTaxId;
+          } catch (updateErr) {
+            this.logger.warn(`[resolve] failed to update NIF on party=${partyRow.id}: ${(updateErr as Error).message}`);
+          }
+        }
+      }
 
       if (!partyRow) {
         // Create the Party row. Preenchemos com os dados oficiais validados caso obtidos,

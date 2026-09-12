@@ -241,12 +241,19 @@ export function useDownloadUrl(id: string): string {
 export function useReExtract() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) =>
-      apiFetch<{ documentId: string; status: 're-extraction triggered' }>(
+    mutationFn: async (args: string | { id: string; model?: string; provider?: string }) => {
+      const id = typeof args === 'string' ? args : args.id;
+      const body = typeof args === 'string' ? undefined : { model: args.model, provider: args.provider };
+      return apiFetch<{ documentId: string; status: 're-extraction triggered' }>(
         `/documents/${id}/re-extract`,
-        { method: 'POST' },
-      ),
-    onSuccess: (_result, id) => {
+        {
+          method: 'POST',
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+      );
+    },
+    onSuccess: (_result, args) => {
+      const id = typeof args === 'string' ? args : args.id;
       // The backend re-publishes document.uploaded; SSE picks up the
       // status transitions (RECEIVED -> EXTRACTING -> ENRICHING -> COMPLETED)
       // automatically. We invalidate the detail cache so any non-SSE

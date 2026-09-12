@@ -57,6 +57,23 @@ function purchaseAccount(nature: AccountingNature): AccountingLine | null {
 export function proposeAccountingEntry(
   nature: AccountingNature | null | undefined,
   vatRegime: AccountingVatRegime | null | undefined,
+  documentType?: string | null,
+): AccountingProposal {
+  const base = proposeAccountingEntryBase(nature, vatRegime);
+  if (documentType === 'NOTA_CREDITO') {
+    if (base.debit.length === 0 && base.credit.length === 0) return base;
+    return {
+      debit: base.credit,
+      credit: base.debit,
+      reason: `${base.reason}_nc`,
+    };
+  }
+  return base;
+}
+
+function proposeAccountingEntryBase(
+  nature: AccountingNature | null | undefined,
+  vatRegime: AccountingVatRegime | null | undefined,
 ): AccountingProposal {
   if (!nature) {
     return { debit: [], credit: [], reason: 'sem_natureza_definida' };

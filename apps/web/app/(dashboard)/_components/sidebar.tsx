@@ -36,6 +36,17 @@ async function fetchPendingCount(): Promise<number> {
   }
 }
 
+async function fetchVersion(): Promise<{ version: string; commit: string; buildTime: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/version`);
+    if (!res.ok) return { version: '4.3.0', commit: 'local', buildTime: '' };
+    const json = await res.json();
+    return json?.data ?? json;
+  } catch {
+    return { version: '4.3.0', commit: 'local', buildTime: '' };
+  }
+}
+
 const SIZE_CLASSES = {
   expanded: 'md:w-[272px]',
   collapsed: 'md:w-[78px]',
@@ -57,6 +68,17 @@ export function Sidebar() {
     staleTime: 15000,
   });
   const pendingCount = pendingQuery.data ?? 0;
+
+  const versionQuery = useQuery({
+    queryKey: ['system-version'],
+    queryFn: fetchVersion,
+    staleTime: 60000,
+  });
+  const systemVersion = versionQuery.data?.version ?? '4.3.0';
+  const systemCommit =
+    versionQuery.data?.commit && versionQuery.data.commit !== 'local'
+      ? ` (${versionQuery.data.commit.slice(0, 7)})`
+      : '';
 
   const showLabel = !collapsed;
   const widthClass = collapsed ? SIZE_CLASSES.collapsed : SIZE_CLASSES.expanded;
@@ -190,16 +212,20 @@ export function Sidebar() {
           <div className="p-3 border-t" style={{ borderColor: 'var(--border)' }}>
             <div
               className={[
-                'flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs',
+                'flex items-center gap-3 px-3 py-2 rounded-xl text-xs',
                 showLabel ? '' : 'justify-center',
               ].join(' ')}
               style={{ color: 'var(--text-subtle)' }}
+              title={versionQuery.data ? `DocFlow v${systemVersion}${systemCommit}${versionQuery.data.buildTime ? ` · ${versionQuery.data.buildTime}` : ''}` : 'DocFlow'}
             >
               <div className="relative flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse-glow" />
               </div>
               {showLabel && (
-                <span className="truncate">Sistema operacional</span>
+                <div className="flex flex-col min-w-0">
+                  <span className="truncate font-medium leading-tight">Sistema operacional</span>
+                  <span className="text-[10px] truncate opacity-75 font-mono">v{systemVersion}{systemCommit}</span>
+                </div>
               )}
             </div>
           </div>

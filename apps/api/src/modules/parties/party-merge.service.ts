@@ -198,8 +198,8 @@ export class PartyMergeService {
 
   /**
    * Sugere grupos de entidades que são o mesmo fornecedor — mesma chave
-   * de nome normalizado + país, ou o mesmo NIF. Serve o ecrã de
-   * fornecedores para o operador ver o que há a fundir.
+   * de nome normalizado + país (mesmo quando uma linha tem NIF e outra não),
+   * ou o mesmo NIF. A linha com NIF é sugerida como destino.
    */
   async findDuplicates(tenantId: string) {
     const parties = await this.prisma.party.findMany({
@@ -207,24 +207,89 @@ export class PartyMergeService {
       select: { id: true, name: true, nif: true, country: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
-    const groups = new Map<string, typeof parties>();
+
+    const parent = new Map<string, string>();
+    const repNif = new Map<string, string | null>();
+
     for (const p of parties) {
-      const normalized = normalizePartyName(p.name);
-      const key = p.nif ? `nif:${p.nif}` : normalized ? `name:${p.country ?? '??'}:${normalized}` : null;
-      if (!key) continue;
-      const bucket = groups.get(key) ?? [];
-      bucket.push(p);
-      groups.set(key, bucket);
+      parent.set(p.id, p.id);
+      repNif.set(p.id, p.nif || null);
     }
-    return {
-      groups: [...groups.entries()]
-        .filter(([, rows]) => rows.length > 1)
-        .map(([key, rows]) => ({
-          key,
-          // A mais antiga com NIF é a candidata natural a destino.
-          suggestedTargetId: (rows.find((r) => r.nif) ?? rows[0]).id,
-          parties: rows,
-        })),
+
+    const find = (id: string): string => {
+      let root = id;
+      while (root !== parent.get(root)) {
+        root = parent.get(root)!;
+      }
+      let curr = id;
+      while (curr !== root) {
+        const nxt = parent.get(curr)!;
+        parent.set(curr, root);
+        curr = nxt;
+      }
+      return root;
     };
+
+    const union = (id1: string, id2: string): boolean => {
+      const root1 = find(id1);
+      const root2 = find(id2);
+      if (root1 === root2) return true;
+
+      const nif1 = repNif.get(root1);
+      const nif2 = repNif.get(root2);
+
+      // Não une se ambos os componentes tiverem NIFs distintos não nulos
+      if (nif1 && nif2 && nif1 !== nif2) {
+        return false;
+      }
+
+      parent.set(root2, root1);
+      repNif.set(root1, nif1 || nif2 || null);
+      return true;
+    };
+
+    for (let i = 0; i < parties.length; i++) {
+      const a = parties[i];
+      const normA = normalizePartyName(a.name);
+      const countryA = (a.country || 'PT').toUpperCase();
+
+      for (let j = i + 1; j < parties.length; j++) {
+        const b = parties[j];
+        const countryB = (b.country || 'PT').toUpperCase();
+
+        const sameNif = Boolean(a.nif) && Boolean(b.nif) && a.nif === b.nif;
+        const sameName = normA.length > 0 && normA === normalizePartyName(b.name) && countryA === countryB;
+
+        if (sameNif || sameName) {
+          union(a.id, b.id);
+        }
+      }
+    }
+
+    const componentMap = new Map<string, typeof parties>();
+    for (const p of parties) {
+      const root = find(p.id);
+      const bucket = componentMap.get(root) ?? [];
+      bucket.push(p);
+      componentMap.set(root, bucket);
+    }
+
+    const duplicateGroups = [...componentMap.values()]
+      .filter((rows) => rows.length > 1)
+      .map((rows) => {
+        const withNif = rows.find((r) => r.nif);
+        const target = withNif ?? rows[0];
+        const key = target.nif
+          ? `nif:${target.nif}`
+          : `name:${target.country ?? 'PT'}:${normalizePartyName(target.name)}`;
+
+        return {
+          key,
+          suggestedTargetId: target.id,
+          parties: rows,
+        };
+      });
+
+    return { groups: duplicateGroups };
   }
 }

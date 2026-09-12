@@ -169,7 +169,7 @@ export class ViesService {
           ...(parsedAddress && !party.address && parsedAddress.address ? { address: parsedAddress.address } : {}),
           ...(parsedAddress && !party.city && parsedAddress.city ? { city: parsedAddress.city } : {}),
           ...(parsedAddress && !party.postalCode && parsedAddress.postalCode ? { postalCode: parsedAddress.postalCode } : {}),
-          ...(parsedAddress && !party.country ? { country: cc } : {}),
+          ...(result.valid && cc && ((party.country === 'PT' && cc !== 'PT') || !party.country) ? { country: cc } : {}),
         },
       });
     }

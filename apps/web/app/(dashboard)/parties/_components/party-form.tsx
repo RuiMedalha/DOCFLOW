@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Save, Loader2 } from 'lucide-react';
 import {
   useCreateParty,
@@ -39,6 +39,13 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
     isRecurring: false,
     isRecurringManualOverride: false,
   });
+
+  useEffect(() => {
+    if (initial) {
+      setForm(initial);
+    }
+  }, [initial]);
+
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {

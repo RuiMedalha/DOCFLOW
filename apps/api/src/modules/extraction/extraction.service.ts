@@ -294,6 +294,7 @@ export class ExtractionService implements OnModuleDestroy {
   private lastVisionExtracted:
     | import("../ai/vision.service").VisionExtractedFields
     | null = null;
+  private lastAiExtraction: Record<string, any> | null = null;
 
   /**
    * HARDENED 2026-09-01: serial sync-fallback queue.
@@ -506,7 +507,9 @@ export class ExtractionService implements OnModuleDestroy {
   async processDocumentAsync(
     input: ExtractionJob,
   ): Promise<ExtractionJobResult> {
-    const { tenantId, documentId, userId } = input;
+    const job = input;
+    const { tenantId, documentId, userId, modelOverride, providerOverride, forceReextract } = input;
+    this.lastAiExtraction = null;
     this.logger.log(
       `[processDocumentAsync] start document=${documentId} tenant=${tenantId}`,
     );
@@ -554,7 +557,8 @@ export class ExtractionService implements OnModuleDestroy {
     // wrong values stick until they re-verify or re-correct. That's
     // intentional — the verify-supplier UX triad already requires an
     // explicit "Confirmar como está" gesture for exactly this reason.
-    if (doc.supplierVerifiedAt) {
+    // Fase 4.3 (P0.1) — se for re-extração completa forçada, reprocessar de raiz
+    if (doc.supplierVerifiedAt && !job?.forceReextract) {
       this.logger.warn(
         `[processDocumentAsync] document=${documentId} supplierVerifiedAt=${doc.supplierVerifiedAt.toISOString()} ` +
           `— skipping supplier-side extraction to preserve operator-verified ` +
@@ -777,6 +781,11 @@ export class ExtractionService implements OnModuleDestroy {
     const qrCandidate = storedQr ?? zxingCandidate ?? textQr;
 
     let fields: ExtractedFields;
+    const aiOverrides =
+      modelOverride || providerOverride
+        ? { model: modelOverride, provider: providerOverride }
+        : undefined;
+
     if (qrCandidate) {
       // QR-AT + Gemini merge — the QR is AUTHORITATIVE for the fiscal
       // fields it carries (issuer NIF, doc type, total, tax, date,
@@ -786,9 +795,16 @@ export class ExtractionService implements OnModuleDestroy {
       // fills the gaps. If Gemini fails or times out we keep the QR
       // fields alone — never worse than today.
       const qrFields = this.extractFromQr(qrCandidate, doc);
-      fields = await this.mergeQrWithAi(qrFields, doc, loaded, tenantId);
+      fields = await this.mergeQrWithAi(
+        qrFields,
+        doc,
+        loaded,
+        tenantId,
+        undefined,
+        aiOverrides,
+      );
     } else {
-      fields = await this.runAiOrRegexPath(doc, loaded, tenantId);
+      fields = await this.runAiOrRegexPath(doc, loaded, tenantId, aiOverrides);
       // Gemini-assisted QR fallback: when the jsqr image decoder failed
       // on a real phone photo (small, angled, low-contrast QR) but
       // Gemini vision DID read the AT-QR string visually, treat that as
@@ -824,6 +840,7 @@ export class ExtractionService implements OnModuleDestroy {
               loaded,
               tenantId,
               fields,
+              aiOverrides,
             );
             mergedFromAiQr.hints = [
               ...(mergedFromAiQr.hints ?? []),
@@ -1401,6 +1418,22 @@ export class ExtractionService implements OnModuleDestroy {
     (updateData as Record<string, unknown>).signedTotal = signed.signedTotal;
     (updateData as Record<string, unknown>).signedTaxAmount = signed.signedTaxAmount;
     (updateData as Record<string, unknown>).signedNetAmount = signed.signedNetAmount;
+
+    // Fase 4.3 (P0.3) — uma Nota de Crédito tem de guardar total, base e IVA negativos
+    if (effectiveType === "NOTA_CREDITO") {
+      const curTotal = updateData.total != null ? Number(updateData.total) : doc.total != null ? Number(doc.total) : null;
+      if (curTotal != null) updateData.total = -Math.abs(curTotal);
+      const curNet = updateData.netAmount != null ? Number(updateData.netAmount) : doc.netAmount != null ? Number(doc.netAmount) : null;
+      if (curNet != null) updateData.netAmount = -Math.abs(curNet);
+      const curTax = updateData.taxAmount != null ? Number(updateData.taxAmount) : doc.taxAmount != null ? Number(doc.taxAmount) : null;
+      if (curTax != null) updateData.taxAmount = -Math.abs(curTax);
+      if ((updateData as Record<string, unknown>).amountEur != null) {
+        (updateData as Record<string, unknown>).amountEur = -Math.abs(Number((updateData as Record<string, unknown>).amountEur));
+      }
+      (updateData as Record<string, unknown>).signedTotal = -Math.abs(Number(signed.signedTotal ?? curTotal ?? 0));
+      (updateData as Record<string, unknown>).signedTaxAmount = -Math.abs(Number(signed.signedTaxAmount ?? curTax ?? 0));
+      (updateData as Record<string, unknown>).signedNetAmount = -Math.abs(Number(signed.signedNetAmount ?? curNet ?? 0));
+    }
     if (effectiveType === "NOTA_CREDITO" && fields.correctedDocumentNumber) {
       (updateData as Record<string, unknown>).correctedDocNumber = fields.correctedDocumentNumber;
       const original = await this.findCorrectedDocument(
@@ -1954,6 +1987,7 @@ export class ExtractionService implements OnModuleDestroy {
     doc: { fileKey: string; mimeType: string; fileName: string },
     loaded: LoadedText,
     tenantId?: string,
+    overrides?: { model?: string; provider?: string },
   ): Promise<ExtractedFields> {
     // Top-level safety net: a vision failure must NEVER abort the regex
     // extraction. This is the canary that fires whenever something in
@@ -1963,7 +1997,7 @@ export class ExtractionService implements OnModuleDestroy {
       // 1) Try the AI provider first — when we have at least something to
       //    feed it AND a key is configured. Empty inputs still hit regex so
       //    the operator sees the same fields they did before.
-      const visionResult = await this.tryVisionAnalysis(doc, loaded, tenantId);
+      const visionResult = await this.tryVisionAnalysis(doc, loaded, tenantId, overrides);
 
       // 2) Always run regex in parallel-ish — it fills gaps the LLM missed.
       //    Cheap, deterministic, and stays in metadata so we can audit which
@@ -2153,6 +2187,7 @@ export class ExtractionService implements OnModuleDestroy {
     doc: { fileKey: string; mimeType: string; fileName: string },
     loaded: LoadedText,
     tenantId?: string,
+    overrides?: { model?: string; provider?: string },
   ): Promise<import("../ai/vision.service").VisionAnalysisResult | null> {
     // Defensive: `this.vision` may be undefined when the AI module is
     // not wired (e.g. unit tests, or a future code-path that bypasses
@@ -2256,6 +2291,8 @@ export class ExtractionService implements OnModuleDestroy {
         documentContext: "invoice",
         timeoutMs: 30_000,
         tenantId: tenantId,
+        preferredProvider: (overrides?.provider as any) ?? "auto",
+        modelOverride: overrides?.model,
       });
       // Sidecar — capture the raw extracted payload so
       // `mergeQrWithAi` can pull supplier / IBAN / lineItems out of
@@ -2265,6 +2302,22 @@ export class ExtractionService implements OnModuleDestroy {
       // a stale value from a prior document can't leak across.
       if (visionResult) {
         this.lastVisionExtracted = visionResult.extracted;
+        this.lastAiExtraction = {
+          provider: visionResult.provider,
+          model: visionResult.model,
+          processingTimeMs: visionResult.processingTimeMs,
+          tokens: {
+            prompt: visionResult.tokensIn ?? 0,
+            completion: visionResult.tokensOut ?? 0,
+            total: (visionResult.tokensIn ?? 0) + (visionResult.tokensOut ?? 0),
+          },
+          tokensIn: visionResult.tokensIn ?? 0,
+          tokensOut: visionResult.tokensOut ?? 0,
+          estimatedCostEur: visionResult.estimatedCostEur ?? 0,
+          confidence: visionResult.confidence,
+          fallbackUsed: visionResult.fallbackUsed,
+          timestamp: new Date().toISOString(),
+        };
       }
       return visionResult;
     } catch (err) {
@@ -2541,7 +2594,22 @@ export class ExtractionService implements OnModuleDestroy {
         !!fields.customer || customerNif.length > 0;
       const tenantName = (id.tenantName ?? "").toLowerCase().trim();
       const supplierName = (fields.supplier ?? "").toLowerCase().trim();
+      const customerName = (fields.customer ?? "").toLowerCase().trim();
       const supplierNifNorm = normalizeTenantNif(fields.supplierNif);
+
+      const customerMatchesTenant =
+        tenantName.length >= 5 &&
+        customerName.length >= 5 &&
+        (tenantName === customerName ||
+          (tenantName.includes(customerName) && customerName.length >= 8) ||
+          (customerName.includes(tenantName) && tenantName.length >= 8));
+
+      const supplierMatchesTenant =
+        tenantName.length >= 5 &&
+        supplierName.length >= 5 &&
+        (tenantName === supplierName ||
+          (tenantName.includes(supplierName) && supplierName.length >= 8) ||
+          (supplierName.includes(tenantName) && tenantName.length >= 8));
 
       // ── Fase 4.2 (P0.1) — nome de um bloco colado ao NIF de outro ────
       // Bug real: ONNERA/Edenox (fatura espanhola) ficou com
@@ -2588,10 +2656,38 @@ export class ExtractionService implements OnModuleDestroy {
         return fixed;
       }
 
+      // ── Fase 4.3 (P0.6) — ONNERA/Edenox: customer is ALREADY the tenant!
+      // If customer is already the tenant name, NEVER swap customer into supplier.
+      // That would make our tenant the supplier! Keep the supplier name intact.
       if (
         authoritativeSupplierNif &&
         authoritativeSupplierNif === tenantNif &&
-        hasCustomerData
+        customerMatchesTenant
+      ) {
+        this.logger.warn(
+          `[ensureSupplierCustomerSanity] tenant NIF (${formatPtNif(tenantNif)}) was in supplierNif, ` +
+            `but customer "${fields.customer}" is ALREADY tenant — preserving supplier "${fields.supplier}" ` +
+            `and moving tenant NIF to customerNif.`,
+        );
+        const fixed: ExtractedFields = {
+          ...fields,
+          customerNif: tenantNif,
+          supplierNif: supplierNifNorm === tenantNif ? undefined : fields.supplierNif,
+        };
+        fixed.hints = [
+          ...(fixed.hints ?? []),
+          `partySwap:retained_supplier_customer_already_tenant`,
+          `partySwap:reason=customer_matches_tenant_name`,
+        ];
+        return fixed;
+      }
+
+      if (
+        authoritativeSupplierNif &&
+        authoritativeSupplierNif === tenantNif &&
+        hasCustomerData &&
+        !customerMatchesTenant &&
+        (supplierMatchesTenant || (customerNif && customerNif !== tenantNif))
       ) {
         this.logger.warn(
           `[ensureSupplierCustomerSanity] supplier NIF matches tenant NIF ` +
@@ -2616,16 +2712,10 @@ export class ExtractionService implements OnModuleDestroy {
 
       // ── SWAP CONDITION 3: QR's B: (buyer NIF) equals the tenant's NIF
       // AND the AI put the tenant's NIF (or name) in the supplier slot.
-      // This catches the bug where the QR decoded cleanly but the AI
-      // swapped the parties in its own JSON.
       if (
         authoritativeBuyerNif === tenantNif &&
-        (supplierNifNorm === tenantNif ||
-          tenantName.length >= 5 &&
-          supplierName.length >= 5 &&
-          (tenantName === supplierName ||
-            (tenantName.includes(supplierName) && supplierName.length >= 8) ||
-            (supplierName.includes(tenantName) && tenantName.length >= 8))) &&
+        !customerMatchesTenant &&
+        (supplierNifNorm === tenantNif || supplierMatchesTenant) &&
         hasCustomerData
       ) {
         this.logger.warn(
@@ -2648,14 +2738,9 @@ export class ExtractionService implements OnModuleDestroy {
       }
 
       // ── SWAP CONDITION 2: supplier name matches tenant name
-      // (and tenant NIF is not the supplierNif — could be a name-only
-      // mismatch where the AI put the buyer in the supplier slot).
       if (
-        tenantName.length >= 5 &&
-        supplierName.length >= 5 &&
-        (tenantName === supplierName ||
-          (tenantName.includes(supplierName) && supplierName.length >= 8) ||
-          (supplierName.includes(tenantName) && tenantName.length >= 8)) &&
+        supplierMatchesTenant &&
+        !customerMatchesTenant &&
         hasCustomerData
       ) {
         this.logger.warn(
@@ -3558,6 +3643,7 @@ export class ExtractionService implements OnModuleDestroy {
     loaded: LoadedText,
     tenantId?: string,
     precomputedAi?: ExtractedFields,
+    overrides?: { model?: string; provider?: string },
   ): Promise<ExtractedFields> {
     // No vision provider configured → the QR is the only signal we
     // have. Tag the warning so the operator sees WHY supplier is
@@ -3593,7 +3679,7 @@ export class ExtractionService implements OnModuleDestroy {
       this.lastVisionExtracted = null;
     }
     try {
-      if (!aiFields) aiFields = await this.runAiOrRegexPath(doc, loaded, tenantId);
+      if (!aiFields) aiFields = await this.runAiOrRegexPath(doc, loaded, tenantId, overrides);
     } catch (err) {
       this.logger.warn(
         `[mergeQrWithAi] AI path threw for document=${doc.fileName}: ` +
@@ -4581,13 +4667,22 @@ export class ExtractionService implements OnModuleDestroy {
       GB: /^GB(?:\d{9}|\d{12}|GD\d{3}|HA\d{3})$/,
     };
     const labelled = text.matchAll(
-      /(?:VAT(?:\s*(?:No\.?|ID))?|Tax\s*ID|USt-?IdNr\.?|N[ºo]\s*TVA|CIF)\s*[:#-]?\s*([A-Z]{2}[A-Z0-9 .-]{7,16})/gi,
+      /(?:VAT(?:\s*(?:No\.?|ID))?|Tax\s*ID|USt-?IdNr\.?|N[ºo]\s*TVA|C\.?I\.?F\.?)\s*[:#-]?\s*([A-Z]{2}[- ]?[A-Z0-9][- ]?[0-9]{7}[A-Z0-9]?|[A-Z]{2}[A-Z0-9-]{7,14})\b/gi,
     );
     const candidates = [...labelled].map((match) => match[1]);
+
+    // Spanish CIF without ES prefix (e.g. C.I.F. A-14219836 or CIF A14219836)
+    const cifWithoutCountry = text.matchAll(
+      /(?:C\.?I\.?F\.?)\s*[:#-]?\s*([A-Z][- ]?\d{7}[- ]?[A-Z0-9])\b/gi,
+    );
+    for (const match of cifWithoutCountry) {
+      candidates.push(`ES${match[1]}`);
+    }
+
     candidates.push(
       ...[
         ...text.matchAll(
-          /\b(?:ATU\d{8}|(?:BE|BG|CY|CZ|DE|DK|EE|ES|FI|FR|GR|EL|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|RO|SE|SI|SK|GB)[A-Z0-9]{7,13})\b/gi,
+          /\b(?:ATU\d{8}|(?:BE|BG|CY|CZ|DE|DK|EE|ES|FI|FR|GR|EL|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|RO|SE|SI|SK|GB)[- ]?[A-Z0-9][- ]?[0-9]{6,12}[A-Z0-9]?)\b/gi,
         ),
       ].map((match) => match[0]),
     );
@@ -5225,6 +5320,11 @@ export class ExtractionService implements OnModuleDestroy {
         supplierReview: supplierResolve?.supplierReview ?? false,
         supplierReason: supplierResolve?.supplierReason ?? null,
       },
+      ...(this.lastAiExtraction
+        ? { aiExtraction: this.lastAiExtraction }
+        : base.aiExtraction
+          ? { aiExtraction: base.aiExtraction }
+          : {}),
       ...(filing ? { filing } : {}),
     } as unknown as Prisma.InputJsonValue;
   }

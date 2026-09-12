@@ -41,7 +41,11 @@ services:
   # ── One-shot bootstrap: bucket + service user with a bucket-only policy.
   #    Idempotent; safe to re-run on every deploy.
   minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    # Fase 4.2 — o Docker Hub passou a recusar `minio/mc` ("pull access
+    # denied", confirmado por SSH direto ao VPS e reproduzido em dois
+    # deploys seguidos). A MinIO move a distribuição para o Quay.io por
+    # causa das políticas do Docker Hub; a mesma tag existe lá.
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     restart: "no"
     depends_on:
       - minio

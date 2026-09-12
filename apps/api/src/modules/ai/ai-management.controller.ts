@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import type { TenantRequestContext } from '../../common/context/tenant-context';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RbacGuard, Role } from '../../common/guards/rbac.guard';
@@ -27,15 +28,15 @@ export class AiManagementController {
 
   @Get('settings')
   @ApiOperation({ summary: 'Obter configurações e roteamento de modelos de IA do tenant' })
-  async getSettings(@CurrentTenant() tenantId: string): Promise<AiSettingsDto> {
-    return this.aiManagement.getSettings(tenantId);
+  async getSettings(@CurrentTenant() tenant: TenantRequestContext): Promise<AiSettingsDto> {
+    return this.aiManagement.getSettings(tenant.tenantId);
   }
 
   @Put('settings')
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Atualizar configurações e tarefas de modelos de IA do tenant' })
   async updateSettings(
-    @CurrentTenant() tenantId: string,
+    @CurrentTenant() tenant: TenantRequestContext,
     @Body()
     body: {
       defaultProvider?: string;
@@ -46,7 +47,7 @@ export class AiManagementController {
       };
     },
   ): Promise<AiSettingsDto> {
-    return this.aiManagement.updateSettings(tenantId, body);
+    return this.aiManagement.updateSettings(tenant.tenantId, body);
   }
 
   @Get('models')
@@ -79,7 +80,7 @@ export class AiManagementController {
 
   @Get('metrics')
   @ApiOperation({ summary: 'Métricas agregadas de utilização de IA e telemetria' })
-  async getMetrics(@CurrentTenant() tenantId: string): Promise<AiMetricsDto> {
-    return this.aiManagement.getMetrics(tenantId);
+  async getMetrics(@CurrentTenant() tenant: TenantRequestContext): Promise<AiMetricsDto> {
+    return this.aiManagement.getMetrics(tenant.tenantId);
   }
 }

@@ -484,10 +484,6 @@ export class AiManagementService {
     const docs = await this.prisma.document.findMany({
       where: {
         tenantId,
-        metadata: {
-          path: ['aiExtraction'],
-          not: Prisma.DbNull,
-        },
       },
       select: {
         id: true,

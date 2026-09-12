@@ -476,6 +476,11 @@ Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Pos
 5. **Carregamento Dinâmico de Modelos na Re-extração:**
    - A caixa de diálogo de re-extração (`re-extract-dialog.tsx`) consulta agora dinamicamente `GET /api/v1/ai/models`, exibindo apenas os modelos disponíveis para o provider ativo com opção de modelo personalizado.
 
+6. **Validação em Produção (Smoke Live):**
+   - **Fornecedor TEFCOLD (`cmtwu093e0032p307cl2v8tlw`):** Ficha atualizada com sucesso: Morada (`Calle Fluvia Nº 65, 08019-Barcelona`), Código Postal (`08019`), Cidade (`Barcelona`), Telefone (`924981555`), Email (`pedidos@climahosteleria.es`), Website (`www.climahosteleria.es`).
+   - **Fatura CREATEINFOR (`cmtwufp4h003kp307ndm2sc28`):** Desbloqueada de `ORCAMENTO` e recalculada com sucesso para `FATURA_RECEBIDA` com total de `12.30 EUR` e ATCUD `J6Z8J3VX-2285`.
+   - **Integrações (`/settings/integrations`):** Endpoint `GET /api/v1/integrations` não expõe `ai_settings`; erro 404 em testes eliminado.
+
 **O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos. Atenção: Bloco B2 só deve ser iniciado após confirmação explícita do Rui.
 
 ## Como correr localmente

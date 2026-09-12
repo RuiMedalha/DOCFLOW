@@ -5,6 +5,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { NifLookupService } from "../nif-lookup/nif-lookup.service";
 import { ViesProvider } from "../enrichment/providers/vies.provider";
 import { normalizePartyName } from "../parties/party-identity";
+import { getTenantIdentity } from "../ai/tenant-identity";
 
 /**
  * Inputs the extractor feeds into the supplier auto-resolve step.
@@ -104,6 +105,31 @@ export class SupplierResolver {
     const { tenantId, country, supplierName, supplierNif, supplierVatId, iban, aiConfidence } = input;
 
     try {
+      // ── Fase 4.2 (P0.1) — invariante duro: nunca criamos um Party
+      // FORNECEDOR com o NIF do próprio tenant. Isto é defesa em
+      // profundidade: `ensureSupplierCustomerSanity` já trata a maior
+      // parte dos casos a montante, mas esta é a última linha antes de
+      // escrever na base — se algum caminho novo (ou um bug futuro)
+      // deixar passar o nosso próprio NIF como "fornecedor", é aqui que
+      // paramos, sempre, independentemente da origem do valor.
+      const tenantGuardNif = supplierNif ? normalizeNif(supplierNif) : "";
+      if (tenantGuardNif) {
+        const identity = await getTenantIdentity(this.prisma, tenantId).catch(() => null);
+        const ownNif = identity ? normalizeNif(identity.tenantNif) : "";
+        if (ownNif && tenantGuardNif === ownNif) {
+          this.logger.error(
+            `[resolve] BLOQUEADO: tentativa de criar/ligar um fornecedor com o NIF do ` +
+              `próprio tenant (${ownNif}) para tenant=${tenantId}. supplierName="${supplierName ?? "?"}". ` +
+              `Isto nunca é válido — o emitente é sempre a OUTRA entidade do documento.`,
+          );
+          return {
+            party: null,
+            supplierReview: true,
+            reason: "blocked_tenant_nif_as_supplier",
+          };
+        }
+      }
+
       const normalizedNif = supplierNif ? normalizeNif(supplierNif) : "";
       // Country-prefixed VAT (e.g. "FR123...") wins over a bare NIF when
       // both are present — foreign invoices carry the VAT on the row.
@@ -138,6 +164,7 @@ export class SupplierResolver {
         vatId: taxIdValid ? normalizedVat || null : null,
         country: countryCode,
         name: supplierName,
+        iban: iban && this.isIbanValid(iban) ? normalizeIban(iban) : null,
       });
 
       const confidenceOk = (aiConfidence ?? 0) > SupplierResolver.CONFIDENCE_FLOOR;
@@ -326,8 +353,14 @@ export class SupplierResolver {
      * produção).
      */
     name?: string | null;
+    /**
+     * Fase 4.2 (P0.4.5) — último recurso, depois do NIF validado e do
+     * nome normalizado: um IBAN já visto identifica a mesma entidade
+     * mesmo quando o nome varia entre faturas.
+     */
+    iban?: string | null;
   }): Promise<{ id: string; name: string; nif: string | null; isRecurring: boolean } | null> {
-    const { tenantId, nif, vatId, country, name } = args;
+    const { tenantId, nif, vatId, country, name, iban } = args;
 
     // Prefer NIF lookup (most common in PT).
     if (nif) {
@@ -390,6 +423,29 @@ export class SupplierResolver {
         this.logger.warn(
           `[lookupParty] name fallback failed for "${normalized}": ${(err as Error).message}`,
         );
+      }
+    }
+
+    // ── Fase 4.2 (P0.4.5) — último recurso: IBAN já conhecido ────────
+    // Sem NIF válido e sem nome que normalize para algo reconhecível
+    // (ex.: uma fatura com o nome mal OCR'd), um IBAN que já apareceu
+    // noutra fatura deste tenant é o último sinal fiável de que é a
+    // mesma entidade.
+    if (iban) {
+      try {
+        const byIban = await this.prisma.party.findFirst({
+          where: { tenantId, iban, type: PartyType.FORNECEDOR },
+          select: { id: true, name: true, nif: true, isRecurring: true },
+        });
+        if (byIban) {
+          this.logger.log(
+            `[lookupParty] matched party=${byIban.id} by known IBAN ${iban} — ` +
+              `sem NIF nem nome reconhecível`,
+          );
+          return byIban;
+        }
+      } catch (err) {
+        this.logger.warn(`[lookupParty] IBAN fallback failed: ${(err as Error).message}`);
       }
     }
 

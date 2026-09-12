@@ -1,5 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isGenericPartyName, parsePostalAddress } from './address-parser';
 
 /**
  * Fase 4 — VIES (VAT Information Exchange System) via the official
@@ -124,7 +125,16 @@ export class ViesService {
     if (!this.prisma) return null;
     const party = await this.prisma.party.findFirst({
       where: { id: partyId, tenantId },
-      select: { id: true, vatNumber: true, nif: true, country: true },
+      select: {
+        id: true,
+        vatNumber: true,
+        nif: true,
+        country: true,
+        name: true,
+        address: true,
+        city: true,
+        postalCode: true,
+      },
     });
     if (!party) return null;
     const vat = resolvePartyVat(party);
@@ -134,6 +144,14 @@ export class ViesService {
     const cc = result.countryCode;
     const regime = cc === 'PT' ? 'PT' : EU_VAT_COUNTRIES.has(cc) ? 'UE_REVERSE_CHARGE' : 'EXTRA_UE';
     if (result.source !== 'error') {
+      // Fase 4.2 (P1.1) — o VIES respondia e ninguém escrevia a
+      // resposta na ficha: `viesName`/`viesAddress` ficavam gravados
+      // como cache, mas `name`/`address`/`city`/`postalCode` — os
+      // campos que a ficha realmente mostra — nunca eram tocados. O
+      // IKEA ficava "Fornecedor por identificar" com tudo vazio ao
+      // lado de um painel VIES que já tinha o nome e a morada certos.
+      const nameIsGeneric = isGenericPartyName(party.name, party.nif, party.vatNumber);
+      const parsedAddress = result.valid ? parsePostalAddress(result.address) : null;
       await this.prisma.party.update({
         where: { id: partyId },
         data: {
@@ -143,6 +161,15 @@ export class ViesService {
           viesAddress: result.address,
           ...(result.valid ? { vatRegime: regime as 'PT' | 'UE_REVERSE_CHARGE' | 'EXTRA_UE' } : {}),
           ...(party.vatNumber ? {} : { vatNumber: `${cc}${result.vatNumber}` }),
+          // O nome oficial só substitui um nome genérico — nunca
+          // sobrepõe um nome que o operador já confirmou ou corrigiu.
+          ...(result.valid && result.name && nameIsGeneric ? { name: result.name } : {}),
+          // A morada só preenche o que estiver vazio — nunca apaga
+          // dados já corretos.
+          ...(parsedAddress && !party.address && parsedAddress.address ? { address: parsedAddress.address } : {}),
+          ...(parsedAddress && !party.city && parsedAddress.city ? { city: parsedAddress.city } : {}),
+          ...(parsedAddress && !party.postalCode && parsedAddress.postalCode ? { postalCode: parsedAddress.postalCode } : {}),
+          ...(parsedAddress && !party.country ? { country: cc } : {}),
         },
       });
     }

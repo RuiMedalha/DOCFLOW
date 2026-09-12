@@ -52,6 +52,12 @@ export interface ExtractedFields {
    * by useDocumentBundle from `document.metadata.filing.expenseCategory`.
    */
   expenseCategory?: string | null;
+  /** Fase 4.2 (P0.3) — desconto global resolvido pelo backend (euros), incl. pronto pagamento derivado de cashDiscountRate. */
+  discountAmount?: number | null;
+  /** Fase 4.2 (P0.3) — true quando soma(linhas) − desconto global + IVA = total ao cêntimo. */
+  totalsReconciled?: boolean | null;
+  /** Fase 4.2 (P0.3) — diferença residual calculada pelo backend. */
+  totalsDelta?: number | null;
 }
 
 export interface FieldConfidence {
@@ -79,8 +85,15 @@ export interface LineItem {
   code?: string | null;
   quantity: number;
   unitPrice: number;
-  /** Per-line discount amount in currency. Optional — many documents don't apply one. */
+  /** Per-line discount, resolved to a currency amount. Optional — many documents don't apply one. */
   discount?: number | null;
+  /**
+   * Fase 4.2 (P0.3) — percentagem quando a extração conseguiu confirmar
+   * pela aritmética que o valor impresso na coluna era uma percentagem
+   * (ex.: SAMMIC "Dto. 30,00" = 30%, não 30€). `discount` guarda sempre
+   * o valor resolvido em euros; isto é só para a etiqueta correta.
+   */
+  discountPercent?: number | null;
   taxRate?: number;
   total: number;
 }
@@ -238,12 +251,21 @@ function Field({
   children,
   right,
   hint,
+  hasValue = true,
 }: {
   label: string;
   confidence?: number;
   children: React.ReactNode;
   right?: React.ReactNode;
   hint?: React.ReactNode;
+  /**
+   * Fase 4.2 (P1.4) — um campo vazio não tem confiança nenhuma. Um
+   * badge "95%" ao lado de um placeholder com ar de dado real parecia
+   * um valor extraído; era só o exemplo. Por omissão `true` (chamadores
+   * antigos que não passam isto mantêm o comportamento de sempre); os
+   * campos com placeholder passam explicitamente o valor real.
+   */
+  hasValue?: boolean;
 }) {
   return (
     <div className="field-group">
@@ -272,7 +294,7 @@ function Field({
               {right}
             </span>
           )}
-          {confidence !== undefined && confBadge(confidence)}
+          {confidence !== undefined && hasValue && confBadge(confidence)}
         </div>
       </div>
       {children}
@@ -529,15 +551,29 @@ export function FieldPanel(props: FieldPanelProps) {
     [lineItems],
   );
 
-  const hasDiscount = lineItems.some((li) => Number.isFinite(li.discount as number) && (li.discount as number) > 0);
+  const hasDiscount = lineItems.some(
+    (li) =>
+      (Number.isFinite(li.discount as number) && (li.discount as number) > 0) ||
+      Number.isFinite(li.discountPercent as number),
+  );
   const hasCode = lineItems.some((li) => li.code != null && String(li.code).trim() !== '');
 
   const netAmount = fields.netAmount ?? 0;
   const taxAmount = fields.taxAmount ?? 0;
   const totalAmount = fields.total ?? 0;
   const netVatTotal = netAmount + taxAmount;
-  const totalDelta = totalAmount - lineSum;
-  const deltaMatch = Math.abs(totalDelta) <= 0.005;
+  // Fase 4.2 (P0.3) — quando o backend já reconciliou os totais
+  // (soma linhas − desconto global + IVA = total), usamos o veredicto
+  // dele em vez de recalcular ingenuamente no frontend. O recálculo
+  // ingénuo (`totalAmount - lineSum`) ignora qualquer desconto global
+  // e mostrava a SAMMIC como "diferença de 0,81" quando é exactamente
+  // o desconto de pronto pagamento, já resolvido pelo backend.
+  const backendReconciled = fields.totalsReconciled;
+  const totalDelta =
+    backendReconciled != null && fields.totalsDelta != null
+      ? fields.totalsDelta
+      : totalAmount - lineSum;
+  const deltaMatch = backendReconciled != null ? backendReconciled : Math.abs(totalDelta) <= 0.005;
 
   return (
     <div className="space-y-12">
@@ -608,7 +644,7 @@ export function FieldPanel(props: FieldPanelProps) {
           ================================================================ */}
       <Group title="Identidade">
         <fieldset disabled={props.approved} className="space-y-6">
-          <Field label="Fornecedor" confidence={confidence.supplier}>
+          <Field label="Fornecedor" confidence={confidence.supplier} hasValue={Boolean(fields.supplier)}>
             <EdInput
               type="text"
               value={fields.supplier ?? ''}
@@ -629,32 +665,32 @@ export function FieldPanel(props: FieldPanelProps) {
             </div>
           ) : null}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-            <Field label="NIF" confidence={confidence.supplierNif}>
+            <Field label="NIF" confidence={confidence.supplierNif} hasValue={Boolean(fields.supplierNif)}>
               <EdInput
                 type="text"
                 mono
                 maxLength={20}
                 value={fields.supplierNif ?? ''}
                 onChange={(e) => props.onFieldChange({ supplierNif: e.target.value })}
-                placeholder="500000001"
+                placeholder="por preencher"
               />
             </Field>
-            <Field label="Nº documento" confidence={confidence.docNumber}>
+            <Field label="Nº documento" confidence={confidence.docNumber} hasValue={Boolean(fields.docNumber)}>
               <EdInput
                 type="text"
                 mono
                 value={fields.docNumber ?? ''}
                 onChange={(e) => props.onFieldChange({ docNumber: e.target.value })}
-                placeholder="FT 2026/1234"
+                placeholder="por preencher"
               />
             </Field>
-            <Field label="ATCUD" confidence={confidence.atcud}>
+            <Field label="ATCUD" confidence={confidence.atcud} hasValue={Boolean(fields.atcud)}>
               <EdInput
                 type="text"
                 mono
                 value={fields.atcud ?? ''}
                 onChange={(e) => props.onFieldChange({ atcud: e.target.value })}
-                placeholder="ABC1234-56789"
+                placeholder="por preencher"
               />
             </Field>
             <Field label="Categoria da despesa">
@@ -685,14 +721,14 @@ export function FieldPanel(props: FieldPanelProps) {
       <Group title="Calendário & Validação">
         <fieldset disabled={props.approved} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-            <Field label="Data do documento" confidence={confidence.docDate}>
+            <Field label="Data do documento" confidence={confidence.docDate} hasValue={Boolean(fields.docDate)}>
               <EdInput
                 type="date"
                 value={fields.docDate ?? ''}
                 onChange={(e) => props.onFieldChange({ docDate: e.target.value })}
               />
             </Field>
-            <Field label="Vencimento" confidence={confidence.dueDate}>
+            <Field label="Vencimento" confidence={confidence.dueDate} hasValue={Boolean(fields.dueDate)}>
               <EdInput
                 type="date"
                 value={fields.dueDate ?? ''}
@@ -703,6 +739,7 @@ export function FieldPanel(props: FieldPanelProps) {
           <Field
             label="IBAN"
             confidence={confidence.iban}
+            hasValue={Boolean(fields.iban)}
             right={todayLabel ? `hoje · ${todayLabel}` : undefined}
             hint="IBAN destinatário — verificar com o histórico do fornecedor antes de pagar."
           >
@@ -711,7 +748,7 @@ export function FieldPanel(props: FieldPanelProps) {
               mono
               value={fields.iban ?? ''}
               onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
-              placeholder="PT50 0035 0651 0000 0000 0712"
+              placeholder="por preencher"
             />
           </Field>
         </fieldset>
@@ -723,21 +760,21 @@ export function FieldPanel(props: FieldPanelProps) {
       <Group title="Montantes">
         <fieldset disabled={props.approved} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-6">
-            <Field label="Base" confidence={confidence.netAmount}>
+            <Field label="Base" confidence={confidence.netAmount} hasValue={fields.netAmount != null}>
               <MoneyInput
                 value={fields.netAmount ?? null}
                 onChange={(v) => props.onFieldChange({ netAmount: v })}
                 ccy={currency}
               />
             </Field>
-            <Field label="IVA" confidence={confidence.taxAmount}>
+            <Field label="IVA" confidence={confidence.taxAmount} hasValue={fields.taxAmount != null}>
               <MoneyInput
                 value={fields.taxAmount ?? null}
                 onChange={(v) => props.onFieldChange({ taxAmount: v })}
                 ccy={currency}
               />
             </Field>
-            <Field label="Total" confidence={confidence.total}>
+            <Field label="Total" confidence={confidence.total} hasValue={fields.total != null}>
               <MoneyInput
                 value={fields.total ?? null}
                 onChange={(v) => props.onFieldChange({ total: v })}
@@ -788,6 +825,44 @@ export function FieldPanel(props: FieldPanelProps) {
             >
               +
             </span>
+            {/* Fase 4.2 (P0.3) — o desconto global (ex.: pronto pagamento)
+                é uma linha própria da equação, não uma "diferença" por
+                explicar. Só aparece quando a extração o resolveu. */}
+            {Boolean(fields.discountAmount) && (
+              <>
+                <div className="flex items-baseline gap-2 text-sm">
+                  <span
+                    className="uppercase tracking-wider"
+                    style={{
+                      fontFamily: 'var(--font-inter-tight), system-ui, sans-serif',
+                      fontSize: '10px',
+                      color: 'var(--ed-ink-faint)',
+                    }}
+                  >
+                    Desconto global
+                  </span>
+                  <span
+                    className="tabular-nums"
+                    style={{
+                      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                      color: 'var(--ed-ink-soft)',
+                    }}
+                  >
+                    − {fmtMoney(fields.discountAmount ?? 0, currency)}
+                  </span>
+                </div>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    color: 'var(--ed-accent-gold)',
+                    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+                    fontSize: '14px',
+                  }}
+                >
+                  +
+                </span>
+              </>
+            )}
             <div className="flex items-baseline gap-2 text-sm">
               <span
                 className="uppercase tracking-wider"
@@ -846,12 +921,16 @@ export function FieldPanel(props: FieldPanelProps) {
             </div>
           </div>
 
-          {/* Linha auxiliar — Δ entre Total declarado e soma das linhas. */}
+          {/* Fase 4.2 (P0.3) — quando o backend já reconciliou (soma
+              linhas − desconto global + IVA = total), mostramos o
+              veredicto dele; sem isso, mantemos o recálculo simples de
+              sempre. Nunca rotulamos um desconto global já explicado
+              como "diferença". */}
           <p
             className="text-[11px] uppercase tracking-wider flex items-center gap-1.5"
             style={{ color: 'var(--ed-ink-faint)' }}
           >
-            Δ Total documento − soma linhas:
+            {backendReconciled != null ? 'Δ residual (após desconto global)' : 'Δ Total documento − soma linhas'}:
             <span
               className="tabular-nums"
               style={{
@@ -1091,10 +1170,17 @@ export function FieldPanel(props: FieldPanelProps) {
                                 disabled={rowBusy}
                                 onCommit={(v) => props.onUpdateLineItem!(li.id, { discount: v })}
                               />
+                            ) : Number.isFinite(li.discountPercent as number) ? (
+                              // Fase 4.2 (P0.3) — mostra a percentagem quando
+                              // a extração a confirmou pela aritmética
+                              // (nunca "30,00 EUR" para um desconto de 30%).
+                              <span title={`= ${fmtMoney(li.discount as number, currency)}`}>
+                                {(li.discountPercent as number).toLocaleString('pt-PT', { maximumFractionDigits: 2 })}%
+                              </span>
+                            ) : Number.isFinite(li.discount as number) ? (
+                              fmtMoney(li.discount as number, currency)
                             ) : (
-                              Number.isFinite(li.discount as number)
-                                ? fmtMoney(li.discount as number, currency)
-                                : '—'
+                              '—'
                             )}
                           </td>
                         )}

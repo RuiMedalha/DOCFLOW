@@ -208,7 +208,7 @@ const VISION_JSON_SCHEMA_DESCRIPTION = `Return ONLY a valid JSON object (no mark
   "currency": string|null,            // ISO 4217 (EUR, USD, GBP, CHF, ...)
   "iban": string|null,                // IBAN visivel no documento (espacos sao OK)
   "country": string|null,             // ISO 3166-1 alpha-2 do emitente (PT, ES, FR, ...)
-  "discountAmount": number|null,      // DESCONTO GLOBAL da fatura (cabeçalho), em moeda do documento. Nulo quando não aplicável. DISTINCT from per-line discount which is per line item. null (not 0) when the invoice has no global discount.
+  "discountAmount": number|null,      // DESCONTO GLOBAL da fatura (cabeçalho), em moeda do documento. Nulo quando não aplicável. DISTINCT from per-line discount which is per line item. null (not 0) when the invoice has no global discount. Fase 4.2: this ALSO covers any header-level deduction printed as a currency amount, whatever it's labelled — "Desconto global", "Pronto pago"/"Pronto pagamento", "Desconto financeiro", "Descuento", "Early payment discount", "DPP" — as long as the printed value is a currency amount (not a %). A % value with the same labels goes in cashDiscountRate instead, never here.
   "ivaBreakdown": [{ "rate": number, "base": number, "tax": number }]|null,    // per-rate VAT breakdown — REQUIRED when the invoice has more than one VAT rate. base = sum of net amounts at that rate AFTER line-level discounts (before VAT). tax = base * rate/100. tax values must reconcile with taxAmount.
   "documentType": string|null,        // "FATURA" | "RECIBO" | "NOTA_CREDITO" | "NOTA_DEBITO" | "FACTURA" | "INVOICE" | ...
   "documentTitle": string|null,       // The document's own heading, TRANSCRIBED VERBATIM, exactly as printed at the top of the page — "FACTURA", "OFERTA DE VENTA", "PRESUPUESTO", "NOTA DE CRÉDITO", "ORÇAMENTO", "PROFORMA", "ALBARÁN", "PURCHASE ORDER", "STATEMENT OF ACCOUNT". Copy the characters you see; do NOT translate, normalise, expand or interpret it. This is raw text for a downstream deterministic rule — an accurate transcription matters far more than a tidy label.
@@ -220,7 +220,7 @@ const VISION_JSON_SCHEMA_DESCRIPTION = `Return ONLY a valid JSON object (no mark
       "quantity": number|null,        // quantity in the line's unit
       "unitPrice": number|null,       // net unit price (without VAT, BEFORE line discount)
       "vatRate": number|null,         // VAT rate applied, as a percentage (e.g. 23)
-      "discount": number|null,        // per-line discount amount, in document currency. Nulo when none. The lineTotal reported is the gross/net AFTER this discount.
+      "discount": number|null,        // per-line discount COLUMN VALUE, exactly as printed — a currency amount OR a percentage, whichever the supplier's column header says ("Dto." / "Desc." / "Discount" columns are often a PERCENTAGE, e.g. "Dto. 30,00" meaning 30%, not €30). Do NOT decide the unit yourself — just copy the printed number. Nulo when none. The lineTotal reported is the gross/net AFTER this discount is applied, whatever unit it is in — that lineTotal is what downstream code uses to work out whether the printed number was a % or an amount.
       "lineTotal": number|null        // line total (net or gross, whichever the supplier prints)
     }
   ]|null,

@@ -121,7 +121,12 @@ describe('ViesProvider', () => {
     await p.fetch({ nif: 'B12345678', country: 'es', iban: null });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const callArgs = fetchMock.mock.calls[0];
-    expect(callArgs[0]).toContain('check-vat-number-service');
+    // Fase 4.2 (P1.1) — o sufixo `-service` era o endpoint errado
+    // (devolvia HTTP de erro) e causava a contradição "vies_http_error"
+    // ao lado de "Estado VIES: Válido" na mesma ficha. O endpoint certo
+    // é o mesmo que o `ViesService` já usa (confirmado por curl).
+    expect(callArgs[0]).toBe('https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number');
+    expect(callArgs[0]).not.toContain('-service');
     expect(callArgs[1].method).toBe('POST');
     expect(JSON.parse(callArgs[1].body)).toEqual({
       countryCode: 'ES', // uppercased

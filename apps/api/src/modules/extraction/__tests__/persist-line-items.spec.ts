@@ -22,8 +22,27 @@ describe("ExtractionService.persistLineItems() — Fase 4", () => {
     expect(deleteMany).toHaveBeenCalledWith({ where: { documentId: "doc-1" } });
     expect(createMany).toHaveBeenCalledWith({
       data: [
-        { documentId: "doc-1", code: "CPC100", description: "Percolador 100 chávenas", quantity: 1, unitPrice: 87.5, discount: 0, taxRate: 23, total: 87.5 },
-        { documentId: "doc-1", code: null, description: "Portes", quantity: 1, unitPrice: 14, discount: 0, taxRate: 23, total: 14 },
+        { documentId: "doc-1", code: "CPC100", description: "Percolador 100 chávenas", quantity: 1, unitPrice: 87.5, discount: 0, discountPercent: null, taxRate: 23, total: 87.5 },
+        { documentId: "doc-1", code: null, description: "Portes", quantity: 1, unitPrice: 14, discount: 0, discountPercent: null, taxRate: 23, total: 14 },
+      ],
+    });
+  });
+
+  // Fase 4.2 (P0.3) — a SAMMIC imprime "Dto. 30,00" numa linha, que são
+  // 30% (2 × 24,10 = 48,20; − 30% = 33,74), não 30€. `discount` fica com
+  // o valor resolvido em euros; `discountPercent` guarda a percentagem.
+  it("classifica o desconto por linha (percentagem vs. valor) antes de gravar", async () => {
+    const { svc, createMany } = svcWith();
+    await (svc as any).persistLineItems("doc-sammic", [
+      { description: "Resistência", quantity: 2, unitPrice: 24.1, discount: 30, lineTotal: 33.74 },
+    ]);
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          discount: 14.46,
+          discountPercent: 30,
+          total: 33.74,
+        }),
       ],
     });
   });

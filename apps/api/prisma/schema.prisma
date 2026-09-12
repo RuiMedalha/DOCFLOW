@@ -663,17 +663,24 @@ model Document {
 }
 
 model DocumentItem {
-  id          String   @id @default(cuid())
-  documentId  String
-  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  code        String?
-  description String
-  quantity    Decimal  @default(1) @db.Decimal(12, 3)
-  unitPrice   Decimal  @db.Decimal(12, 4)
-  discount    Decimal  @default(0) @db.Decimal(12, 4)
-  taxRate     Decimal  @default(23) @db.Decimal(5, 2)
-  total       Decimal  @db.Decimal(12, 2)
-  createdAt   DateTime @default(now())
+  id              String   @id @default(cuid())
+  documentId      String
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  code            String?
+  description     String
+  quantity        Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice       Decimal  @db.Decimal(12, 4)
+  discount        Decimal  @default(0) @db.Decimal(12, 4)
+  // Fase 4.2 (P0.3) — o valor impresso na coluna de desconto pode ser
+  // uma percentagem (a SAMMIC imprime "Dto. 30,00" = 30%, não 30 €).
+  // `discount` guarda sempre o VALOR resolvido em euros (para a soma
+  // das linhas continuar correta); `discountPercent` guarda a
+  // percentagem quando a classificação a determinou, para a interface
+  // mostrar "30%" em vez de "30,00 EUR".
+  discountPercent Decimal? @db.Decimal(6, 3)
+  taxRate         Decimal  @default(23) @db.Decimal(5, 2)
+  total           Decimal  @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
 
   @@index([documentId])
   @@map("document_items")

@@ -121,7 +121,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
           <input className="input" value={form.mobile ?? ''} onChange={(e) => setForm({ ...form, mobile: e.target.value })} />
         </Field>
         <Field label="IBAN">
-          <input className="input font-mono" maxLength={34} value={form.iban ?? ''} onChange={(e) => setForm({ ...form, iban: e.target.value })} placeholder="PT50 0000 0000 0000 0000 0000 0" />
+          <input className="input font-mono" maxLength={34} value={form.iban ?? ''} onChange={(e) => setForm({ ...form, iban: e.target.value })} placeholder="por preencher" />
         </Field>
         <Field label="BIC / SWIFT">
           <input className="input font-mono" maxLength={11} value={form.bic ?? ''} onChange={(e) => setForm({ ...form, bic: e.target.value })} />
@@ -140,7 +140,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         </Field>
         {/* Fase 4 — perfil fiscal/comercial */}
         <Field label="NIF-IVA UE (estrangeiros)">
-          <input className="input font-mono" placeholder="ESB06612386" value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
+          <input className="input font-mono" placeholder="por preencher" value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
         </Field>
         <Field label="Regime de IVA">
           <select className="select" value={form.vatRegime ?? 'PT'} onChange={(e) => setForm({ ...form, vatRegime: e.target.value as PartyInput['vatRegime'] })}>

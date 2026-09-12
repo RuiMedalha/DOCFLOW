@@ -92,6 +92,79 @@ describe("ViesService (Fase 4)", () => {
     );
   });
 
+  /**
+   * Fase 4.2 (P1.1) — bug real: a ficha do IKEA mostrava "Nome (VIES)"
+   * e "Morada (VIES)" corretos, e a entidade continuava
+   * "Fornecedor por identificar" com nome, morada, código postal e
+   * cidade vazios. O VIES respondia; ninguém escrevia a resposta nos
+   * campos que a ficha realmente mostra.
+   */
+  it("Fase 4.2 (P1.1): preenche nome + morada a partir do VIES quando o nome é genérico", async () => {
+    stub({
+      valid: true,
+      name: "IKEA PORTUGAL MOVEIS E DECORAÇÃO LDA",
+      address: "RUA 28 DE SETEMBRO, EN 250\nFRIELAS\n2660-001 FRIELAS",
+    });
+    const update = jest.fn(async () => ({}));
+    const prisma = {
+      party: {
+        findFirst: jest.fn(async () => ({
+          id: "p-ikea",
+          vatNumber: "PT505416654",
+          nif: "505416654",
+          country: "PT",
+          name: "Fornecedor por identificar",
+          address: null,
+          city: null,
+          postalCode: null,
+        })),
+        update,
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      },
+    };
+    const svc = new ViesService(prisma as never);
+    await svc.validateParty("t1", "p-ikea");
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: "IKEA PORTUGAL MOVEIS E DECORAÇÃO LDA",
+          postalCode: "2660-001",
+          city: "FRIELAS",
+        }),
+      }),
+    );
+    const data = update.mock.calls[0][0].data;
+    expect(data.address).toContain("RUA 28 DE SETEMBRO");
+  });
+
+  it("Fase 4.2 (P1.1): nunca sobrepõe um nome ou morada já confirmados", async () => {
+    stub({ valid: true, name: "NOME OFICIAL DIFERENTE", address: "OUTRA MORADA\n1000-001 LISBOA" });
+    const update = jest.fn(async () => ({}));
+    const prisma = {
+      party: {
+        findFirst: jest.fn(async () => ({
+          id: "p-confirmado",
+          vatNumber: "PT500842019",
+          nif: "500842019",
+          country: "PT",
+          name: "Miranda & Serra, SA", // já confirmado — nada genérico
+          address: "Rua Real 1",
+          city: "Porto",
+          postalCode: "4000-001",
+        })),
+        update,
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      },
+    };
+    const svc = new ViesService(prisma as never);
+    await svc.validateParty("t1", "p-confirmado");
+    const data = update.mock.calls[0][0].data;
+    expect(data.name).toBeUndefined();
+    expect(data.address).toBeUndefined();
+    expect(data.city).toBeUndefined();
+    expect(data.postalCode).toBeUndefined();
+  });
+
   it("validateParty derives PT<nif> for a Portuguese party without vatNumber", async () => {
     stub({ valid: true, name: "MIRANDA & SERRA" });
     const prisma = {

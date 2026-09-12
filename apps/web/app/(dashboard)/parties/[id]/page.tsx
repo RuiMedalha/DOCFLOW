@@ -57,10 +57,22 @@ export default function PartyDetailPage() {
     return <div className="card p-6 text-sm text-red-500">Entidade não encontrada.</div>;
   }
 
+  // Fase 4.2 (P1.2) — o formulário nunca recebia `vatNumber`/`vatRegime`,
+  // por isso "NIF-IVA UE" aparecia sempre vazio (mostrando o placeholder
+  // com ar de dado real) e "Regime de IVA" caía sempre no valor por
+  // omissão ("Portugal") mesmo quando o VIES já tinha confirmado
+  // autoliquidação. E `party.nif` guarda, internamente, o NIF-IVA
+  // completo com prefixo de país para fornecedores estrangeiros já
+  // validados (é a chave de identidade usada nas procuras) — mostrá-lo
+  // tal e qual no campo "NIF (9 dígitos)" é enganador, por isso só o
+  // populamos quando é mesmo um NIF português de 9 dígitos.
+  const nifLooksPortuguese = /^\d{9}$/.test(party.nif ?? '');
   const initial: PartyInput = {
     type: party.type,
     name: party.name,
-    nif: party.nif ?? '',
+    nif: nifLooksPortuguese ? party.nif ?? '' : '',
+    vatNumber: party.vatNumber ?? '',
+    vatRegime: party.vatRegime ?? 'PT',
     email: party.email ?? '',
     phone: party.phone ?? '',
     mobile: party.mobile ?? '',

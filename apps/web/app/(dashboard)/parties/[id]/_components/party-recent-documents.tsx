@@ -18,6 +18,10 @@ import { Loader2, FileText, ChevronRight } from 'lucide-react';
 import { usePartyDocuments } from '../../_hooks/use-party-documents';
 import type { PartyDocument as PartyDocumentType } from '../../_lib/types';
 
+// Fase 4.2 (P0.4) — em produção duas em três linhas do IKEA não
+// mostravam estado nenhum: faltavam PENDING_APPROVAL, CHANGES_REQUESTED
+// e DUPLICADO neste mapa, por isso o lookup devolvia `undefined` (sem
+// className, sem texto) para qualquer documento nesses estados.
 const STATUS_TONE: Record<PartyDocumentType['status'], string> = {
   NOVO: 'badge-sky',
   EM_REVISAO: 'badge-amber',
@@ -26,6 +30,9 @@ const STATUS_TONE: Record<PartyDocumentType['status'], string> = {
   CONCILIADO: 'badge-violet',
   PAGO: 'badge-neutral',
   ARQUIVADO: 'badge-neutral',
+  PENDING_APPROVAL: 'badge-amber',
+  CHANGES_REQUESTED: 'badge-amber',
+  DUPLICADO: 'badge-rose',
 };
 
 const STATUS_LABEL: Record<PartyDocumentType['status'], string> = {
@@ -36,6 +43,9 @@ const STATUS_LABEL: Record<PartyDocumentType['status'], string> = {
   CONCILIADO: 'CONCILIADO',
   PAGO: 'PAGO',
   ARQUIVADO: 'ARQUIVADO',
+  PENDING_APPROVAL: 'POR APROVAR',
+  CHANGES_REQUESTED: 'CORREÇÕES PEDIDAS',
+  DUPLICADO: 'DUPLICADO',
 };
 
 const fmtMoney = (v: number | null | undefined, ccy = 'EUR') =>
@@ -121,10 +131,10 @@ export function PartyRecentDocuments({ partyId }: { partyId: string }) {
                   </td>
                   <td className="py-2 text-center">
                     <span
-                      className={STATUS_TONE[doc.status]}
+                      className={STATUS_TONE[doc.status] ?? 'badge-neutral'}
                       title={`Estado: ${doc.status}`}
                     >
-                      {STATUS_LABEL[doc.status]}
+                      {STATUS_LABEL[doc.status] ?? doc.status}
                     </span>
                   </td>
                 </tr>

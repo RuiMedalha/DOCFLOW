@@ -35,8 +35,17 @@ export interface FraudWarningProps {
   hasParty?: boolean;
 }
 
-function normalise(iban: string): string {
-  return iban.replace(/\s+/g, '').toUpperCase();
+/**
+ * Fase 4.2 (P0.2) — protege contra um item de histórico sem IBAN.
+ *
+ * Bug real: `Uncaught TypeError: Cannot read properties of undefined
+ * (reading 'replace')` dentro de um `.map()` — um item de
+ * `historyList` tinha `iban` undefined (registo antigo ou uma linha
+ * que nunca chegou a gravar o IBAN) e `.replace` rebentava a página
+ * inteira. Aceita `string | null | undefined` e nunca lança.
+ */
+function normalise(iban: string | null | undefined): string {
+  return (iban ?? '').replace(/\s+/g, '').toUpperCase();
 }
 
 /** Small editorial dot for the status pills. */
@@ -117,7 +126,11 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
   }
 
   const current = normalise(currentIban);
-  const knownIbans = new Set(historyList.map((h) => normalise(h.iban)));
+  // Filtramos entradas sem IBAN antes de normalizar — não é um valor
+  // "diferente" do atual, é um registo sem dado nenhum para comparar.
+  const knownIbans = new Set(
+    historyList.filter((h) => h.iban).map((h) => normalise(h.iban)),
+  );
   const matches = knownIbans.has(current);
 
   if (matches) {
@@ -143,7 +156,8 @@ export function FraudWarning({ currentIban, history = [], hasParty }: FraudWarni
 
   // Mismatch — red warning, full evidence.
   const knownList = historyList
-    .map((h) => `${h.iban} (${h.documentCount}× desde ${h.firstSeenAt.slice(0, 10)})`)
+    .filter((h) => h.iban)
+    .map((h) => `${h.iban} (${h.documentCount}× desde ${h.firstSeenAt ? h.firstSeenAt.slice(0, 10) : '?'})`)
     .join(' · ');
 
   return (

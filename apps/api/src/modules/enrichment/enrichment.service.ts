@@ -9,6 +9,7 @@ import {
   type EnrichmentResult,
 } from './providers/provider.factory';
 import { NifLookupService } from '../nif-lookup/nif-lookup.service';
+import { isGenericPartyName } from '../vies/address-parser';
 
 /**
  * EnrichmentService — orchestrates the external-API enrichment flow.
@@ -144,6 +145,11 @@ export class EnrichmentService {
       where: { id: partyId, tenantId },
       select: {
         id: true,
+        // Fase 4.2 (P1.1) — precisamos do nome atual e do NIF-IVA para
+        // decidir se o nome é genérico e pode ser substituído pelo
+        // oficial do VIES/faturas.
+        name: true,
+        vatNumber: true,
         nif: true,
         country: true,
         iban: true,
@@ -252,7 +258,18 @@ export class EnrichmentService {
     const effectiveSource: any =
       result.ok ? result.source : Object.keys(invoiceFields).length > 0 ? 'invoices' : 'manual';
 
+    // Fase 4.2 (P1.1) — um nome genérico ("Fornecedor por identificar",
+    // vazio, ou o próprio NIF repetido) é substituído pelo nome oficial;
+    // um nome que o operador já confirmou nunca é tocado. Isto ficava de
+    // fora do "only-fill-nulls" (que só olha para campos NULOS — um nome
+    // quase nunca é nulo, é genérico).
     const merged = this.applyOnlyFillNulls(party, combinedFields);
+    if (
+      combinedFields.name &&
+      isGenericPartyName(party.name, party.nif, party.vatNumber)
+    ) {
+      merged.push('name');
+    }
     if (merged.length === 0) {
       if (!result.ok) {
         await this.recordFailure(tenantId, partyId, userId, result.reason);

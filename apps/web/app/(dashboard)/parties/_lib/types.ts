@@ -181,6 +181,9 @@ export interface PartyDocument {
   netAmount?: number | null;
   taxAmount?: number | null;
   currency?: string | null;
+  // Fase 4.2 (P0.4) — faltavam PENDING_APPROVAL/CHANGES_REQUESTED/DUPLICADO
+  // (o enum real do Prisma), por isso duas em três linhas do IKEA não
+  // mostravam estado nenhum: o lookup por este tipo devolvia undefined.
   status:
     | 'NOVO'
     | 'EM_REVISAO'
@@ -188,7 +191,10 @@ export interface PartyDocument {
     | 'REJEITADO'
     | 'CONCILIADO'
     | 'PAGO'
-    | 'ARQUIVADO';
+    | 'ARQUIVADO'
+    | 'PENDING_APPROVAL'
+    | 'CHANGES_REQUESTED'
+    | 'DUPLICADO';
   type?: string | null;
   fileName?: string | null;
   partyId?: string | null;

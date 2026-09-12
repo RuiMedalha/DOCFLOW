@@ -138,6 +138,39 @@ describe('reconcileTotals()', () => {
   });
 });
 
+describe('reconcileTotals() — Fase 4.2 (P0.3): SAMMIC real', () => {
+  it('fecha ao cêntimo com desconto de linha em % + pronto pagamento global', () => {
+    // Fatura real: linha 1 = 2 × 24,10 com "Dto. 30,00" (é 30%, não
+    // 30€) → 33,74; linha 2 = portes 7,00. Soma 40,74. "Pronto pago"
+    // 2% sobre 40,74 = 0,81. IVA 0 (autoliquidação intra-UE). Total
+    // impresso 39,93.
+    const out = reconcileTotals({
+      lineItems: [
+        { quantity: 2, unitPrice: 24.1, discount: 30, lineTotal: 33.74 },
+        { quantity: 1, unitPrice: 7, lineTotal: 7 },
+      ],
+      cashDiscountRate: 2,
+      taxAmount: 0,
+      total: 39.93,
+    });
+    expect(out.reconciled).toBe(true);
+    expect(out.discountAmount).toBeCloseTo(0.81, 2);
+    expect(out.delta).toBe(0);
+  });
+
+  it('o desconto de cabeçalho em euros vence sempre que presente', () => {
+    const out = reconcileTotals({
+      lineItems: [{ lineTotal: 100 }],
+      discountAmount: 5,
+      cashDiscountRate: 50, // seria 47.50 — não deve ser usado
+      taxAmount: 0,
+      total: 95,
+    });
+    expect(out.reconciled).toBe(true);
+    expect(out.discountAmount).toBe(5);
+  });
+});
+
 describe('lineNet()', () => {
   it('prefere o lineTotal impresso pelo fornecedor', () => {
     expect(lineNet({ quantity: 2, unitPrice: 50, lineTotal: 95 })).toBe(95);

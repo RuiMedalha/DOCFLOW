@@ -47,6 +47,7 @@ import {
 import { autoOrientImage } from "./qr-decode/qr-decoder";
 import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-status";
 import { reconcileTotals, signedAmounts } from "./totals-reconciliation";
+import { classifyLineDiscount } from "./line-discount";
 import {
   extractAtcudFromText,
   fieldConfidence,
@@ -1364,6 +1365,12 @@ export class ExtractionService implements OnModuleDestroy {
     const recon = reconcileTotals({
       lineItems: fields.lineItems,
       discountAmount: fields.discountAmount,
+      // Fase 4.2 (P0.3) — "Pronto pago", "desconto financeiro",
+      // "descuento", "DPP"... quando não há um valor em euros explícito
+      // no cabeçalho, o desconto de pronto pagamento em percentagem é o
+      // fallback. Sem isto, a SAMMIC (2% sobre 40,74 = 0,81€) aparecia
+      // como uma diferença por explicar em vez de um desconto global.
+      cashDiscountRate: fields.cashDiscountRate,
       taxAmount: fields.taxAmount,
       netAmount: fields.netAmount,
       total: fields.total,
@@ -2535,6 +2542,52 @@ export class ExtractionService implements OnModuleDestroy {
       const tenantName = (id.tenantName ?? "").toLowerCase().trim();
       const supplierName = (fields.supplier ?? "").toLowerCase().trim();
       const supplierNifNorm = normalizeTenantNif(fields.supplierNif);
+
+      // ── Fase 4.2 (P0.1) — nome de um bloco colado ao NIF de outro ────
+      // Bug real: ONNERA/Edenox (fatura espanhola) ficou com
+      // supplier="NOV OUSADO LDA" (o NOSSO nome — o comprador) e
+      // supplierNif="ESA14219836" (o CIF real do vendedor). Nenhuma
+      // das condições de swap abaixo dispara porque `hasCustomerData`
+      // é falso — a IA nem sequer devolveu um bloco de cliente
+      // distinto, por isso não há para onde "trocar". A IA colou o
+      // nome do bloco do destinatário ao número do bloco do emitente.
+      //
+      // Regra determinística: o nosso nome NUNCA é o do fornecedor.
+      // Quando o nome do fornecedor bate com o nosso e não há dados
+      // de cliente para trocar, o nome está errado por definição —
+      // descartamo-lo. O NIF só sobrevive se for demonstravelmente de
+      // outra entidade (diferente do nosso); caso contrário também é
+      // descartado. Nunca inventamos um par nome+NIF — o que não
+      // pertence comprovadamente ao mesmo bloco fica por confirmar.
+      if (
+        !hasCustomerData &&
+        tenantName.length >= 5 &&
+        supplierName.length >= 5 &&
+        (tenantName === supplierName ||
+          (tenantName.includes(supplierName) && supplierName.length >= 8) ||
+          (supplierName.includes(tenantName) && tenantName.length >= 8))
+      ) {
+        const nifIsOurs = supplierNifNorm === tenantNif || authoritativeSupplierNif === tenantNif;
+        this.logger.warn(
+          `[ensureSupplierCustomerSanity] supplier name "${fields.supplier}" matches ` +
+            `tenant name but no customer block was extracted — nome de um bloco colado ` +
+            `ao NIF de outro. Descartando o nome (nunca somos o fornecedor)` +
+            (nifIsOurs ? ` e o NIF (também é o nosso).` : `; mantendo o NIF "${fields.supplierNif}" para reresolução.`),
+        );
+        const fixed: ExtractedFields = {
+          ...fields,
+          supplier: undefined,
+          supplierNif: nifIsOurs ? undefined : fields.supplierNif,
+          supplierVatId: nifIsOurs ? undefined : fields.supplierVatId,
+        };
+        fixed.hints = [
+          ...(fixed.hints ?? []),
+          `partySwap:name_nif_mismatch_discarded`,
+          `partySwap:reason=supplier_name_eq_tenant_no_customer_block`,
+        ];
+        return fixed;
+      }
+
       if (
         authoritativeSupplierNif &&
         authoritativeSupplierNif === tenantNif &&
@@ -3180,13 +3233,27 @@ export class ExtractionService implements OnModuleDestroy {
             it.lineTotal ??
             (unitPrice != null ? Math.round(unitPrice * quantity * 100) / 100 : undefined);
           if (!description || total == null || !Number.isFinite(total)) return null;
+          // Fase 4.2 (P0.3) — o valor impresso na coluna de desconto
+          // pode ser uma percentagem (a SAMMIC imprime "Dto. 30,00" =
+          // 30%, não 30€). Classificamos pela aritmética antes de
+          // gravar: `discount` guarda sempre o VALOR em euros (a soma
+          // das linhas continua correta); `discountPercent` guarda a
+          // percentagem quando a classificação a confirmou, para a
+          // interface mostrar "30%" em vez de "30,00 EUR".
+          const classified = classifyLineDiscount({
+            quantity,
+            unitPrice,
+            discount: it.discount,
+            lineTotal: it.lineTotal,
+          });
           return {
             documentId,
             code: it.code ?? null,
             description,
             quantity,
             unitPrice: unitPrice ?? total / (quantity || 1),
-            discount: it.discount ?? 0,
+            discount: classified.discountAmount ?? 0,
+            discountPercent: classified.kind === 'percent' ? classified.discountPercent : null,
             taxRate: it.vatRate ?? 23,
             total,
           };

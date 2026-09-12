@@ -2941,6 +2941,8 @@ export class DocumentsService {
       quantity: number | string | null;
       unitPrice: number | string | null;
       discount: number | string | null;
+      /** Fase 4.2 (P0.3) — percentagem quando o desconto foi classificado como tal. */
+      discountPercent?: number | string | null;
       taxRate: number | string | null;
       total: number | string | null;
       source?: 'metadata';
@@ -2965,6 +2967,7 @@ export class DocumentsService {
         quantity: true,
         unitPrice: true,
         discount: true,
+        discountPercent: true,
         taxRate: true,
         total: true,
       },
@@ -2978,6 +2981,7 @@ export class DocumentsService {
           quantity: r.quantity != null ? Number(r.quantity) : null,
           unitPrice: r.unitPrice != null ? Number(r.unitPrice) : null,
           discount: r.discount != null ? Number(r.discount) : null,
+          discountPercent: r.discountPercent != null ? Number(r.discountPercent) : null,
           taxRate: r.taxRate != null ? Number(r.taxRate) : null,
           total: r.total != null ? Number(r.total) : null,
       }));

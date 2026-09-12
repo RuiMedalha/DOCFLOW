@@ -34,8 +34,15 @@ import type {
 export class ViesProvider implements EnrichmentProvider {
   readonly name = 'vies' as const;
   private readonly logger = new Logger(ViesProvider.name);
+  // Fase 4.2 (P1.1) — bug real que causava a contradição no painel: a
+  // ficha do IKEA mostrava "vies_http_error" (enriquecimento manual
+  // necessário) AO MESMO TEMPO que "Estado VIES: Válido". Este endpoint
+  // tinha o sufixo `-service`, que devolve HTTP de erro; o endpoint
+  // oficial confirmado por curl (2026-09-11) e já usado por
+  // `ViesService` (a chamada que o botão "Validar no VIES" dispara) é
+  // sem o sufixo. Duas integrações VIES, duas URLs, uma errada.
   private readonly endpoint =
-    'https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number-service';
+    'https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number';
 
   async fetch(input: ProviderInput): Promise<EnrichmentResult> {
     if (!input.country) {

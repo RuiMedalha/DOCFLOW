@@ -13,6 +13,8 @@
  * Função pura e testada — sem Prisma, sem rede.
  */
 
+import { classifyLineDiscount } from './line-discount';
+
 export interface ReconLineItem {
   quantity?: number | null;
   unitPrice?: number | null;
@@ -53,13 +55,26 @@ export function lineNet(item: ReconLineItem): number | null {
   const qty = num(item.quantity) ?? 1;
   const unit = num(item.unitPrice);
   if (unit == null) return null;
-  const discount = num(item.discount) ?? 0;
-  return round2(unit * qty - discount);
+  // Fase 4.2 (P0.3) — sem total de linha para confirmar, a classificação
+  // devolve "unknown" e trata o valor impresso como euros — o mesmo
+  // comportamento de sempre, só que agora explícito e partilhado com o
+  // resto do código em vez de reimplementado aqui.
+  const { discountAmount } = classifyLineDiscount(item);
+  return round2(unit * qty - (discountAmount ?? 0));
 }
 
 export function reconcileTotals(input: {
   lineItems?: ReconLineItem[] | null;
   discountAmount?: number | null;
+  /**
+   * Fase 4.2 (P0.3) — desconto de pronto pagamento em percentagem
+   * ("Pronto pago", "desconto financeiro", "descuento", "DPP"...).
+   * Quando não há um `discountAmount` explícito em euros, este é o
+   * fallback: calculamos o valor sobre a soma das linhas já com
+   * desconto de linha aplicado. Sem isto, o desconto de pronto
+   * pagamento aparecia como uma "diferença" por explicar.
+   */
+  cashDiscountRate?: number | null;
   taxAmount?: number | null;
   netAmount?: number | null;
   total?: number | null;
@@ -67,11 +82,16 @@ export function reconcileTotals(input: {
   const discountRaw = num(input.discountAmount);
   const discountAmount = discountRaw != null ? Math.abs(round2(discountRaw)) : null;
   const items = input.lineItems ?? [];
+  // Fase 4.2 (P0.3) — soma os descontos por linha JÁ CLASSIFICADOS
+  // (nunca o valor impresso às cegas): a SAMMIC imprime "30,00" numa
+  // linha, que são 30% (14,46 €), não 30 €. Sem a classificação este
+  // total ficava 2× o valor real.
   const lineDiscountTotal = round2(
-    items.reduce((acc, it) => acc + Math.abs(num(it.discount) ?? 0), 0),
+    items.reduce((acc, it) => acc + Math.abs(classifyLineDiscount(it).discountAmount ?? 0), 0),
   );
   const total = num(input.total);
   const tax = num(input.taxAmount);
+  const cashRate = num(input.cashDiscountRate);
 
   if (total == null) {
     return {
@@ -90,7 +110,14 @@ export function reconcileTotals(input: {
 
   if (haveAllLines) {
     const lines = round2((nets as number[]).reduce((a, b) => a + b, 0));
-    const disc = discountAmount ?? 0;
+    // O desconto de cabeçalho em euros vence sempre que existir; sem
+    // ele, um desconto de pronto pagamento em percentagem é aplicado
+    // sobre a soma das linhas (já com o desconto de cada linha
+    // resolvido) — é o que faz a SAMMIC fechar: 40,74 × 2 % = 0,81.
+    const resolvedDiscountAmount =
+      discountAmount ??
+      (cashRate != null && cashRate > 0 ? round2(lines * (cashRate / 100)) : null);
+    const disc = resolvedDiscountAmount ?? 0;
     const t = tax ?? 0;
 
     // O fornecedor pode imprimir o total da linha líquido OU já com IVA
@@ -112,7 +139,7 @@ export function reconcileTotals(input: {
     for (const c of candidates) {
       const delta = round2(c.expected - total);
       if (Math.abs(delta) <= TOTALS_TOLERANCE) {
-        return { reconciled: true, delta, lineDiscountTotal, discountAmount, reason: c.reason };
+        return { reconciled: true, delta, lineDiscountTotal, discountAmount: resolvedDiscountAmount, reason: c.reason };
       }
       if (Math.abs(delta) < Math.abs(bestDelta)) {
         best = c;
@@ -125,7 +152,7 @@ export function reconcileTotals(input: {
       // vai rever o documento.
       delta: bestDelta,
       lineDiscountTotal,
-      discountAmount,
+      discountAmount: resolvedDiscountAmount,
       reason:
         `totals_mismatch:linhas=${lines.toFixed(2)} ` +
         `desconto=${disc.toFixed(2)} iva=${t.toFixed(2)} ` +

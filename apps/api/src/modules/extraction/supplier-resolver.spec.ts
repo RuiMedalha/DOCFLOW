@@ -46,7 +46,9 @@ function buildPrismaStub() {
             (where.nif.contains
               ? (p.nif ?? "").includes(where.nif.contains)
               : p.nif === where.nif)) &&
-          (!where?.country || p.country === where.country)
+          (!where?.country || p.country === where.country) &&
+          (!where?.iban || p.iban === where.iban) &&
+          (!where?.type || p.type === where.type)
         ) {
           if (select) {
             const out: any = {};
@@ -159,6 +161,67 @@ function buildPrismaStub() {
 }
 
 describe("SupplierResolver", () => {
+  /**
+   * Fase 4.2 (P0.1) — invariante duro: nunca criamos/ligamos um Party
+   * FORNECEDOR com o NIF do próprio tenant (515208566, o fallback de
+   * identidade quando a base não tem tenant configurado — o mesmo
+   * usado em todos estes testes). Defesa em profundidade: mesmo que
+   * `ensureSupplierCustomerSanity` deixe passar algo, esta é a última
+   * linha antes de escrever na base.
+   */
+  it("Fase 4.2 (P0.1): BLOQUEIA a criação de um fornecedor com o NIF do próprio tenant", async () => {
+    const prisma = buildPrismaStub();
+    const resolver = new SupplierResolver(prisma as any);
+
+    const result = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "NOV OUSADO UNIPESSOAL LDA",
+      supplierNif: "515208566", // o nosso próprio NIF
+      aiConfidence: 0.95,
+    });
+
+    expect(prisma.dbParties.size).toBe(0); // nada foi criado
+    expect(result.party).toBeNull();
+    expect(result.supplierReview).toBe(true);
+    expect(result.reason).toBe("blocked_tenant_nif_as_supplier");
+  });
+
+  /**
+   * Fase 4.2 (P0.4.5) — último recurso de identificação: um IBAN já
+   * visto identifica o mesmo fornecedor mesmo quando não há NIF válido
+   * nem um nome que normalize de forma reconhecível.
+   */
+  it("Fase 4.2 (P0.4.5): liga pelo IBAN já conhecido quando NIF e nome falham", async () => {
+    const prisma = buildPrismaStub();
+    const resolver = new SupplierResolver(prisma as any);
+
+    // 1º documento: cria a Party com IBAN válido.
+    const first = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "Fornecedor Genuino Lda",
+      supplierNif: "502757191",
+      iban: "PT50000201231234567890154",
+      aiConfidence: 0.95,
+    });
+    expect(prisma.dbParties.size).toBe(1);
+
+    // 2º documento: NIF ilegível (falha mod-11) e nome tão diferente
+    // que a normalização não casa — só o IBAN sobrevive como sinal.
+    const second = await resolver.resolve({
+      tenantId: TENANT_ID,
+      country: "PT",
+      supplierName: "Nome Completamente Diferente Distribuicao",
+      supplierNif: "999999999", // inválido
+      iban: "PT50 0002 0123 1234 5678 9015 4",
+      aiConfidence: 0.5,
+    });
+
+    expect(prisma.dbParties.size).toBe(1); // não criou uma segunda entidade
+    expect(second.party?.id).toBe(first.party?.id);
+  });
+
   it("creates a new Party on first supplier extraction with high confidence + valid PT NIF", async () => {
     const prisma = buildPrismaStub();
     const resolver = new SupplierResolver(prisma as any);

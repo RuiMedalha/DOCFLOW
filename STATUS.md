@@ -13,7 +13,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `3cc9bbe` (Fase 4.2). Migration `20260912090000_fase42_line_discount_percent` aplicada pelo entrypoint; backup `/root/backups/docflow/docflow-20260912-0200-pre-fase42.sql.gz` |
+| Commit em produção | `f52aab2` (Fase 4.3). Verificado em produção com 100% de aceitação e faturas reais (`docs/SMOKE_4.3.md`) |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
@@ -441,7 +441,20 @@ Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Pos
 5. Um campo vazio no detalhe mostra "por preencher", nunca um exemplo com
    ar de NIF/IBAN/ATCUD real, e nunca um badge de confiança ao lado.
 
-**O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos.
+**Fluxo 6 & Fluxo 7 — o que a Fase 4.3 implementou e validou em produção (2026-09-12)**
+1. **Versão Visível (P2):** Rodapé da sidebar mostra `v4.3.0 (f52aab2)`. O endpoint `GET /api/v1/version` responde sem cache com `{ commit, buildTime, version }`. Headers `Cache-Control: no-cache, no-store, must-revalidate` impedem que o browser mantenha HTMLs obsoletos.
+2. **Auto-Orientação de Fotos (P0.2):** Fotos tiradas de lado ou invertidas (`IKEA-photo.jpg`, `TEFCOLD-photo.jpg`) são detetadas via OSD e scoring de OCR, rodadas e gravadas direitas no MinIO. O AT-QR é lido com 100% de sucesso e o PDF derivado fica ao alto.
+3. **Notas de Crédito Negativas & Contabilização (P0.3 & P1.1):** `NC-2026-44` e `NC-2026-45` gravam `total`, `netAmount`, `taxAmount` e `signed*` estritamente negativos (`-61.50`, `-50.00`, `-11.50`), reduzindo a base de IVA e a dívida ao fornecedor. A proposta contabilística em `GET /api/v1/documents/:id/accounting-proposal` inverte débitos e créditos: Débito em 2211 (Fornecedores), Crédito em 312 (Compras) e 2432 (IVA dedutível).
+4. **Fusão de Fornecedores Duplicados (P0.4):** Fusão do par `CreateInfor` em produção. `GET /api/v1/parties/duplicates` usa Union-Find para encontrar duplicados mesmo sem NIF em um dos lados. `POST /api/v1/parties/:id/merge` transferiu 2 documentos para a entidade com NIF 507298608 e deixou o grupo a zero.
+5. **Espanha / Comunitários sem Troca de Tenant (P0.6 & P0.5):** Detecção de CIF com pontos e traços (`ESA-14219836` na fatura ONNERA/Edenox) e proteção contra swap quando o cliente é o tenant `NOV OUSADO LDA`. A morada e código postal são desagregados sem perdas no parser de moradas.
+6. **Gestão de Modelos de IA & Re-extração com Override (P3):**
+   - Página dedicada em `/settings/ai` e tab "Modelos de IA" em `/settings`.
+   - Teste de ligação a fornecedores em tempo real (`openrouter` respondeu em 302ms).
+   - Botão **"Re-extrair com..."** no detalhe do documento permite escolher o modelo (ex: `google/gemini-2.5-flash`, `gpt-4o`, `claude-3-5-sonnet`) para reprocessar de raiz os bytes guardados.
+   - Badge de telemetria IA no cabeçalho do documento (modelo, tokens in/out, tempo de execução, custo estimado em EUR).
+   - Dashboard de métricas acumuladas em `GET /api/v1/ai/metrics` com custo total em EUR e distribuição por fornecedor/modelo.
+
+**O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos. Atenção: Bloco B2 só deve ser iniciado após confirmação explícita do Rui.
 
 ## Como correr localmente
 

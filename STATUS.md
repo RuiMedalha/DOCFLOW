@@ -13,11 +13,11 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 | Item | Estado |
 |------|--------|
 | App Coolify `docflow-production` (uuid `d20uxq2vlknrluxbbcqaw0tt`) | build pack **docker-compose** a partir de `RuiMedalha/DOCFLOW` branch **`main`**, `docker-compose.yml` na raiz |
-| Commit em produção | `4b20835` (Fase 4.1). Migrations `20260911120000_fase41_natureza_nc_descontos` e `20260911150000_fase41_fix_double_vat_prefix` aplicadas pelo entrypoint; backups `/root/backups/docflow/docflow-20260911-1400-pre-fase41.sql.gz` e `…-1600-pre-fase41b.sql.gz` |
+| Commit em produção | `3cc9bbe` (Fase 4.2). Migration `20260912090000_fase42_line_discount_percent` aplicada pelo entrypoint; backup `/root/backups/docflow/docflow-20260912-0200-pre-fase42.sql.gz` |
 | Containers | `api`, `web`, `postgres:17-alpine`, `redis:7-alpine`, `minio` (RELEASE.2025-09-07), `minio-init` (one-shot, exit 0) |
 | API | `https://r122tccopibb6pov1fmrau9v.167.86.111.8.sslip.io/api/v1/health` → 200 `{db:up, storage:up, storageDriver:s3}`; `/health/full` → `{db, redis, storage}` |
 | Web | `https://dt8htz3dc2cxv7pz2au7l1tm.167.86.111.8.sslip.io/` → 307 para `/login` (200) |
-| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (27 migrations, última `20260911150000_fase41_fix_double_vat_prefix`) |
+| Migrations | `entrypoint.sh` corre `prisma migrate deploy` no arranque (28 migrations, última `20260912090000_fase42_line_discount_percent`) |
 | Volumes | `docflow-pgdata`, `docflow-redisdata`, `docflow-uploads` (legado, 3 ficheiros já migrados), `docflow-minio` |
 | DB de produção | 1 tenant (`demo` = NOV OUSADO UNIPESSOAL LDA), 1 user (`admin@demo.pt` ADMIN), 3 documentos (todos `EM_REVISAO`), 3 parties |
 | Storage | driver **s3** → MinIO interno `http://minio:9000`, bucket `docflow`, utilizador de serviço com policy só para o bucket; presigned URLs via `https://files-docflow.167.86.111.8.sslip.io` (só API S3; console desligada) |
@@ -31,7 +31,7 @@ Missão em curso: Bloco A (Fases 0–7) do prompt mestre. Cliente: HotelEquip / 
 
 | Item | Resultado |
 |------|-----------|
-| `apps/api` `pnpm test` | **1332 verdes / 1332** (120 suites). No Windows correr com `--maxWorkers=2`: com paralelismo total há suites que falham por contenção de recursos, não por bug |
+| `apps/api` `pnpm test` | **1377 verdes / 1377** (123 suites). No Windows correr com `--maxWorkers=2`: com paralelismo total há suites que falham por contenção de recursos, não por bug |
 | `apps/api` `pnpm build` | ✅ verde |
 | `apps/web` `next build` | ✅ compila + typecheck + 43 páginas. Só o passo `standalone` (cópia de symlinks) falha **no Windows local** por EPERM — no Docker (Linux) funciona, prova é a produção |
 | Node / pnpm locais | Node 24.12.0; pnpm **11.10.0** (também nos Dockerfiles). Overrides em `apps/*/pnpm-workspace.yaml`. O `pnpm build` da web falha localmente por `ERR_PNPM_IGNORED_BUILDS sharp` — usar `npx next build` |
@@ -243,9 +243,121 @@ da SAS Casselin não é confirmado pelo VIES, por isso não é gravado.
 
 Bloqueios (preciso do Rui): nenhum.
 
+Próximo: Fase 4.2 — correções do segundo teste real do Rui.
+
+## Fase 4.2 — correções do segundo teste real — 2026-09-12
+
+**P0.1 — comprador trocado com vendedor.** Bug real ONNERA/Edenox: o sistema
+entregou `supplier="NOV OUSADO LDA"` (o nosso nome — o comprador) com
+`supplierNif="ESA14219836"` (o CIF real do vendedor) — nome de um bloco
+colado ao número de outro. A IA nem devolveu um bloco de cliente distinto,
+por isso as condições de troca já existentes (todas exigem um bloco de
+cliente para trocar) nunca disparavam. Nova regra em
+`ensureSupplierCustomerSanity`: quando o nome do fornecedor bate com o
+nosso e não há para onde trocar, o nome está errado por definição —
+descartamo-lo; o NIF só sobrevive quando também não é o nosso. Invariante
+duro em `SupplierResolver.resolve()`: nunca cria/liga um fornecedor com o
+NIF do próprio tenant (515208566), seja qual for a origem do valor —
+defesa em profundidade, testada isoladamente. *Nota:* verificado por
+testes unitários com os dados exactos do caso (ONNERA); não tinha o
+ficheiro real para um teste end-to-end em produção.
+
+**P0.2 — erro de JS que rebentava a página.** `FraudWarning` chamava
+`.replace` num IBAN de histórico que podia ser `undefined` — corrigido, e
+as duas listas que usam esse valor filtram entradas sem IBAN antes.
+
+**P0.3 — aritmética de descontos.** `classifyLineDiscount()` (novo, puro)
+deduz pela aritmética se o valor impresso na coluna de desconto é
+percentagem ou euros — a SAMMIC imprime "Dto. 30,00" que são 30% (14,46 €
+sobre 48,20 €), não 30 €. Nova coluna `DocumentItem.discountPercent`.
+`reconcileTotals()` ganha `cashDiscountRate` como desconto global: "Pronto
+pago" em percentagem, quando não há um valor em euros explícito, aplica-se
+sobre a soma das linhas — a SAMMIC (2% sobre 40,74 = 0,81 €) deixa de
+aparecer como diferença por explicar. O painel de totais mostra "Desconto
+global" como linha própria e usa o veredicto do backend em vez de
+recalcular ingenuamente.
+
+**P0.4 — IKEA repetido três vezes.** Já estava corretamente deduplicado em
+produção; o que faltava era o mapa de badges de estado no
+`PartyRecentDocuments`, que não cobria `PENDING_APPROVAL`/
+`CHANGES_REQUESTED`/`DUPLICADO` (mesmo padrão de gap da Fase 4.1).
+`SupplierResolver.lookupParty()` ganha IBAN já conhecido como último
+recurso de identificação.
+
+**P1.1 — o VIES respondia e ninguém escrevia a resposta.** Duas
+integrações VIES distintas: a usada pelo botão "Enriquecer" apontava a um
+endpoint com o sufixo `-service`, que devolve erro HTTP — daí a
+contradição "vies_http_error" ao lado de "Estado VIES: Válido" na mesma
+ficha. `ViesService.validateParty()` (o botão "Validar no VIES") nunca
+escrevia `name`/`address`/`city`/`postalCode` — só os campos de cache
+`viesName`/`viesAddress`. Corrigido: nome oficial substitui um nome
+genérico (`isGenericPartyName`), morada é partida em morada/código
+postal/cidade (`parsePostalAddress`, PT/ES/FR/DE) e só preenche o que
+estiver vazio. Aplicado retroativamente a 9 entidades em produção com o
+aviso cacheado.
+
+**P1.2 — regime de IVA e campo de NIF.** O formulário nunca recebia
+`vatNumber`/`vatRegime` do fornecedor — por isso "Regime de IVA" caía
+sempre em "Portugal" e "NIF-IVA UE" aparecia sempre vazio (mostrando o
+placeholder). Corrigido; e o campo "NIF (9 dígitos)" só é preenchido
+quando o valor é mesmo um NIF PT de 9 dígitos (a coluna interna guarda o
+NIF-IVA com prefixo para fornecedores estrangeiros já validados, que é a
+chave de identidade usada nas procuras — isso fica, só deixou de aparecer
+na caixa errada).
+
+**P1.3 — notas de crédito.** Sinónimos em falta: "nota de abono" (PT) e
+"factura/fatura rectificativa" (ES/PT). Classificação, sinal negativo e
+ligação à fatura retificada já existiam desde a Fase 4.1.
+
+**P1.4 — placeholders com ar de dado real.** Substituídos por "por
+preencher"; o badge de confiança deixa de aparecer em campos vazios
+(`hasValue` no componente `Field`).
+
+**P1.5 — rotação de imagem.** A correção pelo conteúdo só corria dentro da
+extração assíncrona — havia uma janela em que o PDF de arquivo já existia
+mas ainda deitado. A correção por EXIF passa a correr logo no upload
+(`create()`, o mesmo caminho para todas as origens).
+
+**P2 — contabilização.** `proposeAccountingEntry()` (novo, puro):
+natureza + regime de IVA decidem as contas SNC, deterministicamente —
+compra nacional → 312+2432/2211; intra-UE (autoliquidação) →
+312+2432/2211(estrangeiro)+2433 pelo mesmo montante; serviços externos →
+62; imobilizado → 43; extra-UE precisa de DUA e não propõe nada sem ele.
+Plano de contas ganha as sub-contas (312, 313, 2211, 2212, 2432, 2433).
+`PATCH /documents/:id/accounting` e `GET /documents/:id/accounting-proposal`
+— o frontend já chamava a primeira, mas não existia no backend; os
+selects nunca gravavam nada. *Adiado:* aprendizagem após 3 aprovações
+iguais (fornecedor + natureza) — âmbito suficiente para uma fase própria.
+
+**Bug de infraestrutura encontrado a meio do deploy:** o Docker Hub passou
+a recusar `minio/mc` ("pull access denied"), confirmado por SSH direto ao
+VPS — dois deploys seguidos falharam por isto, sem relação com o código
+desta fase. A MinIO moveu a distribuição para o Quay.io; a mesma tag
+existe lá. `docker-compose.yml` corrigido.
+
+Verificado em produção: backup `pg_dump` antes da migration; smoke
+**14/14** contra os documentos reais do segundo teste. ONNERA já não
+existe como fornecedor com o nosso NIF; SAMMIC fecha os totais ao cêntimo
+(desconto de linha 30% + pronto pagamento 0,81 € corretamente
+resolvidos); IKEA tem nome, morada, código postal e cidade preenchidos e
+sem aviso de erro; NC real em produção com `signedTotal` negativo; plano
+de contas com as sub-contas novas e proposta a funcionar de ponta a
+ponta (compra nacional testada; a intra-UE está coberta pelos testes
+unitários).
+
+Testes: 1377 verdes / 1377 (123 suites). Build api ✅, typecheck web ✅.
+
+Falhou / adiado: aprendizagem de contabilização após 3 aprovações
+(fornecedor + natureza) — âmbito novo, fica para uma fase própria. A
+proposta intra-UE não foi confirmada com uma fatura real em produção (só
+com testes unitários) porque o único fornecedor intra-UE com natureza
+definida disponível para o smoke já tinha sido usado no teste PT.
+
+Bloqueios (preciso do Rui): nenhum.
+
 Próximo: **parado a pedido do Rui** — Fase 5 (conciliação bancária CSV) só
-arranca com OK explícito, e preciso de saber quais os bancos usados (templates
-CSV) e de um extrato real de um mês.
+arranca com OK explícito, e preciso de saber quais os bancos usados
+(templates CSV) e de um extrato real de um mês.
 
 ---
 
@@ -312,6 +424,22 @@ Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Pos
    mesmo fornecedor; `POST /parties/:id/merge` com `{"sourceId":"…"}` funde-as.
 6. Carregar uma foto tirada de lado → o PDF de arquivo sai direito e abaixo de
    500 KB, com o QR ainda legível.
+
+**Fluxo 5 — o que a Fase 4.2 corrigiu (vale a pena confirmar)**
+1. Fornecedores → uma entidade estrangeira validada no VIES (ex.: IKEA,
+   SAMMIC) mostra nome real, morada, código postal e cidade preenchidos,
+   sem nenhum aviso de erro ao lado de "Estado VIES: Válido".
+2. Ficha de um fornecedor estrangeiro → "Regime de IVA" mostra
+   "Intra-UE — autoliquidação" quando o VIES confirmou; "NIF-IVA UE" tem
+   o valor real (não fica vazio a mostrar o exemplo a cinzento).
+3. Documento com desconto por linha em percentagem (ex.: "Dto. 30,00")
+   mostra "30%" na coluna, não "30,00 EUR"; o painel de totais tem uma
+   linha "Desconto global" própria quando há pronto pagamento.
+4. Documento com natureza + fornecedor com regime de IVA definido →
+   `GET /documents/:id/accounting-proposal` sugere as contas SNC; os
+   selects "Conta débito"/"Conta crédito" gravam e sobrevivem a reabrir.
+5. Um campo vazio no detalhe mostra "por preencher", nunca um exemplo com
+   ar de NIF/IBAN/ATCUD real, e nunca um badge de confiança ao lado.
 
 **O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos.
 

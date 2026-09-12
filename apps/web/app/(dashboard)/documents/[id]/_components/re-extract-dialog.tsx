@@ -63,7 +63,7 @@ export function ReExtractDialog({
               const match = POPULAR_MODELS.find((m) => m.provider === e.target.value);
               if (match) setSelectedModel(match.id);
             }}
-            className="select w-full text-xs font-sans"
+            className="input w-full text-xs font-sans h-9 min-h-0 py-1.5 px-2.5"
           >
             <option value="auto">Automático (Seguir Routing do Tenant)</option>
             <option value="openrouter">OpenRouter (Multi-Model Gateway)</option>
@@ -95,13 +95,13 @@ export function ReExtractDialog({
               value={customModel}
               onChange={(e) => setCustomModel(e.target.value)}
               placeholder="ex: anthropic/claude-3-7-sonnet"
-              className="input w-full text-xs font-mono"
+              className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             />
           ) : (
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="select w-full text-xs font-mono"
+              className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             >
               {POPULAR_MODELS.map((m) => (
                 <option key={m.id} value={m.id}>

@@ -1128,6 +1128,21 @@ export default function DocumentDetailPage() {
             </button>
             <button
               type="button"
+              onClick={() => setReExtractModalOpen(true)}
+              disabled={reExtract.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"
+              style={{
+                background: 'transparent',
+                color: 'var(--ed-accent-gold, #0ea5e9)',
+                borderRadius: 'var(--ed-radius-chip)',
+              }}
+              title="Escolher modelo específico para re-extração"
+            >
+              <Sparkles size={14} aria-hidden="true" />
+              Re-extrair com...
+            </button>
+            <button
+              type="button"
               onClick={() => setCorrectDialogOpen(true)}
               disabled={isApproved}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-sm hover:opacity-70 transition-opacity disabled:opacity-50"

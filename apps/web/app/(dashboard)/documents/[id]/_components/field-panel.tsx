@@ -724,14 +724,14 @@ export function FieldPanel(props: FieldPanelProps) {
             <Field label="Data do documento" confidence={confidence.docDate} hasValue={Boolean(fields.docDate)}>
               <EdInput
                 type="date"
-                value={fields.docDate ?? ''}
+                value={fields.docDate ? fields.docDate.slice(0, 10) : ''}
                 onChange={(e) => props.onFieldChange({ docDate: e.target.value })}
               />
             </Field>
             <Field label="Vencimento" confidence={confidence.dueDate} hasValue={Boolean(fields.dueDate)}>
               <EdInput
                 type="date"
-                value={fields.dueDate ?? ''}
+                value={fields.dueDate ? fields.dueDate.slice(0, 10) : ''}
                 onChange={(e) => props.onFieldChange({ dueDate: e.target.value })}
               />
             </Field>

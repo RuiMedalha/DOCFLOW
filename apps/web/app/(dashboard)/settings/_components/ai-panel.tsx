@@ -77,7 +77,7 @@ export function AiPanel() {
 
   const modelsQuery = useQuery({
     queryKey: ['ai-models'],
-    queryFn: () => http.get<AiModel[]>('/ai/models'),
+    queryFn: () => http.get<any>('/ai/models'),
   });
 
   const metricsQuery = useQuery({
@@ -156,7 +156,14 @@ export function AiPanel() {
     }
   };
 
-  const models = modelsQuery.data ?? [];
+  const rawModels = modelsQuery.data as any;
+  const models: AiModel[] = Array.isArray(rawModels)
+    ? rawModels
+    : Array.isArray(rawModels?.models)
+    ? rawModels.models
+    : Array.isArray(rawModels?.data?.models)
+    ? rawModels.data.models
+    : [];
   const metrics = metricsQuery.data;
 
   return (
@@ -313,7 +320,7 @@ export function AiPanel() {
               onChange={(e) =>
                 setForm({ ...currentRouting, triage: e.target.value })
               }
-              className="select w-full text-xs font-mono"
+              className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -335,7 +342,7 @@ export function AiPanel() {
               onChange={(e) =>
                 setForm({ ...currentRouting, extraction: e.target.value })
               }
-              className="select w-full text-xs font-mono"
+              className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -357,7 +364,7 @@ export function AiPanel() {
               onChange={(e) =>
                 setForm({ ...currentRouting, enrichment: e.target.value })
               }
-              className="select w-full text-xs font-mono"
+              className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>

@@ -23,6 +23,18 @@ export interface SupplierResolveInput {
   supplierNif?: string;
   /** Country-prefixed VAT ID for foreign suppliers (e.g. "FR12345678901"). */
   supplierVatId?: string;
+  /** Extracted supplier address (street/place). */
+  supplierAddress?: string;
+  /** Extracted supplier postal code. */
+  supplierPostalCode?: string;
+  /** Extracted supplier city. */
+  supplierCity?: string;
+  /** Extracted supplier phone number. */
+  supplierPhone?: string;
+  /** Extracted supplier email. */
+  supplierEmail?: string;
+  /** Extracted supplier website. */
+  supplierWebsite?: string;
   /** IBAN from the document. Carried into the Party row when we create one. */
   iban?: string;
   /** AI-reported confidence (0..1). Below 0.8 → supplierReview = true. */
@@ -104,7 +116,21 @@ export class SupplierResolver {
    * its own resolution.
    */
   async resolve(input: SupplierResolveInput): Promise<SupplierResolveResult> {
-    const { tenantId, country, supplierName, supplierNif, supplierVatId, iban, aiConfidence } = input;
+    const {
+      tenantId,
+      country,
+      supplierName,
+      supplierNif,
+      supplierVatId,
+      iban,
+      aiConfidence,
+      supplierAddress,
+      supplierPostalCode,
+      supplierCity,
+      supplierPhone,
+      supplierEmail,
+      supplierWebsite,
+    } = input;
 
     try {
       // ── Fase 4.2 (P0.1) — invariante duro: nunca criamos um Party
@@ -266,10 +292,13 @@ export class SupplierResolver {
                 ? { vatNumber: normalizedVat, viesValid: viesConfirmed ? true : null }
                 : {}),
               iban: ibanToStore,
-              address: officialData?.address ?? null,
-              city: officialData?.city ?? null,
-              postalCode: officialData?.postalCode ?? null,
+              address: (officialData?.address && !/^[-–—\s/.]+$/.test(officialData.address.trim()) ? officialData.address.trim() : null) ?? supplierAddress ?? null,
+              city: officialData?.city ?? supplierCity ?? null,
+              postalCode: officialData?.postalCode ?? supplierPostalCode ?? null,
               country: officialData?.country ?? countryCode,
+              phone: supplierPhone ?? null,
+              email: supplierEmail ?? null,
+              website: supplierWebsite ?? null,
               enrichedAt: officialData?.source ? new Date() : null,
               enrichmentSource: officialData?.source ?? null,
               isActive: true,
@@ -319,14 +348,27 @@ export class SupplierResolver {
             updates.viesValidatedAt = new Date();
             updates.vatRegime = 'UE_REVERSE_CHARGE';
           }
-          if (officialData && !partyRow.address && officialData.address) {
-            updates.address = officialData.address;
+          const cleanOfficialAddress = officialData?.address && !/^[-–—\s/.]+$/.test(officialData.address.trim()) ? officialData.address.trim() : null;
+          const candidateAddress = cleanOfficialAddress || supplierAddress;
+          if ((!partyRow.address || /^[-–—\s/.]+$/.test(partyRow.address.trim())) && candidateAddress) {
+            updates.address = candidateAddress;
           }
-          if (officialData && !partyRow.city && officialData.city) {
-            updates.city = officialData.city;
+          const candidateCity = officialData?.city || supplierCity;
+          if (!partyRow.city && candidateCity) {
+            updates.city = candidateCity;
           }
-          if (officialData && !partyRow.postalCode && officialData.postalCode) {
-            updates.postalCode = officialData.postalCode;
+          const candidatePostalCode = officialData?.postalCode || supplierPostalCode;
+          if (!partyRow.postalCode && candidatePostalCode) {
+            updates.postalCode = candidatePostalCode;
+          }
+          if (!(partyRow as any).phone && supplierPhone) {
+            updates.phone = supplierPhone;
+          }
+          if (!(partyRow as any).email && supplierEmail) {
+            updates.email = supplierEmail;
+          }
+          if (!(partyRow as any).website && supplierWebsite) {
+            updates.website = supplierWebsite;
           }
           if (officialData && (!partyRow.country || partyRow.country === 'PT') && officialData.country) {
             updates.country = officialData.country;
@@ -350,7 +392,7 @@ export class SupplierResolver {
               data: updates,
             });
             this.logger.log(
-              `[resolve] enriched existing party=${partyRow.id} with official fields: ${Object.keys(updates).join(', ')}`,
+              `[resolve] enriched existing party=${partyRow.id} with fields: ${Object.keys(updates).join(', ')}`,
             );
           }
         } catch (updateErr) {

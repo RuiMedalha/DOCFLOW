@@ -454,6 +454,28 @@ Cabeçalhos aceites sem mapping: Nome, NIF, Email, Telefone, Morada, Código Pos
    - Badge de telemetria IA no cabeçalho do documento (modelo, tokens in/out, tempo de execução, custo estimado em EUR).
    - Dashboard de métricas acumuladas em `GET /api/v1/ai/metrics` com custo total em EUR e distribuição por fornecedor/modelo.
 
+## Fase 4.4 — Enriquecimento de Fornecedores, Desbloqueio de Re-extração, Orientação EXIF e Limpeza de Integrações (2026-09-12)
+
+1. **Preenchimento Completo da Ficha de Fornecedor a partir de Faturas e VIES:**
+   - **Causa Raiz AEAT (Espanha):** O VIES espanhol retorna `valid: true` mas `address: "---"` por privacidade fiscal. Esse placeholder de traços (`---`) ficava gravado na base de dados e impedia o preenchimento posterior ("only-fill-nulls"). O sistema agora ignora placeholders com traços/espaços (`!/^[-–—\s/.]+$/.test(str)`).
+   - **Enriquecimento via IA / Faturas (`EnrichmentService`):** O método `extractFieldsFromInvoices` agora agrega morada (`address`), código postal (`postalCode`), cidade (`city`), telefone (`phone`), email (`email`) e website (`website`) a partir dos metadados e documentos associados ao fornecedor, complementado por regex para CPs portugueses (`XXXX-XXX`) e espanhóis (`XXXXX`).
+   - **Atualização Automática na Extração (`SupplierResolver`):** Sempre que um documento é processado, se o fornecedor associado tiver campos em falta ou placeholders vazios/traços, os dados de contacto detetados no documento atualizam automaticamente a ficha do fornecedor.
+   - **Visão IA com Metadados de Contacto:** O esquema da IA (`VisionService`) foi expandido para extrair formalmente `supplierAddress`, `supplierPostalCode`, `supplierCity`, `supplierPhone`, `supplierEmail` e `supplierWebsite`.
+
+2. **Desbloqueio de Classificação e Precedência de Fatura vs Orçamento:**
+   - **Causa Raiz de Bloqueio (ex: `cmtwufp4h003kp307ndm2sc28` / CREATEINFOR):** Documentos marcados como `ORCAMENTO` ficavam com `typeLocked` ativo na re-extração (`doc.typeManualOverride === true`), e o mapeamento de tipo do `fiscal-status` para faturas normais (`FT`) mantinha o tipo anterior, impossibilitando a correção mesmo trocando de modelo de IA.
+   - **Desbloqueio Inteligente na Re-extração:** Ao solicitar uma re-extração explícita (`forceReextract`, `modelOverride`, `providerOverride`) ou ao detetar um código AT-QR autoritativo (`isValidAtQr`), as flags manuais (`fiscalStatusManualOverride` e `typeManualOverride`) são libertadas e o documento é recalculado de raiz, assumindo `DocumentType.FATURA_RECEBIDA`.
+   - **Precedência de Cabeçalho Fiscal:** No módulo `fiscal-status.ts` (`detectNonFiscalKind`), documentos que contenham cabeçalhos explícitos de fatura (`FATURA`, `FACTURA`, `INVOICE`) deixam de ser classificados falsamente como `ORCAMENTO` apenas por conterem referências secundárias a orçamentos ("conforme orçamento nº 45") no corpo de texto.
+
+3. **Auto-Orientação Física de Fotos de Telemóvel (EXIF):**
+   - No `qr-decoder.ts`, a orientação EXIF (tags 6, 8, 3) agora aciona a rotação física imediata da imagem via Jimp (`rotate(90)`, `rotate(270)`, `rotate(180)`) logo após a leitura do buffer, assegurando que imagens verticais de telemóveis são gravadas direitas no MinIO e na pré-visualização.
+
+4. **Resolução de Erro 404 em Teste de Integrações (`ai_settings`):**
+   - O item `ai_settings` (configuração interna de IA) foi filtrado do `IntegrationsService.list()` e do frontend `integrations-panel.tsx`, eliminando chamadas inválidas a `GET /api/v1/integrations/ai_settings/test` e o consequente erro 404.
+
+5. **Carregamento Dinâmico de Modelos na Re-extração:**
+   - A caixa de diálogo de re-extração (`re-extract-dialog.tsx`) consulta agora dinamicamente `GET /api/v1/ai/models`, exibindo apenas os modelos disponíveis para o provider ativo com opção de modelo personalizado.
+
 **O que ainda não está (Bloco B / fases seguintes):** email `faturacao@hotelequip.pt`, OneDrive, envio ao TOC, Moloni, WhatsApp, conciliação bancária, utilizadores reais, backups automáticos. Atenção: Bloco B2 só deve ser iniciado após confirmação explícita do Rui.
 
 ## Como correr localmente

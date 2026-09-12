@@ -83,6 +83,12 @@ export interface VisionExtractedFields {
   supplier?: string;
   supplierNif?: string;
   supplierVatId?: string;
+  supplierAddress?: string;
+  supplierPostalCode?: string;
+  supplierCity?: string;
+  supplierPhone?: string;
+  supplierEmail?: string;
+  supplierWebsite?: string;
   customer?: string;
   customerNif?: string;
   docNumber?: string;
@@ -204,6 +210,12 @@ const VISION_JSON_SCHEMA_DESCRIPTION = `Return ONLY a valid JSON object (no mark
   "supplier": string|null,            // supplier/issuer trade name
   "supplierNif": string|null,         // Portuguese NIF if issuer is PT
   "supplierVatId": string|null,       // country-prefixed VAT ID otherwise (e.g. "ESB12345678", "FRXX...", "DE123456789")
+  "supplierAddress": string|null,     // Morada/rua do fornecedor (ex: "Pol. Ind. Oeste, C/ Uruguay, Parc. 11/1", "Av. da Liberdade 100")
+  "supplierPostalCode": string|null,  // Código postal do fornecedor (ex: "30820", "1000-001")
+  "supplierCity": string|null,        // Cidade/localidade do fornecedor (ex: "Alcantarilla", "Lisboa")
+  "supplierPhone": string|null,       // Telefone ou telemóvel de contacto do fornecedor
+  "supplierEmail": string|null,       // Email de contacto do fornecedor
+  "supplierWebsite": string|null,     // Website do fornecedor
   "customer": string|null,
   "customerNif": string|null,
   "docNumber": string|null,           // e.g. "FT 2026/123", "A/2026-45", "INV-UK-2026-15"
@@ -2091,6 +2103,12 @@ export function normalizeExtractedFields(
     'supplierNif',
     'customerNif',
     'supplierVatId',
+    'supplierAddress',
+    'supplierPostalCode',
+    'supplierCity',
+    'supplierPhone',
+    'supplierEmail',
+    'supplierWebsite',
     'docNumber',
     'atcud',
     'docDate',

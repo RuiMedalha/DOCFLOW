@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { RefreshCw, Sparkles, X } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { RefreshCw, Sparkles, X, Loader2 } from 'lucide-react';
 import { Dialog } from '../../../../_components/ui';
+import { http } from '@/_lib/http';
 
 export interface ReExtractDialogProps {
   open: boolean;
@@ -32,6 +34,37 @@ export function ReExtractDialog({
   const [selectedModel, setSelectedModel] = useState<string>('google/gemini-2.5-flash');
   const [customModel, setCustomModel] = useState<string>('');
   const [useCustom, setUseCustom] = useState<boolean>(false);
+
+  const modelsQuery = useQuery({
+    queryKey: ['ai-models'],
+    queryFn: () => http.get<any>('/ai/models'),
+    staleTime: 60000,
+    enabled: open,
+  });
+
+  const availableModels = useMemo(() => {
+    const rawList: Array<{ id: string; name: string; provider: string }> = Array.isArray(modelsQuery.data)
+      ? modelsQuery.data
+      : Array.isArray(modelsQuery.data?.models)
+        ? modelsQuery.data.models
+        : [];
+    if (rawList.length === 0) return POPULAR_MODELS;
+    return rawList;
+  }, [modelsQuery.data]);
+
+  const filteredModels = useMemo(() => {
+    if (provider === 'auto') return availableModels;
+    const subset = availableModels.filter(
+      (m) => m.provider.toLowerCase() === provider.toLowerCase(),
+    );
+    return subset.length > 0 ? subset : availableModels;
+  }, [availableModels, provider]);
+
+  useEffect(() => {
+    if (filteredModels.length > 0 && !filteredModels.some((m) => m.id === selectedModel)) {
+      setSelectedModel(filteredModels[0].id);
+    }
+  }, [filteredModels, selectedModel]);
 
   const handleConfirm = () => {
     const finalModel = useCustom ? customModel.trim() || undefined : selectedModel || undefined;
@@ -103,7 +136,7 @@ export function ReExtractDialog({
               onChange={(e) => setSelectedModel(e.target.value)}
               className="input w-full text-xs font-mono h-9 min-h-0 py-1.5 px-2.5"
             >
-              {POPULAR_MODELS.map((m) => (
+              {filteredModels.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
                 </option>

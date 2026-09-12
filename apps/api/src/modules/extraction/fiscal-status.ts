@@ -50,8 +50,8 @@ export interface FiscalClassificationInput {
 export interface FiscalClassification {
   fiscalStatus: FiscalStatusValue;
   reason: string;
-  /** Set when the document type should be overridden (non-fiscal kinds, FS). */
-  documentType?: NonFiscalType | 'FATURA_SIMPLIFICADA';
+  /** Set when the document type should be overridden (non-fiscal kinds, FS, FR, NC, ND). */
+  documentType?: NonFiscalType | 'FATURA_SIMPLIFICADA' | 'FATURA_RECIBO' | 'NOTA_CREDITO' | 'NOTA_DEBITO';
 }
 
 const NON_FISCAL_RULES: Array<{ type: NonFiscalType; pattern: RegExp }> = [
@@ -70,7 +70,14 @@ const NON_FISCAL_RULES: Array<{ type: NonFiscalType; pattern: RegExp }> = [
 export function detectNonFiscalKind(text: string | null | undefined): NonFiscalType | null {
   if (!text) return null;
   const t = text.normalize('NFC');
+  const hasExplicitInvoiceTitle = /^\s*(?:FATURA|FACTURA|INVOICE|NOTA\s+DE\s+CR[EÉ]DITO|NOTA\s+DE\s+D[EÉ]BITO)\b/im.test(t);
   for (const rule of NON_FISCAL_RULES) {
+    if (rule.type === 'ORCAMENTO' && hasExplicitInvoiceTitle) {
+      const firstLine = t.split('\n')[0] || '';
+      if (!rule.pattern.test(firstLine)) {
+        continue;
+      }
+    }
     if (rule.pattern.test(t)) return rule.type;
   }
   return null;
@@ -111,11 +118,21 @@ export function classifyFiscalStatus(input: FiscalClassificationInput): FiscalCl
   const qrTrusted = input.qrOrigin !== 'ai' && isValidAtQr(input.qr);
 
   if (qrTrusted) {
-    const fs = (input.qr?.documentType ?? '').toUpperCase() === 'FS';
+    const rawDt = (input.qr?.documentType ?? '').toUpperCase();
+    const fs = rawDt === 'FS';
+    const fr = rawDt === 'FR';
+    const nc = rawDt === 'NC';
+    const nd = rawDt === 'ND';
+    let docType: 'FATURA_SIMPLIFICADA' | 'FATURA_RECIBO' | 'NOTA_CREDITO' | 'NOTA_DEBITO' | undefined = undefined;
+    if (fs) docType = 'FATURA_SIMPLIFICADA';
+    else if (fr) docType = 'FATURA_RECIBO';
+    else if (nc) docType = 'NOTA_CREDITO';
+    else if (nd) docType = 'NOTA_DEBITO';
+
     return {
       fiscalStatus: 'FISCAL',
       reason: `qr_at_valid:atcud=${input.qr!.atcud},cert=${input.qr!.softwareCert}`,
-      ...(fs ? { documentType: 'FATURA_SIMPLIFICADA' as const } : {}),
+      ...(docType ? { documentType: docType } : {}),
     };
   }
   if (kind) {

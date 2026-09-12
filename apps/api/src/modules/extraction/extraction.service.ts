@@ -119,6 +119,12 @@ export interface ExtractedFields {
   supplierNif?: string;
   /** Country-prefixed VAT identifier when the issuer is outside Portugal. */
   supplierVatId?: string;
+  supplierAddress?: string;
+  supplierPostalCode?: string;
+  supplierCity?: string;
+  supplierPhone?: string;
+  supplierEmail?: string;
+  supplierWebsite?: string;
   customerNif?: string;
   supplier?: string;
   customer?: string;
@@ -1120,8 +1126,12 @@ export class ExtractionService implements OnModuleDestroy {
     // ── Fase 4.1 (P2.2) — a correção manual do operador manda ────────
     // Quem marcou um documento como não fiscal (ou lhe corrigiu o tipo)
     // não pode ver a decisão desfeita pela re-extração seguinte.
-    const fiscalLocked = doc.fiscalStatusManualOverride === true;
-    const typeLocked = doc.typeManualOverride === true;
+    const hasAuthoritativeQr = !!(parsedForFiscal && isValidAtQr(parsedForFiscal));
+    const isExplicitReextract = !!forceReextract || !!modelOverride || !!providerOverride;
+    // Quando o operador pede explicitamente uma re-extração (ou com modelo diferente),
+    // ou quando o documento tem QR-AT oficial autêntico, não mantemos o bloqueio antigo.
+    const fiscalLocked = doc.fiscalStatusManualOverride === true && !isExplicitReextract && !hasAuthoritativeQr;
+    const typeLocked = doc.typeManualOverride === true && !isExplicitReextract && !hasAuthoritativeQr;
     if (fiscalLocked) {
       fields.hints = [...(fields.hints ?? []), `fiscalStatus:manual_override_kept:${doc.fiscalStatus}`];
       this.logger.log(
@@ -1132,12 +1142,24 @@ export class ExtractionService implements OnModuleDestroy {
       (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
       (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
       (updateData as Record<string, unknown>).isNonFiscalDoc = fiscal.fiscalStatus === "NAO_FISCAL";
+      if (isExplicitReextract || hasAuthoritativeQr) {
+        (updateData as Record<string, unknown>).fiscalStatusManualOverride = false;
+      }
     }
     if (typeLocked) {
       delete (updateData as Record<string, unknown>).type;
       fields.hints = [...(fields.hints ?? []), `documentType:manual_override_kept:${doc.type}`];
-    } else if (fiscal.documentType) {
-      updateData.type = fiscal.documentType as DocumentType;
+    } else {
+      if (fiscal.documentType) {
+        updateData.type = fiscal.documentType as DocumentType;
+      } else if (fields.documentType) {
+        updateData.type = fields.documentType as DocumentType;
+      } else if (hasAuthoritativeQr) {
+        updateData.type = DocumentType.FATURA_RECEBIDA;
+      }
+      if (isExplicitReextract || hasAuthoritativeQr) {
+        (updateData as Record<string, unknown>).typeManualOverride = false;
+      }
     }
     const docNumberNorm = normalizeDocNumber(fields.docNumber);
     if (docNumberNorm) (updateData as Record<string, unknown>).docNumberNorm = docNumberNorm;
@@ -1209,6 +1231,12 @@ export class ExtractionService implements OnModuleDestroy {
           supplierName: fields.supplier,
           supplierNif: fields.supplierNif,
           supplierVatId: fields.supplierVatId,
+          supplierAddress: fields.supplierAddress,
+          supplierPostalCode: fields.supplierPostalCode,
+          supplierCity: fields.supplierCity,
+          supplierPhone: fields.supplierPhone,
+          supplierEmail: fields.supplierEmail,
+          supplierWebsite: fields.supplierWebsite,
           iban: fields.iban,
           aiConfidence: Number.isFinite(aiConfidence) ? aiConfidence : fields.confidence,
         });
@@ -1226,6 +1254,56 @@ export class ExtractionService implements OnModuleDestroy {
         );
         supplierReviewFlag = true;
         supplierResolveReason = `resolve_threw:${(err as Error).message?.slice(0, 120)}`;
+      }
+    }
+
+    // Se o documento estiver associado a um fornecedor, preencher campos em falta na ficha a partir da fatura
+    const targetPartyId =
+      (updateData.party as { connect?: { id?: string } } | undefined)?.connect?.id ??
+      resolvedPartyFromNif?.id ??
+      doc.partyId ??
+      null;
+    if (
+      targetPartyId &&
+      (fields.supplierAddress ||
+        fields.supplierPhone ||
+        fields.supplierEmail ||
+        fields.supplierWebsite ||
+        fields.supplierPostalCode ||
+        fields.supplierCity)
+    ) {
+      try {
+        const existingParty = await this.prisma.party.findUnique({
+          where: { id: targetPartyId },
+          select: { address: true, city: true, postalCode: true, phone: true, email: true, website: true },
+        });
+        if (existingParty) {
+          const partyUpdates: Record<string, string> = {};
+          if (
+            (!existingParty.address || /^[-–—\s/.]+$/.test(existingParty.address.trim())) &&
+            fields.supplierAddress
+          ) {
+            partyUpdates.address = fields.supplierAddress;
+          }
+          if (!existingParty.city && fields.supplierCity) partyUpdates.city = fields.supplierCity;
+          if (!existingParty.postalCode && fields.supplierPostalCode) partyUpdates.postalCode = fields.supplierPostalCode;
+          if (!(existingParty as any).phone && fields.supplierPhone) partyUpdates.phone = fields.supplierPhone;
+          if (!(existingParty as any).email && fields.supplierEmail) partyUpdates.email = fields.supplierEmail;
+          if (!(existingParty as any).website && fields.supplierWebsite) partyUpdates.website = fields.supplierWebsite;
+          if (Object.keys(partyUpdates).length > 0) {
+            await this.prisma.party.update({
+              where: { id: targetPartyId },
+              data: partyUpdates,
+            });
+            this.logger.log(
+              `[processDocumentAsync] updated party=${targetPartyId} with extracted fields: ${Object.keys(partyUpdates).join(', ')}`,
+            );
+          }
+        }
+      } catch (partyErr) {
+        this.logger.warn(
+          `[processDocumentAsync] failed to update party ${targetPartyId} fields: ${(partyErr as Error).message}`,
+        );
       }
     }
 
@@ -3067,6 +3145,18 @@ export class ExtractionService implements OnModuleDestroy {
         merged.customerNif = pick("customerNif") as string | undefined;
       if (pick("supplierVatId"))
         merged.supplierVatId = pick("supplierVatId") as string | undefined;
+      if (pick("supplierAddress"))
+        merged.supplierAddress = pick("supplierAddress") as string | undefined;
+      if (pick("supplierPostalCode"))
+        merged.supplierPostalCode = pick("supplierPostalCode") as string | undefined;
+      if (pick("supplierCity"))
+        merged.supplierCity = pick("supplierCity") as string | undefined;
+      if (pick("supplierPhone"))
+        merged.supplierPhone = pick("supplierPhone") as string | undefined;
+      if (pick("supplierEmail"))
+        merged.supplierEmail = pick("supplierEmail") as string | undefined;
+      if (pick("supplierWebsite"))
+        merged.supplierWebsite = pick("supplierWebsite") as string | undefined;
       if (pick("docNumber"))
         merged.docNumber = pick("docNumber") as string | undefined;
       if (pick("atcud")) merged.atcud = pick("atcud") as string | undefined;
@@ -5214,11 +5304,23 @@ export class ExtractionService implements OnModuleDestroy {
 
     return {
       ...base,
+      supplierAddress: fields.supplierAddress ?? base.supplierAddress ?? null,
+      supplierPostalCode: fields.supplierPostalCode ?? base.supplierPostalCode ?? null,
+      supplierCity: fields.supplierCity ?? base.supplierCity ?? null,
+      supplierPhone: fields.supplierPhone ?? base.supplierPhone ?? null,
+      supplierEmail: fields.supplierEmail ?? base.supplierEmail ?? null,
+      supplierWebsite: fields.supplierWebsite ?? base.supplierWebsite ?? null,
       extraction: {
         source: fields.source,
         confidence: fields.confidence,
         currency: fields.currency,
         country: fields.country,
+        supplierAddress: fields.supplierAddress ?? null,
+        supplierPostalCode: fields.supplierPostalCode ?? null,
+        supplierCity: fields.supplierCity ?? null,
+        supplierPhone: fields.supplierPhone ?? null,
+        supplierEmail: fields.supplierEmail ?? null,
+        supplierWebsite: fields.supplierWebsite ?? null,
         // Fase 4.1 — o cabeçalho transcrito à letra fica gravado: é o
         // texto em que a regra determinística se baseou para decidir
         // "orçamento" em vez de "fatura", e sem ele quem revê o

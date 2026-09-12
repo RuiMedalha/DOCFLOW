@@ -14,6 +14,12 @@ type PartyRow = {
   name: string;
   nif: string | null;
   iban: string | null;
+  address?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
   country: string;
   isActive: boolean;
   isRecurring: boolean;

@@ -121,12 +121,28 @@ export async function autoOrientImage(
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const jimpMod = require("jimp") as {
       Jimp: { read: (b: Buffer) => Promise<any> };
     };
     const Jimp = jimpMod.Jimp;
     const img = await Jimp.read(buffer);
+
+    // Apply EXIF rotation if present
+    if (typeof orient === "number" && orient !== 1) {
+      if (orient === 6) {
+        img.rotate(90);
+        needsRotation = true;
+        log(`applied EXIF Orientation 6 (90° CW rotation)`);
+      } else if (orient === 8) {
+        img.rotate(270);
+        needsRotation = true;
+        log(`applied EXIF Orientation 8 (270° CW rotation)`);
+      } else if (orient === 3) {
+        img.rotate(180);
+        needsRotation = true;
+        log(`applied EXIF Orientation 3 (180° rotation)`);
+      }
+    }
 
     // ── Fase 4.3 (P0.2) — Rotação pelo conteúdo ────────────────────────
     // Fotos de telemóvel muitas vezes não têm EXIF ou têm-no a 1 mesmo

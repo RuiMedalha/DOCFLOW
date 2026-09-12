@@ -248,6 +248,9 @@ export class EnrichmentService {
 
     // Enriquecimento complementar via melhores faturas extraídas desse fornecedor
     const combinedFields: EnrichmentFields = result.ok ? { ...result.fields } : {};
+    if (combinedFields.address && /^[-–—\s/.]+$/.test(combinedFields.address.trim())) {
+      delete combinedFields.address;
+    }
     const invoiceFields = await this.extractFieldsFromInvoices(tenantId, partyId);
     for (const [key, val] of Object.entries(invoiceFields)) {
       if (!combinedFields[key as keyof EnrichmentFields] && val) {
@@ -314,11 +317,19 @@ export class EnrichmentService {
     partyId: string,
   ): Promise<EnrichmentFields> {
     if (!this.prisma?.document?.findMany) return {};
+    const party = await this.prisma.party.findUnique({
+      where: { id: partyId },
+      select: { nif: true, vatNumber: true },
+    });
+    const conditions: Array<Record<string, unknown>> = [{ partyId }];
+    if (party?.nif) conditions.push({ supplierNif: party.nif });
+    if (party?.vatNumber) conditions.push({ supplierNif: party.vatNumber });
+
     const docs = await this.prisma.document.findMany({
       where: {
         tenantId,
-        partyId,
         status: { not: DocumentStatus.REJEITADO },
+        OR: conditions,
       },
       select: {
         iban: true,
@@ -342,13 +353,38 @@ export class EnrichmentService {
       if (!extracted.email && typeof ext?.supplierEmail === 'string' && ext.supplierEmail.trim()) {
         extracted.email = ext.supplierEmail.trim();
       }
-      if (!extracted.address && typeof ext?.supplierAddress === 'string' && ext.supplierAddress.trim()) {
+      if (
+        !extracted.address &&
+        typeof ext?.supplierAddress === 'string' &&
+        ext.supplierAddress.trim() &&
+        !/^[-–—\s/.]+$/.test(ext.supplierAddress.trim())
+      ) {
         extracted.address = ext.supplierAddress.trim();
+      }
+      if (!extracted.postalCode && typeof ext?.supplierPostalCode === 'string' && ext.supplierPostalCode.trim()) {
+        extracted.postalCode = ext.supplierPostalCode.trim();
+      }
+      if (!extracted.city && typeof ext?.supplierCity === 'string' && ext.supplierCity.trim()) {
+        extracted.city = ext.supplierCity.trim();
       }
       if (!extracted.website && typeof ext?.supplierWebsite === 'string' && ext.supplierWebsite.trim()) {
         extracted.website = ext.supplierWebsite.trim();
       }
     }
+
+    // Heurística de cidade e código postal a partir da morada completa caso ainda vazios
+    if (extracted.address) {
+      if (!extracted.postalCode) {
+        const ptZip = extracted.address.match(/\b\d{4}-\d{3}\b/);
+        const esZip = extracted.address.match(/\b\d{5}\b/);
+        if (ptZip) extracted.postalCode = ptZip[0];
+        else if (esZip) extracted.postalCode = esZip[0];
+      }
+      if (!extracted.city) {
+        extracted.city = this.guessCity(extracted.address);
+      }
+    }
+
     return extracted;
   }
 
@@ -383,7 +419,16 @@ export class EnrichmentService {
     ] as const) {
       const current = party[field];
       const candidate = incoming[field as keyof EnrichmentFields];
-      if (current == null && typeof candidate === 'string' && candidate.length > 0) {
+      const isCurrentEmpty =
+        current == null ||
+        (typeof current === 'string' &&
+          (current.trim().length === 0 || /^[-–—\s/.]+$/.test(current.trim())));
+      if (
+        isCurrentEmpty &&
+        typeof candidate === 'string' &&
+        candidate.trim().length > 0 &&
+        !/^[-–—\s/.]+$/.test(candidate.trim())
+      ) {
         filled.push(field);
       }
     }

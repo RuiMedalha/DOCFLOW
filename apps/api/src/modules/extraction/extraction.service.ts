@@ -3998,6 +3998,13 @@ export class ExtractionService implements OnModuleDestroy {
       GUTSCHRIFTSRECHNUNG: DocumentType.NOTA_CREDITO,
       AVOIR: DocumentType.NOTA_CREDITO,
       NOTA_DE_CREDITO: DocumentType.NOTA_CREDITO,
+      // Fase 4.2 (P1.3) — sinónimos em falta: "nota de abono" (PT) e
+      // "factura rectificativa" (ES, quando o valor rectificado é
+      // negativo — a versão positiva é só uma correção de dados).
+      NOTA_DE_ABONO: DocumentType.NOTA_CREDITO,
+      NOTA_ABONO: DocumentType.NOTA_CREDITO,
+      FACTURA_RECTIFICATIVA: DocumentType.NOTA_CREDITO,
+      FATURA_RETIFICATIVA: DocumentType.NOTA_CREDITO,
       ND: DocumentType.NOTA_DEBITO,
       NOTA_DEBITO: DocumentType.NOTA_DEBITO,
       DEBIT_NOTE: DocumentType.NOTA_DEBITO,
@@ -4045,7 +4052,11 @@ export class ExtractionService implements OnModuleDestroy {
       //    resolves. Order matters: nota de crédito / débito before
       //    generic fatura.
     const lower = cleaned.toLowerCase();
-    if (/(nota.{0,3}credito|credit.{0,3}note|gutschrift|avoir)/.test(lower)) {
+    if (
+      /(nota.{0,3}credito|nota.{0,3}abono|credit.{0,3}note|gutschrift|avoir|(fa[ct]tura|factura).{0,3}rect)/.test(
+        lower,
+      )
+    ) {
       return DocumentType.NOTA_CREDITO;
     }
     if (/(nota.{0,3}debito|debit.{0,3}note|belastungsanzeige)/.test(lower)) {

@@ -67,6 +67,9 @@ import {
   type QueueAdapter,
 } from '../../common/queue/queue-adapter.interface';
 import { ExtractionService } from '../extraction/extraction.service';
+import { autoOrientImage } from '../extraction/qr-decode/qr-decoder';
+import { SNC_ACCOUNT_LABELS } from '../accounting/accounting.controller';
+import { proposeAccountingEntry } from '../accounting/accounting-proposal';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
@@ -261,7 +264,18 @@ export class DocumentsService {
     if (this.imageToPdf.supports(file.mimetype)) {
       try {
         pdfKey = this.buildPdfKeyFromImageKey(fileKey);
-        const pdfBuffer = await this.imageToPdf.convert(file.buffer, file.mimetype);
+        // Fase 4.2 (P1.5) — a fotografia continuava a aparecer deitada
+        // no detalhe. A correção completa (pelo conteúdo, sem EXIF) só
+        // corria mais tarde, dentro da extração — havia uma janela em
+        // que o PDF de arquivo já existia mas ainda deitado (mostrado
+        // no visualizador até a extração terminar), e este caminho de
+        // upload é o mesmo para TODAS as origens (web, câmara, scanner,
+        // email, WhatsApp — todas passam por este `create()`). A
+        // correção por EXIF é imediata e cobre a maioria das fotos de
+        // telemóvel; a correção pelo conteúdo (fotos sem EXIF) continua
+        // a correr na extração, que também usa esta mesma orientação.
+        const oriented = await autoOrientImage(file.buffer, file.mimetype, this.logger);
+        const pdfBuffer = await this.imageToPdf.convert(oriented, file.mimetype);
         await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
       } catch (err) {
         // DO NOT block the upload — the original image is already on
@@ -625,7 +639,12 @@ export class DocumentsService {
       include: {
         uploadedBy: { select: { id: true, name: true, email: true } },
         folder: { select: { id: true, name: true, pattern: true } },
-        party: { select: { id: true, name: true, country: true, isRecurring: true } },
+        party: { select: { id: true, name: true, country: true, isRecurring: true, vatRegime: true } },
+        // Fase 4.2 (P2) — sem isto o detalhe nunca via a conta já
+        // atribuída: reabrir o documento mostrava sempre os selects
+        // vazios mesmo depois de gravar.
+        debitAccount: { select: { code: true } },
+        creditAccount: { select: { code: true } },
       },
     });
     if (!doc) throw new NotFoundException('Document not found');
@@ -903,6 +922,84 @@ export class DocumentsService {
   }
 
   // ─────────────────────────────────────────── folder assignment ───────
+
+  /**
+   * Fase 4.2 (P2) — o frontend já chamava `PATCH /documents/:id/accounting`
+   * com `{ debitAccount, creditAccount }` (códigos SNC, ex. "312",
+   * "2432") mas o endpoint não existia — os selects de "Conta débito" e
+   * "Conta crédito" nunca gravavam nada. A conta é encontrada (ou criada
+   * — mesma lógica incremental das categorias na Fase 4.1) por código
+   * dentro do tenant, e a Document liga-se ao `Account.id` real.
+   */
+  async assignAccounting(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: { debitAccount?: string | null; creditAccount?: string | null },
+  ) {
+    const existing = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Document not found');
+
+    const resolve = async (code: string | null | undefined): Promise<string | null | undefined> => {
+      if (code === undefined) return undefined; // não mexer
+      if (!code) return null; // limpar
+      const label = SNC_ACCOUNT_LABELS[code] ?? `Conta ${code}`;
+      const account = await this.prisma.account.upsert({
+        where: { tenantId_code: { tenantId, code } },
+        create: { tenantId, code, name: label, type: 'EXPENSE' },
+        update: {},
+        select: { id: true },
+      });
+      return account.id;
+    };
+
+    const debitAccountId = await resolve(dto.debitAccount);
+    const creditAccountId = await resolve(dto.creditAccount);
+
+    const data: Record<string, unknown> = {};
+    if (debitAccountId !== undefined) data.debitAccountId = debitAccountId;
+    if (creditAccountId !== undefined) data.creditAccountId = creditAccountId;
+
+    const updated = await this.prisma.document.update({
+      where: { id },
+      data,
+      include: { debitAccount: { select: { code: true } }, creditAccount: { select: { code: true } } },
+    });
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: AuditAction.EDIT,
+      entityType: 'document',
+      entityId: id,
+      metadata: { debitAccount: dto.debitAccount ?? null, creditAccount: dto.creditAccount ?? null },
+    });
+
+    return this.sanitize(updated);
+  }
+
+  /**
+   * Fase 4.2 (P2) — proposta de lançamento a partir da natureza (Fase
+   * 4.1) e do regime de IVA do fornecedor (Fase 4). Determinística,
+   * nunca inventa: sem um dos dois, devolve listas vazias e o motivo.
+   */
+  async getAccountingProposal(tenantId: string, id: string) {
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+      select: {
+        expenseNature: true,
+        party: { select: { vatRegime: true } },
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    return proposeAccountingEntry(
+      doc.expenseNature as never,
+      doc.party?.vatRegime as never,
+    );
+  }
 
   async assignFolder(
     tenantId: string,
@@ -3113,6 +3210,15 @@ export class DocumentsService {
       total: rest.total != null ? Number(rest.total) : null,
       taxAmount: rest.taxAmount != null ? Number(rest.taxAmount) : null,
       netAmount: rest.netAmount != null ? Number(rest.netAmount) : null,
+      // Fase 4.2 (P2) — o frontend espera `debitAccount`/`creditAccount`
+      // como o código SNC (string), não o objeto Account inteiro — é o
+      // mesmo formato que envia em `PATCH .../accounting`.
+      ...(rest.debitAccount !== undefined
+        ? { debitAccount: rest.debitAccount?.code ?? null }
+        : {}),
+      ...(rest.creditAccount !== undefined
+        ? { creditAccount: rest.creditAccount?.code ?? null }
+        : {}),
     };
   }
 

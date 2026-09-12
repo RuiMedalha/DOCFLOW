@@ -436,6 +436,35 @@ export class DocumentsController {
     return this.documents.assignFolder(user.tenantId, user.id, id, dto.folderId ?? null);
   }
 
+  // ── Fase 4.2 (P2) — contabilização ─────────────────────────────────
+  // O frontend já chamava estas duas rotas; só não existiam no backend,
+  // por isso "Conta débito"/"Conta crédito" nunca tinham nada para
+  // escolher nem gravavam nada.
+  @Get(':id/accounting-proposal')
+  @ApiOperation({
+    summary: 'Proposta determinística de lançamento (natureza + regime de IVA)',
+    description:
+      'Nunca inventa: sem natureza definida ou sem regime de IVA conhecido, devolve listas vazias e o motivo em `reason`.',
+  })
+  accountingProposal(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.documents.getAccountingProposal(user.tenantId, id);
+  }
+
+  @Patch(':id/accounting')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Atribui a conta de débito/crédito ao documento',
+    description:
+      'Aceita códigos SNC ("312", "2432", ...). Uma Account é criada automaticamente no tenant se ainda não existir. Passar null limpa a atribuição.',
+  })
+  assignAccounting(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: { debitAccount?: string | null; creditAccount?: string | null },
+  ) {
+    return this.documents.assignAccounting(user.tenantId, user.id, id, dto);
+  }
+
   // ─────────────────────────────────────────── download ─────────────────
 
   @Get(':id/download')

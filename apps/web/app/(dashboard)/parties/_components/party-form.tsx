@@ -103,13 +103,13 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         <Field label="Nome *">
           <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </Field>
-        <Field label="Categoria">
+        <Field label="Classificação do Parceiro">
           <select
             className="select"
             value={form.partyCategoryId ?? ''}
             onChange={(e) => setForm({ ...form, partyCategoryId: e.target.value })}
           >
-            <option value="">— Sem categoria —</option>
+            <option value="">— Sem classificação definida —</option>
             {partyCategories.map((c: PartyCategory) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -143,17 +143,30 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
           <input className="input" value={form.city ?? ''} onChange={(e) => setForm({ ...form, city: e.target.value })} />
         </Field>
         <Field label="País">
-          <input className="input" value={form.country ?? 'Portugal'} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+          <input
+            className="input"
+            value={form.country ?? 'Portugal'}
+            onChange={(e) => {
+              const newCountry = e.target.value;
+              const isNonPt = newCountry.trim().toUpperCase() !== 'PT' && !/^portugal$/i.test(newCountry.trim());
+              const newRegime = isNonPt && (form.vatRegime === 'PT' || !form.vatRegime) ? 'UE_REVERSE_CHARGE' : form.vatRegime;
+              setForm({ ...form, country: newCountry, vatRegime: newRegime });
+            }}
+          />
         </Field>
         {/* Fase 4 — perfil fiscal/comercial */}
         <Field label="NIF-IVA UE (estrangeiros)">
           <input className="input font-mono" placeholder="por preencher" value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
         </Field>
         <Field label="Regime de IVA">
-          <select className="select" value={form.vatRegime ?? 'PT'} onChange={(e) => setForm({ ...form, vatRegime: e.target.value as PartyInput['vatRegime'] })}>
+          <select
+            className="select"
+            value={form.vatRegime ?? (form.country && form.country.trim().toUpperCase() !== 'PT' && !/^portugal$/i.test(form.country.trim()) ? 'UE_REVERSE_CHARGE' : 'PT')}
+            onChange={(e) => setForm({ ...form, vatRegime: e.target.value as PartyInput['vatRegime'] })}
+          >
             <option value="PT">Portugal (IVA normal)</option>
-            <option value="UE_REVERSE_CHARGE">Intra-UE — autoliquidação</option>
-            <option value="EXTRA_UE">Fora da UE</option>
+            <option value="UE_REVERSE_CHARGE">Intra-UE — autoliquidação (reverse charge)</option>
+            <option value="EXTRA_UE">Fora da UE (importação)</option>
           </select>
         </Field>
         <Field label="Moeda das faturas">
@@ -165,9 +178,9 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         <Field label="Email de faturação">
           <input className="input" type="email" placeholder="faturas@fornecedor.pt" value={form.billingEmail ?? ''} onChange={(e) => setForm({ ...form, billingEmail: e.target.value })} />
         </Field>
-        <Field label="Categoria de despesa por defeito">
+        <Field label="Categoria de despesa por defeito (SNC)">
           <select className="select" value={form.defaultCategoryId ?? ''} onChange={(e) => setForm({ ...form, defaultCategoryId: e.target.value })}>
-            <option value="">— Automática (após 3 aprovações) —</option>
+            <option value="">— Automática (após 3 aprovações ou extração) —</option>
             {expenseCategories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}

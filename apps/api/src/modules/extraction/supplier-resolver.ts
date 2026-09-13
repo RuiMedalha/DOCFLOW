@@ -7,6 +7,8 @@ import { ViesProvider } from "../enrichment/providers/vies.provider";
 import { normalizePartyName } from "../parties/party-identity";
 import { getTenantIdentity } from "../ai/tenant-identity";
 import { PartyMergeService } from "../parties/party-merge.service";
+import { parsePostalAddress } from "../vies/address-parser";
+import { EU_COUNTRY_CODES } from "./field-validation";
 
 /**
  * Inputs the extractor feeds into the supplier auto-resolve step.
@@ -39,6 +41,8 @@ export interface SupplierResolveInput {
   iban?: string;
   /** AI-reported confidence (0..1). Below 0.8 → supplierReview = true. */
   aiConfidence?: number;
+  /** Suggested expense category from document AI (e.g. "62.2.6 Conservação"). */
+  suggestedCategory?: string;
 }
 
 /**
@@ -279,6 +283,10 @@ export class SupplierResolver {
           supplierName?.trim()?.slice(0, 200) ||
           "Fornecedor por identificar";
 
+        const isEu = countryCode !== "PT" && EU_COUNTRY_CODES.has(countryCode);
+        const defaultVatRegime = countryCode === "PT" ? "PT" : (isEu ? "UE_REVERSE_CHARGE" : "EXTRA_UE");
+        const defaultCategoryId = input.suggestedCategory ? await this.matchCategory(tenantId, input.suggestedCategory) : null;
+
         try {
           partyRow = await this.prisma.party.create({
             data: {
@@ -291,6 +299,8 @@ export class SupplierResolver {
               ...(normalizedVat && countryCode !== "PT"
                 ? { vatNumber: normalizedVat, viesValid: viesConfirmed ? true : null }
                 : {}),
+              vatRegime: (viesConfirmed ? "UE_REVERSE_CHARGE" : defaultVatRegime) as any,
+              ...(defaultCategoryId ? { defaultCategoryId } : {}),
               iban: ibanToStore,
               address: (officialData?.address && !/^[-–—\s/.]+$/.test(officialData.address.trim()) ? officialData.address.trim() : null) ?? supplierAddress ?? null,
               city: officialData?.city ?? supplierCity ?? null,
@@ -303,7 +313,7 @@ export class SupplierResolver {
               enrichmentSource: officialData?.source ?? null,
               isActive: true,
             },
-            select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true },
+            select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
           });
         } catch (err) {
           // Race with a parallel upload that just created the same row —
@@ -347,6 +357,13 @@ export class SupplierResolver {
             updates.viesValid = true;
             updates.viesValidatedAt = new Date();
             updates.vatRegime = 'UE_REVERSE_CHARGE';
+          } else if ((partyRow as any).country !== 'PT' && (partyRow as any).vatRegime === 'PT') {
+            const isEu = EU_COUNTRY_CODES.has((partyRow as any).country ?? countryCode);
+            updates.vatRegime = isEu ? 'UE_REVERSE_CHARGE' : 'EXTRA_UE';
+          }
+          if (!(partyRow as any).defaultCategoryId && input.suggestedCategory) {
+            const matchedCat = await this.matchCategory(tenantId, input.suggestedCategory);
+            if (matchedCat) updates.defaultCategoryId = matchedCat;
           }
           const cleanOfficialAddress = officialData?.address && !/^[-–—\s/.]+$/.test(officialData.address.trim()) ? officialData.address.trim() : null;
           const candidateAddress = cleanOfficialAddress || supplierAddress;
@@ -452,16 +469,16 @@ export class SupplierResolver {
      * mesmo quando o nome varia entre faturas.
      */
     iban?: string | null;
-  }): Promise<{ id: string; name: string; nif: string | null; isRecurring: boolean } | null> {
+  }): Promise<{ id: string; name: string; nif: string | null; isRecurring: boolean; address?: string | null; city?: string | null; postalCode?: string | null; country?: string | null; vatRegime?: string | null; defaultCategoryId?: string | null } | null> {
     const { tenantId, nif, vatId, country, name, iban } = args;
 
     // Prefer NIF lookup (most common in PT).
     if (nif) {
       const byNif = await this.prisma.party.findFirst({
         where: { tenantId, nif },
-        select: { id: true, name: true, nif: true, isRecurring: true },
+        select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
       });
-      if (byNif) return byNif;
+      if (byNif) return byNif as any;
     }
 
     // Fall back to VAT — store the country-prefixed VAT as the `nif`
@@ -469,20 +486,20 @@ export class SupplierResolver {
     // vatId column; the leading 2-letter prefix lets us reconstruct it).
     if (vatId && vatId.slice(0, 2) === country) {
       const byVat = await this.prisma.party.findFirst({
-        where: { tenantId, nif: vatId, country },
-        select: { id: true, name: true, nif: true, isRecurring: true },
+        where: { tenantId, OR: [{ nif: vatId }, { vatNumber: vatId }], country },
+        select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
       });
-      if (byVat) return byVat;
+      if (byVat) return byVat as any;
     }
 
     // Final fallback: search by country + partial VAT prefix (covers the
     // case where the row was stored without the country-prefix normalization).
     if (vatId && vatId.length >= 4) {
       const byPrefix = await this.prisma.party.findFirst({
-        where: { tenantId, country, nif: { contains: vatId.slice(2) } },
-        select: { id: true, name: true, nif: true, isRecurring: true },
+        where: { tenantId, country, OR: [{ nif: { contains: vatId.slice(2) } }, { vatNumber: { contains: vatId.slice(2) } }] },
+        select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
       });
-      if (byPrefix) return byPrefix;
+      if (byPrefix) return byPrefix as any;
     }
 
     // ── Fase 4.1 — fallback por nome normalizado + país ──────────────
@@ -496,7 +513,7 @@ export class SupplierResolver {
       try {
         const candidates = await this.prisma.party.findMany({
           where: { tenantId, country, type: PartyType.FORNECEDOR },
-          select: { id: true, name: true, nif: true, isRecurring: true },
+          select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
           orderBy: { createdAt: "asc" },
           take: 500,
         });
@@ -508,7 +525,7 @@ export class SupplierResolver {
             `[lookupParty] matched party=${byName.id} by normalized name ` +
               `"${normalized}" (${country}) — no validated tax id available`,
           );
-          return byName;
+          return byName as any;
         }
       } catch (err) {
         // O fallback por nome é um extra: se falhar, seguimos para a
@@ -528,14 +545,14 @@ export class SupplierResolver {
       try {
         const byIban = await this.prisma.party.findFirst({
           where: { tenantId, iban, type: PartyType.FORNECEDOR },
-          select: { id: true, name: true, nif: true, isRecurring: true },
+          select: { id: true, name: true, nif: true, isRecurring: true, address: true, city: true, postalCode: true, country: true, vatRegime: true, defaultCategoryId: true },
         });
         if (byIban) {
           this.logger.log(
             `[lookupParty] matched party=${byIban.id} by known IBAN ${iban} — ` +
               `sem NIF nem nome reconhecível`,
           );
-          return byIban;
+          return byIban as any;
         }
       } catch (err) {
         this.logger.warn(`[lookupParty] IBAN fallback failed: ${(err as Error).message}`);
@@ -712,10 +729,11 @@ export class SupplierResolver {
           const lookup = await this.nifLookup.lookup(tenantId, 'system', normalizedNif);
           if (lookup.baseVerified || lookup.name || lookup.address) {
             officialName = lookup.name ?? null;
-            address = lookup.address ?? null;
-            if (address) {
-              postalCode = address.match(/\b(\d{4}-\d{3})\b/)?.[1] ?? null;
-              city = this.guessCity(address);
+            if (lookup.address) {
+              const parsed = parsePostalAddress(lookup.address);
+              address = parsed.address ?? lookup.address;
+              postalCode = parsed.postalCode ?? lookup.address.match(/\b(\d{4}-\d{3})\b/)?.[1] ?? null;
+              city = parsed.city ?? this.guessCity(lookup.address);
             }
             source = 'nif-lookup';
           }
@@ -733,10 +751,11 @@ export class SupplierResolver {
             iban: iban ?? null,
           });
           if (viesRes.ok) {
+            const parsed = parsePostalAddress(viesRes.fields.address);
             officialName = officialName ?? viesRes.fields.name ?? null;
-            address = address ?? viesRes.fields.address ?? null;
-            city = city ?? viesRes.fields.city ?? null;
-            postalCode = postalCode ?? viesRes.fields.postalCode ?? null;
+            address = address ?? parsed.address ?? viesRes.fields.address ?? null;
+            city = city ?? parsed.city ?? viesRes.fields.city ?? null;
+            postalCode = postalCode ?? parsed.postalCode ?? viesRes.fields.postalCode ?? null;
             source = source ?? 'vies';
           }
         } catch (err) {
@@ -769,11 +788,12 @@ export class SupplierResolver {
           iban: iban ?? null,
         });
         if (viesRes.ok) {
+          const parsed = parsePostalAddress(viesRes.fields.address);
           return {
             officialName: viesRes.fields.name ?? null,
-            address: viesRes.fields.address ?? null,
-            city: viesRes.fields.city ?? null,
-            postalCode: viesRes.fields.postalCode ?? null,
+            address: parsed.address ?? viesRes.fields.address ?? null,
+            city: parsed.city ?? viesRes.fields.city ?? null,
+            postalCode: parsed.postalCode ?? viesRes.fields.postalCode ?? null,
             country: countryCode,
             source: 'vies',
           };
@@ -784,6 +804,46 @@ export class SupplierResolver {
     }
 
     return null;
+  }
+
+  private async matchCategory(tenantId: string, suggested: string): Promise<string | null> {
+    if (!this.prisma || !(this.prisma as any).category?.findMany) return null;
+    try {
+      const categories: Array<{ id: string; name: string; slug: string }> = await (this.prisma as any).category.findMany({
+        where: { tenantId },
+        select: { id: true, name: true, slug: true },
+      });
+      if (!categories || !categories.length) return null;
+      const clean = suggested.toLowerCase();
+      if (clean.includes('31.') || clean.includes('mercadoria')) {
+        const found = categories.find((c) => c.slug === 'mercadorias-revenda' || c.name.toLowerCase().includes('revenda'));
+        if (found) return found.id;
+      }
+      if (clean.includes('43.') || clean.includes('imobilizado') || clean.includes('equipamento')) {
+        const found = categories.find((c) => c.slug === 'imobilizado' || c.name.toLowerCase().includes('imobilizado'));
+        if (found) return found.id;
+      }
+      if (clean.includes('62.2.') || clean.includes('62.1.') || clean.includes('62.6.') || clean.includes('serviços') || clean.includes('servicos') || clean.includes('fse') || clean.includes('limpeza')) {
+        const found = categories.find((c) => c.slug === 'servicos-fse' || c.name.toLowerCase().includes('serviços'));
+        if (found) return found.id;
+      }
+      if (clean.includes('62.3.3') || clean.includes('escritório') || clean.includes('escritorio')) {
+        const found = categories.find((c) => c.slug === 'material-escritorio');
+        if (found) return found.id;
+      }
+      if (clean.includes('62.4.2') || clean.includes('combust')) {
+        const found = categories.find((c) => c.slug === 'combustivel');
+        if (found) return found.id;
+      }
+      if (clean.includes('refei') || clean.includes('restaur')) {
+        const found = categories.find((c) => c.slug === 'refeicoes');
+        if (found) return found.id;
+      }
+      const direct = categories.find((c) => clean.includes(c.name.toLowerCase()) || clean.includes(c.slug));
+      return direct?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private guessCity(address: string | null): string | null {

@@ -129,7 +129,7 @@ export class ViesProvider implements EnrichmentProvider {
       email: null,
       phone: null,
       mobile: null,
-      address: address ?? null,
+      address: parsed.address ?? address ?? null,
       city: parsed.city ?? this.guessCity(address),
       postalCode: parsed.postalCode ?? this.guessPostalCode(address),
       website: null,

@@ -19,6 +19,7 @@
 import { isValidPortugueseNif } from '../../common/validation/tax-id.validator';
 import { ATCUD_PATTERN, isSyntacticallyValidEuVat, isValidAtQr } from './fiscal-status';
 import { parseAtQr, validateAtQr } from '@docflow/shared';
+import { classifyLineDiscount } from './line-discount';
 
 export { ATCUD_PATTERN };
 
@@ -618,13 +619,26 @@ export function validateLineItemsTable(
     const qty = safeNum(item.quantity) ?? 1;
     const price = safeNum(item.unitPrice);
     let discount = safeNum(item.discount) ?? 0;
-    const discountPct = safeNum(item.discountPercent);
-
-    if (discount === 0 && discountPct != null && discountPct > 0 && price != null) {
-      discount = round2(qty * price * (discountPct / 100));
-    }
-
+    let discountPct = safeNum(item.discountPercent);
     const actualSubtotal = safeNum(item.lineTotal) ?? safeNum(item.total);
+
+    if (discount > 0 || discountPct != null) {
+      const classified = classifyLineDiscount({
+        quantity: qty,
+        unitPrice: price,
+        discount: item.discount,
+        lineTotal: actualSubtotal,
+      });
+
+      if (classified.kind === 'percent' && classified.discountAmount != null) {
+        discount = classified.discountAmount;
+        discountPct = classified.discountPercent ?? discountPct;
+        item.discountPercent = discountPct;
+        item.discount = discount;
+      } else if (discount === 0 && discountPct != null && discountPct > 0 && price != null) {
+        discount = round2(qty * price * (discountPct / 100));
+      }
+    }
 
     if (price != null) {
       linesChecked++;

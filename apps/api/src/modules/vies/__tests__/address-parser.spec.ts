@@ -33,6 +33,20 @@ describe('parsePostalAddress()', () => {
     expect(out.address).toBe('Rua das Flores 123');
   });
 
+  it('limpa cidade colada ao fim da morada (caso real da AT / AZUR NET)', () => {
+    const out = parsePostalAddress('R CAMBO LES BAINS N 3 RC ESQCALDAS DA RAINHA2500-326 CALDAS DA RAINHA');
+    expect(out.postalCode).toBe('2500-326');
+    expect(out.city).toBe('CALDAS DA RAINHA');
+    expect(out.address).toBe('R CAMBO LES BAINS N 3 RC ESQ');
+  });
+
+  it('limpa cidade colada ao fim da morada com espaco antes do codigo postal', () => {
+    const out = parsePostalAddress('R CAMBO LES BAINS N 3 RC ESQCALDAS DA RAINHA 2500-326 CALDAS DA RAINHA');
+    expect(out.postalCode).toBe('2500-326');
+    expect(out.city).toBe('CALDAS DA RAINHA');
+    expect(out.address).toBe('R CAMBO LES BAINS N 3 RC ESQ');
+  });
+
   it('remove a província entre parênteses do formato ES', () => {
     const out = parsePostalAddress('28001 MADRID (MADRID)');
     expect(out.city).toBe('MADRID');

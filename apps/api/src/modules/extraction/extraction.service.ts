@@ -1053,6 +1053,32 @@ export class ExtractionService implements OnModuleDestroy {
         `atcud:${atcudSan.reason}`,
       ],
     };
+
+    // Scan loaded.text for supplier contacts fallback if not yet extracted by AI
+    if (loaded?.text) {
+      if (!fields.supplierEmail) {
+        const emailMatch = loaded.text.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/);
+        if (emailMatch && !/example\.com|domain\.com/i.test(emailMatch[1])) {
+          fields.supplierEmail = emailMatch[1].trim();
+        }
+      }
+      if (!fields.supplierWebsite) {
+        const webMatch = loaded.text.match(/\b((?:https?:\/\/)?(?:www\.)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)\b/i);
+        if (webMatch) {
+          fields.supplierWebsite = webMatch[1].trim();
+        }
+      }
+      if (!fields.supplierPhone) {
+        const phoneMatch = loaded.text.match(/(?:Tel(?:efone|ef|\.)?|Contacto|Phone|Mobile|Tlm)[:\s]*([+0-9\s()./-]{9,20})\b/i);
+        if (phoneMatch) {
+          const cleanPhone = phoneMatch[1].replace(/\s+/g, ' ').trim();
+          if (cleanPhone.replace(/\D/g, '').length >= 9) {
+            fields.supplierPhone = cleanPhone;
+          }
+        }
+      }
+    }
+
     // Só um valor cruzado com algo (QR-AT, módulo 11, VIES) pode mostrar
     // confiança alta. O que vem só do modelo fica com teto baixo.
     const identityValidated = taxIds.validation === 'PT_MOD11' || taxIds.validation === 'VIES';
@@ -1254,9 +1280,16 @@ export class ExtractionService implements OnModuleDestroy {
           supplierWebsite: fields.supplierWebsite,
           iban: fields.iban,
           aiConfidence: Number.isFinite(aiConfidence) ? aiConfidence : fields.confidence,
+          suggestedCategory: fields.suggestedCategory,
         });
         if (resolved.party) {
           updateData.party = { connect: { id: resolved.party.id } };
+          // For foreign EU suppliers, trigger VIES validateParty in background to ensure Party has official VIES data
+          if (this.vies && (fields.country && fields.country !== 'PT' || fields.supplierVatId && !/^PT/i.test(fields.supplierVatId))) {
+            this.vies.validateParty(tenantId, resolved.party.id).catch((viesErr) => {
+              this.logger.warn(`[processDocumentAsync] background VIES validateParty failed: ${(viesErr as Error).message}`);
+            });
+          }
         }
         supplierReviewFlag = resolved.supplierReview;
         supplierResolveReason = resolved.reason;
@@ -1554,6 +1587,7 @@ export class ExtractionService implements OnModuleDestroy {
     // ── Fase 4 — categoria automática por fornecedor ────────────────
     const linkedPartyId =
       (updateData.party as { connect?: { id?: string } } | undefined)?.connect?.id ?? doc.partyId ?? null;
+    let categoryApplied = false;
     if (linkedPartyId) {
       const auto = await this.resolveAutoCategory(tenantId, linkedPartyId);
       if (auto) {
@@ -1564,6 +1598,16 @@ export class ExtractionService implements OnModuleDestroy {
         // mirror the automatic choice there so the badge and IVA deduction follow.
         const catName = await this.categoryNameById(tenantId, auto.categoryId);
         if (catName && isExpenseCategory(catName)) aiFiledExpenseCategory = catName;
+        categoryApplied = true;
+      }
+    }
+    if (!categoryApplied && fields.suggestedCategory) {
+      const matched = await this.matchCategoryBySuggestion(tenantId, fields.suggestedCategory);
+      if (matched) {
+        updateData.expenseCategory = { connect: { id: matched.id } };
+        (updateData as Record<string, unknown>).categoryConfidence = 0.85;
+        fields.hints = [...(fields.hints ?? []), `suggestedCategoryMatched:${matched.id}:${matched.name}`];
+        if (isExpenseCategory(matched.name)) aiFiledExpenseCategory = matched.name as ExpenseCategory;
       }
     }
 
@@ -3569,6 +3613,60 @@ export class ExtractionService implements OnModuleDestroy {
     try {
       const row = await client.category.findFirst({ where: { id, tenantId }, select: { name: true } });
       return row?.name ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async matchCategoryBySuggestion(
+    tenantId: string,
+    suggestedCategory: string,
+  ): Promise<{ id: string; name: string } | null> {
+    const client = this.prisma as unknown as { category?: { findMany: (args: unknown) => Promise<Array<{ id: string; name: string; slug: string }>> } };
+    if (typeof client.category?.findMany !== "function") return null;
+    try {
+      const categories = await client.category.findMany({
+        where: { tenantId },
+        select: { id: true, name: true, slug: true },
+      });
+      if (!categories || categories.length === 0) return null;
+
+      const mappedSlug = mapToExpenseCategory(suggestedCategory);
+      if (mappedSlug) {
+        const byName = categories.find((c) => c.name.toLowerCase() === mappedSlug.toLowerCase());
+        if (byName) return byName;
+      }
+
+      const clean = suggestedCategory.toLowerCase();
+      if (clean.includes('31.') || clean.includes('mercadoria')) {
+        const revenda = categories.find((c) => c.slug === 'mercadorias-revenda' || c.name.toLowerCase().includes('revenda'));
+        if (revenda) return revenda;
+      }
+      if (clean.includes('43.') || clean.includes('imobilizado') || clean.includes('equipamento')) {
+        const imob = categories.find((c) => c.slug === 'imobilizado' || c.name.toLowerCase().includes('imobilizado'));
+        if (imob) return imob;
+      }
+      if (clean.includes('62.2.') || clean.includes('62.1.') || clean.includes('62.6.') || clean.includes('serviços') || clean.includes('servicos') || clean.includes('fse') || clean.includes('limpeza')) {
+        const fse = categories.find((c) => c.slug === 'servicos-fse' || c.name.toLowerCase().includes('serviços'));
+        if (fse) return fse;
+      }
+      if (clean.includes('62.3.3') || clean.includes('escritório') || clean.includes('escritorio')) {
+        const esc = categories.find((c) => c.slug === 'material-escritorio');
+        if (esc) return esc;
+      }
+      if (clean.includes('62.4.2') || clean.includes('combust')) {
+        const comb = categories.find((c) => c.slug === 'combustivel');
+        if (comb) return comb;
+      }
+      if (clean.includes('refei') || clean.includes('restaur')) {
+        const ref = categories.find((c) => c.slug === 'refeicoes');
+        if (ref) return ref;
+      }
+
+      const matched = categories.find((c) => clean.includes(c.name.toLowerCase()));
+      if (matched) return matched;
+
+      return null;
     } catch {
       return null;
     }

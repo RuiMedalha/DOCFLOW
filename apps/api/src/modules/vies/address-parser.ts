@@ -25,8 +25,16 @@ export interface ParsedAddress {
   city: string | null;
 }
 
-const PT_POSTAL = /\b(\d{4}-\d{3})\s+(.+)$/;
-const GENERIC_POSTAL = /\b(\d{4,5})\s+(.+)$/;
+const PT_POSTAL = /(?:^|[^\d])(\d{4}-\d{3})\s+(.+)$/;
+const GENERIC_POSTAL = /(?:^|[^\d])(\d{4,5})\s+(.+)$/;
+
+function stripGluedCity(prefix: string, city: string | null): string {
+  if (!city || !prefix) return prefix;
+  const cleanCity = city.trim();
+  const escaped = cleanCity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cityRegex = new RegExp(`(?:[\\s,\\-]+)?${escaped}$`, 'i');
+  return prefix.replace(cityRegex, '').replace(/[,\s]+$/, '').trim();
+}
 
 export function parsePostalAddress(raw: string | null | undefined): ParsedAddress {
   if (!raw) return { address: null, postalCode: null, city: null };
@@ -42,24 +50,32 @@ export function parsePostalAddress(raw: string | null | undefined): ParsedAddres
 
   const ptMatch = lastLine.match(PT_POSTAL);
   if (ptMatch) {
-    const prefixOnLastLine = lastLine.slice(0, ptMatch.index).replace(/[,\s]+$/, '').trim();
+    const postalCode = ptMatch[1];
+    const city = ptMatch[2].trim() || null;
+    const postalIdx = lastLine.lastIndexOf(postalCode);
+    const rawPrefix = lastLine.slice(0, postalIdx).replace(/[,\s]+$/, '').trim();
+    const prefixOnLastLine = stripGluedCity(rawPrefix, city);
     const fullAddress = [rest, prefixOnLastLine].filter(Boolean).join(', ');
     return {
       address: fullAddress || null,
-      postalCode: ptMatch[1],
-      city: ptMatch[2].trim() || null,
+      postalCode,
+      city,
     };
   }
 
   const genericMatch = lastLine.match(GENERIC_POSTAL);
   if (genericMatch) {
-    const prefixOnLastLine = lastLine.slice(0, genericMatch.index).replace(/[,\s]+$/, '').trim();
+    const postalCode = genericMatch[1];
+    // Remove uma província entre parênteses quando presente (formato ES).
+    const city = genericMatch[2].replace(/\s*\([^)]*\)\s*$/, '').trim() || null;
+    const postalIdx = lastLine.lastIndexOf(postalCode);
+    const rawPrefix = lastLine.slice(0, postalIdx).replace(/[,\s]+$/, '').trim();
+    const prefixOnLastLine = stripGluedCity(rawPrefix, city);
     const fullAddress = [rest, prefixOnLastLine].filter(Boolean).join(', ');
     return {
       address: fullAddress || null,
-      postalCode: genericMatch[1],
-      // Remove uma província entre parênteses quando presente (formato ES).
-      city: genericMatch[2].replace(/\s*\([^)]*\)\s*$/, '').trim() || null,
+      postalCode,
+      city,
     };
   }
 

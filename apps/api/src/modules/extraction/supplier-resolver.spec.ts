@@ -582,8 +582,9 @@ describe("SupplierResolver", () => {
     expect(result.party).toBeDefined();
     const party = Array.from(prisma.dbParties.values())[0];
     expect(party.name).toBe("EDP Comercial - Comercialização de Energia, S.A.");
-    expect(party.address).toBe("Av. 24 de Julho 12, 1200-480 Lisboa");
+    expect(party.address).toBe("Av. 24 de Julho 12");
     expect((party as any).postalCode).toBe("1200-480");
+    expect((party as any).city).toBe("Lisboa");
   });
 
   it("auto-enriches existing supplier filling empty address and official name", async () => {
@@ -626,8 +627,9 @@ describe("SupplierResolver", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           name: "Razão Social Oficial Lda",
-          address: "Rua Central 100, 4000-001 Porto",
+          address: "Rua Central 100",
           postalCode: "4000-001",
+          city: "Porto",
         }),
       }),
     );
@@ -667,7 +669,7 @@ describe("SupplierResolver", () => {
     expect(result.party).toBeDefined();
     const party = Array.from(prisma.dbParties.values())[0];
     expect(party.name).toBe("Acme Europe SL");
-    expect(party.address).toBe("Calle Mayor 1, 28013 Madrid");
+    expect(party.address).toBe("Calle Mayor 1");
     expect((party as any).city).toBe("Madrid");
     expect((party as any).postalCode).toBe("28013");
   });

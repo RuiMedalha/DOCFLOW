@@ -405,6 +405,18 @@ describe('validateLineItemsTable() — Soma de (Qtd * Preco - Desconto) == Subto
     expect(res.sumOfLines).toBe(180.0);
   });
 
+  it('recupera automaticamente desconto expresso como percentagem na coluna de desconto (ex: 50 significando 50%)', () => {
+    const items = [
+      { description: 'DISPENSADOR DE CEREALES CON BASE', quantity: 1, unitPrice: 302.30, discount: 50.0, lineTotal: 151.15 },
+      { description: 'CESTA PAN RECTANGULAR MARRON 53X33,5X9', quantity: 2, unitPrice: 34.90, discount: 50.0, lineTotal: 34.90 },
+    ];
+    const res = validateLineItemsTable(items, { netAmount: 186.05 });
+    expect(res.isValid).toBe(true);
+    expect(res.lineDiscrepancies).toEqual([]);
+    expect(res.sumOfLines).toBe(186.05);
+    expect(res.warnings).toEqual([]);
+  });
+
   it('emite aviso claro quando a soma das linhas difere do total/subtotal', () => {
     const items = [
       { description: 'Artigo 1', quantity: 1, unitPrice: 40.0, lineTotal: 40.0 },

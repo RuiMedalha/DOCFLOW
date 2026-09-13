@@ -3,7 +3,23 @@ import { ConfigService } from '@nestjs/config';
 import sharp from 'sharp';
 import { VisionExtractedFields, VisionExtractedLineItem } from './vision.service';
 import { ExtractedFields } from '../extraction/extraction.service';
-import { ZeroxOutput } from 'zerox';
+export interface ZeroxOutput {
+  fileName: string;
+  completionTime: number;
+  inputTokens: number;
+  outputTokens: number;
+  summary: {
+    totalPages: number;
+    ocr: { successful: number; failed: number };
+    extracted: { successful: number; failed: number };
+  };
+  extracted: any;
+  pages: Array<{
+    page: number;
+    content?: string;
+    status: any;
+  }>;
+}
 
 export const ZEROX_SYSTEM_PROMPT = `Você é um motor especializado em extração documental e OCR de alta fidelidade para o DocFlow.
 Analise a fatura ou recibo com precisão cirúrgica.

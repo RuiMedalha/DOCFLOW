@@ -1,6 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { ZeroxService, ZEROX_INVOICE_SCHEMA, ZEROX_SYSTEM_PROMPT } from '../zerox.service';
-import { ZeroxOutput } from 'zerox';
+import { ZeroxService, ZEROX_INVOICE_SCHEMA, ZEROX_SYSTEM_PROMPT, ZeroxOutput } from '../zerox.service';
 
 function makeConfig(values: Record<string, string | undefined>): ConfigService {
   return { get: (key: string) => values[key] } as unknown as ConfigService;

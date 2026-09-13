@@ -10,3 +10,7 @@ minimumReleaseAgeExclude:
   - '@aws-sdk/s3-request-presigner@3.1130.0'
   - mailparser@3.9.24
   - nodemailer@10.0.3
+allowBuilds:
+  sharp: true
+  tesseract.js: true
+  zerox: false

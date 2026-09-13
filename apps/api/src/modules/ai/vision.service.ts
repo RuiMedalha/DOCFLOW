@@ -188,6 +188,7 @@ export interface VisionAnalysisResult {
     | 'minimax'
     | `minimax/${string}`
     | 'faturista'
+    | 'zerox'
     | 'local-fallback';
   model: string;
   /** Aggregate confidence in [0,1]. */
@@ -512,14 +513,7 @@ export class VisionService {
    */
   resolveProvider(
     preferred: VisionAnalysisRequest['preferredProvider'] = 'auto',
-  ):
-    | 'anthropic'
-    | 'openai'
-    | 'gemini'
-    | 'openrouter'
-    | 'minimax'
-    | 'faturista'
-    | null {
+  ): VisionProviderName | null {
     if (preferred === 'anthropic' && this.hasAnthropic) return 'anthropic';
     if (preferred === 'openai' && this.hasOpenAI) return 'openai';
     if (preferred === 'gemini' && this.hasGemini) return 'gemini';

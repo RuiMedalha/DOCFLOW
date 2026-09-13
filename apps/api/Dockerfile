@@ -51,10 +51,22 @@ RUN --mount=type=cache,id=pnpm-store-api,target=/pnpm/store \
 
 # ───────────────────────── Stage 4: runtime ───────────────────────
 FROM node:22-alpine AS runtime
-RUN apk add --no-cache tini wget
+# OCRmyPDF + Tesseract OCR (tesseract-ocr-por / tesseract-ocr-data-por) para arquivo legal PDF/A (art. 52.º CIVA)
+RUN apk add --no-cache \
+    tini \
+    wget \
+    ocrmypdf \
+    tesseract-ocr \
+    tesseract-ocr-data-por \
+    ghostscript \
+    qpdf \
+    unpaper \
+    pngquant \
+    vips
 ENV NODE_ENV=production \
     PORT=4000 \
-    NODE_OPTIONS="--enable-source-maps"
+    NODE_OPTIONS="--enable-source-maps" \
+    TESSDATA_PREFIX=/usr/share/tessdata
 RUN addgroup -g 10001 -S docflow \
  && adduser  -u 10001 -S docflow -G docflow -h /repo -s /sbin/nologin
 WORKDIR /repo/apps/api

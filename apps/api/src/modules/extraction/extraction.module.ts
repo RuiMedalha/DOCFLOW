@@ -19,6 +19,8 @@ import { SupplierResolver } from './supplier-resolver';
 // do DocumentsModule pelo meio.
 import { ImageToPdfService } from '../documents/image-to-pdf/image-to-pdf.service';
 import { ArchiveImageService } from '../documents/image-to-pdf/archive-image.service';
+import { OcrmypdfService } from './ocrmypdf.service';
+import { ImageEnhancerService } from './image-enhancer.service';
 import { EXTRACTION_QUEUE, EXTRACTION_QUEUE_OPTIONS } from './extraction.constants';
 import { QueueModule } from '../../common/queue/queue.module';
 import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
@@ -89,8 +91,8 @@ import { PartiesModule } from '../parties/parties.module';
     }),
   ],
   controllers: [ExtractionController],
-  providers: [ExtractionService, ExtractionProcessor, SupplierResolver, ImageToPdfService, ArchiveImageService],
-  exports: [ExtractionService, SupplierResolver, BullModule],
+  providers: [ExtractionService, ExtractionProcessor, SupplierResolver, ImageToPdfService, ArchiveImageService, OcrmypdfService, ImageEnhancerService],
+  exports: [ExtractionService, SupplierResolver, BullModule, OcrmypdfService, ImageEnhancerService],
 })
 export class ExtractionModule {
   private readonly logger = new Logger(ExtractionModule.name);

@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   AuditAction,
@@ -71,6 +72,7 @@ import { autoOrientImage } from '../extraction/qr-decode/qr-decoder';
 import { SNC_ACCOUNT_LABELS } from '../accounting/accounting.controller';
 import { proposeAccountingEntry } from '../accounting/accounting-proposal';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
+import { OcrmypdfService } from '../extraction/ocrmypdf.service';
 import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
 import { NifLookupService } from '../nif-lookup/nif-lookup.service';
@@ -153,6 +155,7 @@ export class DocumentsService {
     // prod). Injecting here avoids the previous static accessor pattern
     // (security-audit H-5) that broke cross-pod delivery.
     @Inject(QUEUE_ADAPTER) private readonly queue: QueueAdapter,
+    @Optional() private readonly ocrmypdf?: OcrmypdfService,
   ) {
     if (!extraction) {
       this.logger.error(
@@ -278,7 +281,11 @@ export class DocumentsService {
         if (oriented !== file.buffer) {
           await this.storage.put(fileKey, oriented, { contentType: file.mimetype });
         }
-        const pdfBuffer = await this.imageToPdf.convert(oriented, file.mimetype);
+        // Converte para PDF/A legal (art. 52.º CIVA) com ocrmypdf (--deskew --clean --output-type pdfa-2 -l por),
+        // com fallback gracioso para ImageToPdfService caso o binário não esteja disponível no ambiente.
+        const pdfBuffer = this.ocrmypdf
+          ? await this.ocrmypdf.processImageOrPdf(oriented, file.mimetype)
+          : await this.imageToPdf.convert(oriented, file.mimetype);
         await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
       } catch (err) {
         // DO NOT block the upload — the original image is already on

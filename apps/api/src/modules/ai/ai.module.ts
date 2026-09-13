@@ -4,6 +4,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { CopilotController } from './copilot.controller';
 import { CopilotService } from './copilot.service';
 import { VisionService } from './vision.service';
+import { ZeroxService } from './zerox.service';
 import { ExtractionService } from './extraction.service';
 import { OcrService } from './ocr.service';
 import { EmbeddingService } from './embedding.service';
@@ -27,6 +28,7 @@ import { AiManagementController } from './ai-management.controller';
     AiManagementService,
     CopilotService,
     VisionService,
+    ZeroxService,
     ExtractionService,
     OcrService,
     EmbeddingService,
@@ -43,6 +45,7 @@ import { AiManagementController } from './ai-management.controller';
     AiManagementService,
     CopilotService,
     VisionService,
+    ZeroxService,
     // ExtractionService is intentionally not re-exported here — it's owned by
     // ExtractionModule to avoid a circular module dependency. ExtractionModule
     // imports AiModule so it can use VisionService, but AiModule does not

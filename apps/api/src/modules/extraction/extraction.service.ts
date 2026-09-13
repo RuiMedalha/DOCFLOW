@@ -29,6 +29,7 @@ import { PDFParse } from "pdf-parse";
 import { PrismaService } from "../../prisma/prisma.service";
 import { StorageService } from "../documents/storage/storage-service.interface";
 import { VisionService } from "../ai/vision.service";
+import { ZeroxService } from "../ai/zerox.service";
 import { FolderRulesEngine } from "../documents/folder-rules/folder-rules.engine";
 import {
   ExpenseCategory,
@@ -49,6 +50,8 @@ import { classifyFiscalStatus, isValidAtQr, normalizeDocNumber } from "./fiscal-
 import { reconcileTotals, signedAmounts } from "./totals-reconciliation";
 import { classifyLineDiscount } from "./line-discount";
 import {
+  calculateCertaintyScore,
+  CertaintyScoreResult,
   extractAtcudFromText,
   fieldConfidence,
   resolveDocumentCountry,
@@ -70,6 +73,7 @@ import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthre
 // valor não cria ciclo de módulos.
 import { ImageToPdfService } from "../documents/image-to-pdf/image-to-pdf.service";
 import { ArchiveImageService } from "../documents/image-to-pdf/archive-image.service";
+import { OcrmypdfService } from "./ocrmypdf.service";
 // Sprint I — publish `document.extracted` so the processing pipeline's
 // EXTRACTING → ENRICHING handler runs. Previously the extraction service
 // returned its result but never told the pipeline to advance — documents
@@ -387,6 +391,12 @@ export class ExtractionService implements OnModuleDestroy {
     // que o ImageToPdfService: o harness de testes não liga o módulo.
     @Optional()
     private readonly archiveImage?: ArchiveImageService,
+    // OCRmyPDF — conversão e enriquecimento PDF/A legal (art. 52.º CIVA) com OCR
+    @Optional()
+    private readonly ocrmypdf?: OcrmypdfService,
+    // Zerox — extração e particionamento de PDFs/fotos com visão IA e Markdown estruturado
+    @Optional()
+    private readonly zerox?: ZeroxService,
   ) {}
 
   /**
@@ -660,11 +670,16 @@ export class ExtractionService implements OnModuleDestroy {
                 where: { id: documentId },
                 select: { pdfKey: true },
               });
-              if (docRecord?.pdfKey && this.imageToPdf?.supports(doc.mimeType)) {
-                const newPdf = await this.imageToPdf.convert(
-                  oriented,
-                  doc.mimeType,
-                );
+              if (docRecord?.pdfKey && (this.ocrmypdf || this.imageToPdf?.supports(doc.mimeType))) {
+                const newPdf = this.ocrmypdf
+                  ? await this.ocrmypdf.processImageOrPdf(
+                      oriented,
+                      doc.mimeType,
+                    )
+                  : await this.imageToPdf!.convert(
+                      oriented,
+                      doc.mimeType,
+                    );
                 if (!this.storage.put) {
                   throw new Error("storage.put not available");
                 }
@@ -1552,6 +1567,44 @@ export class ExtractionService implements OnModuleDestroy {
       }
     }
 
+    // ── Validação Aritmética, Fiscal e Motor de Certainty Score (Fase 5) ──
+    const certaintyResult = calculateCertaintyScore({
+      netAmount: fields.netAmount,
+      taxAmount: fields.taxAmount,
+      total: fields.total,
+      lineItems: fields.lineItems,
+      taxRate: fields.taxRate,
+      supplierNif: taxIds.nif ?? fields.supplierNif,
+      supplierVatId: taxIds.vatId ?? fields.supplierVatId,
+      country: docCountry,
+      viesValidated: viesValidatedForDoc,
+      qrPayload: qrForFiscal ?? doc.qrPayload,
+      qrOrigin: qrOriginForFiscal,
+      atcud: atcudSan.atcud ?? fields.atcud,
+      hash4: parsedForFiscal?.hash4,
+      softwareCert: parsedForFiscal?.softwareCert,
+      discountAmount: fields.discountAmount,
+      cashDiscountRate: fields.cashDiscountRate,
+      isIntracommunity: fields.isEuIntracommunity ?? doc.isIntracommunity,
+    });
+
+    fields.hints = [
+      ...(fields.hints ?? []),
+      `certaintyScore:${certaintyResult.score}%`,
+      `certaintyLevel:${certaintyResult.level}`,
+    ];
+
+    if (certaintyResult.needsReview) {
+      finalStatus = DocumentStatus.EM_REVISAO;
+      const existingWarns = new Set(fields.warnings ?? []);
+      for (const w of certaintyResult.warnings) {
+        if (!existingWarns.has(w)) {
+          fields.warnings = [...(fields.warnings ?? []), w];
+          existingWarns.add(w);
+        }
+      }
+    }
+
     const composeFinalMetadata = () =>
       this.composeMetadata(
         doc.metadata,
@@ -1561,6 +1614,7 @@ export class ExtractionService implements OnModuleDestroy {
         loaded,
         { supplierReview: supplierReviewFlag, supplierReason: supplierResolveReason },
         aiFiledExpenseCategory,
+        certaintyResult,
       );
     if (duplicateOfDoc) finalStatus = DocumentStatus.DUPLICADO;
     let updated;
@@ -2271,7 +2325,7 @@ export class ExtractionService implements OnModuleDestroy {
     // not wired (e.g. unit tests, or a future code-path that bypasses
     // AiModule). Use optional chaining — never throw a TypeError that
     // the caller would have to dig through stack traces to diagnose.
-    if (!this.vision?.liveProviderAvailable) {
+    if (!this.vision?.liveProviderAvailable && !this.zerox?.isAvailable()) {
       return null;
     }
     try {
@@ -2361,7 +2415,16 @@ export class ExtractionService implements OnModuleDestroy {
       // own 50s). The overall analyze() ceiling is the SUM of those
       // — ~110s in the worst case — but a flaky upstream never blocks
       // one call longer than 30s.
-      const visionResult = await this.vision.analyze({
+      // Zerox integration: if provider override is zerox, or as high-res markdown table extractor
+      if (overrides?.provider === "zerox" && this.zerox?.isAvailable()) {
+        const zBuffer = fileBase64 ? Buffer.from(fileBase64, "base64") : undefined;
+        if (zBuffer) {
+          const zRes = await this.tryZeroxAnalysis(doc, zBuffer, overrides);
+          if (zRes) return zRes;
+        }
+      }
+
+      const visionResult = this.vision?.liveProviderAvailable ? await this.vision.analyze({
         fileBase64,
         mimeType,
         text: loaded.text || undefined,
@@ -2371,7 +2434,7 @@ export class ExtractionService implements OnModuleDestroy {
         tenantId: tenantId,
         preferredProvider: (overrides?.provider as any) ?? "auto",
         modelOverride: overrides?.model,
-      });
+      }) : null;
       // Sidecar — capture the raw extracted payload so
       // `mergeQrWithAi` can pull supplier / IBAN / lineItems out of
       // a partial AI response (where `mergeVisionWithRegex` gated
@@ -2408,6 +2471,62 @@ export class ExtractionService implements OnModuleDestroy {
       );
       return null;
     }
+  }
+
+  /**
+   * Process document using Zerox to split high-resolution PDFs and photos,
+   * returning structured Markdown and extracted invoice fields.
+   */
+  async tryZeroxAnalysis(
+    doc: { fileKey: string; mimeType: string; fileName: string },
+    buffer: Buffer,
+    overrides?: { model?: string; provider?: string },
+  ): Promise<import("../ai/vision.service").VisionAnalysisResult | null> {
+    if (!this.zerox?.isAvailable()) return null;
+    try {
+      this.logger.log(`[tryZeroxAnalysis] Processing ${doc.fileName} with zerox`);
+      const res = await this.zerox.processDocument({
+        buffer,
+        mimeType: doc.mimeType,
+        fileName: doc.fileName,
+        preferredProvider: (overrides?.provider as any) ?? "auto",
+        modelOverride: overrides?.model,
+      });
+      if (res.success) {
+        const visionRes: import("../ai/vision.service").VisionAnalysisResult = {
+          provider: "zerox",
+          model: res.model,
+          confidence: res.extracted.confidence,
+          extracted: res.visionExtracted,
+          rawResponse: res.markdown,
+          processingTimeMs: res.completionTimeMs,
+          fallbackUsed: false,
+          tokensIn: res.inputTokens,
+          tokensOut: res.outputTokens,
+        };
+        this.lastVisionExtracted = res.visionExtracted;
+        this.lastAiExtraction = {
+          provider: "zerox",
+          model: res.model,
+          processingTimeMs: res.completionTimeMs,
+          tokens: {
+            prompt: res.inputTokens,
+            completion: res.outputTokens,
+            total: res.inputTokens + res.outputTokens,
+          },
+          tokensIn: res.inputTokens,
+          tokensOut: res.outputTokens,
+          estimatedCostEur: 0,
+          confidence: res.extracted.confidence,
+          fallbackUsed: false,
+          timestamp: new Date().toISOString(),
+        };
+        return visionRes;
+      }
+    } catch (err) {
+      this.logger.warn(`[tryZeroxAnalysis] error: ${(err as Error).message}`);
+    }
+    return null;
   }
 
   /**
@@ -3540,10 +3659,15 @@ export class ExtractionService implements OnModuleDestroy {
         }
       }
 
-      const pdf = await this.imageToPdf.convert(
-        bytesForPdf,
-        bytesForPdf === prepared.buffer ? "image/jpeg" : doc.mimeType,
-      );
+      const pdf = this.ocrmypdf
+        ? await this.ocrmypdf.processImageOrPdf(
+            bytesForPdf,
+            bytesForPdf === prepared.buffer ? "image/jpeg" : doc.mimeType,
+          )
+        : await this.imageToPdf.convert(
+            bytesForPdf,
+            bytesForPdf === prepared.buffer ? "image/jpeg" : doc.mimeType,
+          );
       const row = await this.prisma.document.findFirst({
         where: { id: documentId },
         select: { pdfKey: true, fileKey: true },
@@ -5200,6 +5324,7 @@ export class ExtractionService implements OnModuleDestroy {
     loaded?: LoadedText,
     supplierResolve?: { supplierReview: boolean; supplierReason?: string },
     aiExpenseCategory?: ExpenseCategory | null,
+    certaintyResult?: CertaintyScoreResult,
   ): Prisma.InputJsonValue {
     // ── Per-rate VAT breakdown ───────────────────────────────────
     // Source priority:
@@ -5421,6 +5546,31 @@ export class ExtractionService implements OnModuleDestroy {
         // "created_review" / "resolve_threw:...").
         supplierReview: supplierResolve?.supplierReview ?? false,
         supplierReason: supplierResolve?.supplierReason ?? null,
+        // ── Certainty Score (95% - 99%) & Mathematical Triangulation (Fase 5) ──
+        certaintyScore: certaintyResult?.score ?? null,
+        certaintyLevel: certaintyResult?.level ?? null,
+        certainty: certaintyResult
+          ? {
+              score: certaintyResult.score,
+              level: certaintyResult.level,
+              label: certaintyResult.label,
+              needsReview: certaintyResult.needsReview,
+              triangulation: certaintyResult.triangulation,
+              lineItemsValidation: {
+                isValid: certaintyResult.lineItemsValidation.isValid,
+                totalLines: certaintyResult.lineItemsValidation.totalLines,
+                sumOfLines: certaintyResult.lineItemsValidation.sumOfLines,
+                discrepancies: certaintyResult.lineItemsValidation.lineDiscrepancies,
+              },
+              vatRatesValidation: {
+                isValid: certaintyResult.vatRatesValidation.isValid,
+                ratesChecked: certaintyResult.vatRatesValidation.ratesChecked,
+                invalidRates: certaintyResult.vatRatesValidation.invalidRates,
+              },
+              passedChecks: certaintyResult.passedChecks,
+              warnings: certaintyResult.warnings,
+            }
+          : null,
       },
       ...(this.lastAiExtraction
         ? { aiExtraction: this.lastAiExtraction }

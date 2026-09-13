@@ -46,6 +46,7 @@ import { CorrectSupplierDialog } from './_components/correct-supplier-dialog';
 import { SupplierManualEditSection } from './_components/supplier-manual-edit-section';
 import { ReExtractDialog } from './_components/re-extract-dialog';
 import { AiTelemetryBadge } from './_components/ai-telemetry-badge';
+import { CertaintyBadge } from './_components/certainty-badge';
 import { Dialog } from '../../../_components/ui';
 import { toastBus } from '../../../_components/ui';
 import {
@@ -902,6 +903,10 @@ export default function DocumentDetailPage() {
 
         {/* RIGHT (col-span-8) — FieldPanel */}
         <section className="xl:col-span-8" style={{ borderLeft: '1px solid var(--ed-rule)', paddingLeft: '40px' }}>
+          <CertaintyBadge
+            certainty={(doc as any)?.metadata?.extraction?.certainty}
+            certaintyScore={(doc as any)?.metadata?.extraction?.certaintyScore}
+          />
           <AiTelemetryBadge ai={(doc as any)?.metadata?.aiExtraction} />
           {/* Sprint 1.B — approval status badge. Sits above the
               primary actions so the operator sees the workflow

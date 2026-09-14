@@ -3845,9 +3845,13 @@ export class ExtractionService implements OnModuleDestroy {
       });
       const pdfKey = row?.pdfKey ?? `${row?.fileKey ?? documentId}.pdf`;
       await this.storage.put(pdfKey, pdf, { contentType: "application/pdf" });
-      if (!row?.pdfKey) {
-        await this.prisma.document.update({ where: { id: documentId }, data: { pdfKey } });
-      }
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: {
+          pdfKey,
+          fileSize: pdf.length,
+        },
+      });
       this.logger.log(
         `[archive] ${doc.fileName}: rotated ${prepared.rotation}° (${prepared.rotationReason}), ` +
           `${(prepared.originalBytes / 1024).toFixed(0)}KB → ${(prepared.buffer.length / 1024).toFixed(0)}KB ` +

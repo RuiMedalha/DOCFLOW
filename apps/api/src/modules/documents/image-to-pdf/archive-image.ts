@@ -126,6 +126,26 @@ export function detectOrientation(
     return { rotate: 0, reason: 'image_too_small', confidence: 0 };
   }
 
+  // Faturas e recibos são documentos verticais (portrait).
+  // Se a imagem já é vertical (height > width * 1.15), mantemos na vertical (rotate: 0).
+  // Rodar 90° deitaria a página para paisagem, o que é quase sempre um erro.
+  if (img.height > img.width * 1.15) {
+    return {
+      rotate: 0,
+      reason: `already_portrait:${img.width}x${img.height}`,
+      confidence: 0.95,
+    };
+  }
+
+  // Se a imagem foi capturada na horizontal (width > height * 1.15), rodar 90° para portrait.
+  if (img.width > img.height * 1.15) {
+    return {
+      rotate: 90,
+      reason: `landscape_to_portrait:${img.width}x${img.height}`,
+      confidence: 0.95,
+    };
+  }
+
   const { rows, cols } = inkProfiles(img);
   const rowVar = profileVariance(rows);
   const colVar = profileVariance(cols);

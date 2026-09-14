@@ -25,7 +25,8 @@ services:
   #    SERVICE_FQDN_MINIO_9000 (needed so presigned download URLs work in
   #    the browser). The web console is disabled (MINIO_BROWSER=off).
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Use Quay.io distribution — Docker Hub rate-limits/denies anonymous minio/minio pulls
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data
     environment:

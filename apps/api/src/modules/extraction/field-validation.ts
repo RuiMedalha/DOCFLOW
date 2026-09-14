@@ -737,6 +737,83 @@ export function validateLineItemsTable(
 // 4. MOTOR DE CERTAINTY SCORE (0 a 100%)
 // =============================================================================
 
+export interface TenantNifValidationResult {
+  status: 'CONFIRMED' | 'MISSING_NIF' | 'MISMATCH_THIRD_PARTY' | 'NOT_APPLICABLE';
+  hasTenantNif: boolean;
+  isOfficialDocument: boolean;
+  customerNif: string | null;
+  tenantNif: string | null;
+  label: string;
+  passedCheck?: string;
+  warning?: string;
+}
+
+export function validateTenantAcquirerNif(params: {
+  customerNif?: string | null;
+  tenantNif?: string | null;
+  qrPayload?: string | null;
+}): TenantNifValidationResult {
+  const { customerNif, tenantNif, qrPayload } = params;
+  if (!tenantNif || tenantNif.trim().length === 0) {
+    return {
+      status: 'NOT_APPLICABLE',
+      hasTenantNif: true,
+      isOfficialDocument: true,
+      customerNif: customerNif ?? null,
+      tenantNif: null,
+      label: 'NIF da Empresa não configurado',
+    };
+  }
+
+  const cleanTenantNif = tenantNif.replace(/^PT/i, '').replace(/\D/g, '');
+  let detectedCustomer = customerNif ? customerNif.replace(/^PT/i, '').replace(/\D/g, '') : null;
+
+  // Se não foi extraído customerNif da visão/texto, verifica se o QR-AT traz o campo B:
+  if (!detectedCustomer && qrPayload) {
+    const bMatch = qrPayload.match(/(?:^|\*)B:(\d+)/);
+    if (bMatch && bMatch[1]) {
+      detectedCustomer = bMatch[1].replace(/^PT/i, '').replace(/\D/g, '');
+    }
+  }
+
+  // Cenário 1: Confirmado — o NIF do adquirente no documento bate com o NIF da empresa
+  if (detectedCustomer && detectedCustomer === cleanTenantNif) {
+    return {
+      status: 'CONFIRMED',
+      hasTenantNif: true,
+      isOfficialDocument: true,
+      customerNif: detectedCustomer,
+      tenantNif: cleanTenantNif,
+      label: `NIF da Empresa Confirmado (${cleanTenantNif})`,
+      passedCheck: `NIF da empresa adquirente verificado (${cleanTenantNif}) — documento oficial em nome da empresa`,
+    };
+  }
+
+  // Cenário 2: Sem NIF ou Consumidor Final (999999990)
+  if (!detectedCustomer || detectedCustomer === '999999990') {
+    return {
+      status: 'MISSING_NIF',
+      hasTenantNif: false,
+      isOfficialDocument: false,
+      customerNif: detectedCustomer,
+      tenantNif: cleanTenantNif,
+      label: 'Sem NIF da Empresa (Não Oficial / Não Dedutível)',
+      warning: `Documento sem NIF da sua empresa (${cleanTenantNif}). De acordo com o art. 36.º do CIVA, não pode ser classificado como documento oficial dedutível sem conferência manual.`,
+    };
+  }
+
+  // Cenário 3: NIF de Terceiro (difere da empresa e não é consumidor final)
+  return {
+    status: 'MISMATCH_THIRD_PARTY',
+    hasTenantNif: false,
+    isOfficialDocument: false,
+    customerNif: detectedCustomer,
+    tenantNif: cleanTenantNif,
+    label: `NIF de Terceiro (${detectedCustomer}) — Não Pertence à Empresa`,
+    warning: `ALERTA FISCAL CRÍTICO: O documento tem o NIF de adquirente ${detectedCustomer}, que difere do NIF da sua empresa (${cleanTenantNif}). Documento emitido para entidade terceira.`,
+  };
+}
+
 export interface CertaintyScoreInput {
   netAmount?: number | null;
   taxAmount?: number | null;
@@ -755,6 +832,9 @@ export interface CertaintyScoreInput {
   discountAmount?: number | null;
   cashDiscountRate?: number | null;
   isIntracommunity?: boolean;
+  customerNif?: string | null;
+  tenantNif?: string | null;
+  tenantName?: string | null;
 }
 
 export interface CertaintyScoreResult {
@@ -766,6 +846,7 @@ export interface CertaintyScoreResult {
   lineItemsValidation: LineItemsValidationResult;
   vatRatesValidation: VatRatesValidationResult;
   taxIdResolution: TaxIdResolution;
+  tenantNifValidation?: TenantNifValidationResult;
   qrAtValidation: {
     hasAtQr: boolean;
     isValidAtQr: boolean;
@@ -788,7 +869,7 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     tolerance: LEGAL_ROUNDING_TOLERANCE,
   });
 
-  // 2. Validação Fiscal do NIF
+  // 2. Validação Fiscal do NIF do Fornecedor
   const taxIdResolution = resolveTaxIds({
     supplierNif: input.supplierNif,
     supplierVatId: input.supplierVatId,
@@ -796,7 +877,21 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     viesValidated: input.viesValidated,
   });
 
-  // 3. Validação das Taxas de IVA
+  // 3. Validação do NIF da Empresa (Adquirente) — Salvaguarda de Documento Oficial
+  const tenantNifValidation = validateTenantAcquirerNif({
+    customerNif: input.customerNif,
+    tenantNif: input.tenantNif,
+    qrPayload: input.qrPayload,
+  });
+
+  if (tenantNifValidation.passedCheck) {
+    passedChecks.push(tenantNifValidation.passedCheck);
+  }
+  if (tenantNifValidation.warning) {
+    warnings.push(tenantNifValidation.warning);
+  }
+
+  // 4. Validação das Taxas de IVA
   const ratesToTest = [
     input.taxRate,
     ...(input.lineItems?.map((l) => l.taxRate) ?? []),
@@ -807,14 +902,14 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     isIntracommunity: input.isIntracommunity,
   });
 
-  // 4. Validação da Tabela de Artigos
+  // 5. Validação da Tabela de Artigos
   const lineItemsValidation = validateLineItemsTable(input.lineItems, {
     netAmount: input.netAmount,
     total: input.total,
     discountAmount: input.discountAmount,
   });
 
-  // 5. Validação de QR-AT Oficial com Assinatura da AT
+  // 6. Validação de QR-AT Oficial com Assinatura da AT
   let hasValidAtQr = false;
   let hasValidSignature = false;
   const qrReasons: string[] = [];
@@ -892,8 +987,8 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     }
   }
 
-  // CENÁRIO 1: 99.9% — QR-AT oficial validado pela AT com assinatura válida
-  if (hasValidAtQr && hasValidSignature) {
+  // CENÁRIO 1: 99.9% — QR-AT oficial validado pela AT com assinatura válida E NIF da empresa confirmado
+  if (hasValidAtQr && hasValidSignature && tenantNifValidation.isOfficialDocument) {
     return {
       score: 99.9,
       level: 'OFFICIAL_AT',
@@ -903,6 +998,7 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
       lineItemsValidation,
       vatRatesValidation,
       taxIdResolution,
+      tenantNifValidation,
       qrAtValidation: {
         hasAtQr: true,
         isValidAtQr: true,
@@ -914,13 +1010,13 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     };
   }
 
-  // CENÁRIO 2: 98% — Triangulação matemática perfeita + NIF PT (módulo 11) ou VIES válido
+  // CENÁRIO 2: 98% — Triangulação matemática perfeita + NIF PT (módulo 11) ou VIES válido E NIF da empresa confirmado
   const hasValidTaxId = taxIdResolution.validation === 'PT_MOD11' || taxIdResolution.validation === 'VIES';
   const hasPerfectMath = triangulation.isValid;
   const hasValidLines = lineItemsValidation.isValid;
   const hasValidRates = vatRatesValidation.isValid;
 
-  if (hasPerfectMath && hasValidTaxId && hasValidLines && hasValidRates) {
+  if (hasPerfectMath && hasValidTaxId && hasValidLines && hasValidRates && tenantNifValidation.isOfficialDocument) {
     return {
       score: 98.0,
       level: 'PERFECT_TRIANGULATION',
@@ -930,6 +1026,7 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
       lineItemsValidation,
       vatRatesValidation,
       taxIdResolution,
+      tenantNifValidation,
       qrAtValidation: {
         hasAtQr: hasValidAtQr,
         isValidAtQr: hasValidAtQr,
@@ -941,7 +1038,7 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     };
   }
 
-  // CENÁRIO 3: <95% — Discrepâncias detectadas em qualquer valor ou falhas de validação
+  // CENÁRIO 3: <95% — Discrepâncias detectadas em qualquer valor ou falhas de validação (incluindo NIF da empresa em falta/inválido)
   let penalty = 0;
   if (!hasPerfectMath) {
     penalty += triangulation.delta != null ? 25 : 35;
@@ -955,20 +1052,39 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
   if (!hasValidRates) {
     penalty += 10;
   }
+  if (!tenantNifValidation.isOfficialDocument) {
+    penalty += tenantNifValidation.status === 'MISMATCH_THIRD_PARTY' ? 45 : 24;
+  }
 
   const baseScore = 94.0;
   const rawCalculated = Math.max(20.0, round2(baseScore - penalty));
-  const finalScore = Math.min(rawCalculated, 94.0);
+  let finalScore = Math.min(rawCalculated, 94.0);
+
+  let scoreLabel = `${finalScore.toFixed(1)}% · Discrepância Detectada (Requer Revisão)`;
+  let level: 'REVIEW_REQUIRED' | 'CRITICAL' = finalScore < 70 ? 'CRITICAL' : 'REVIEW_REQUIRED';
+
+  if (!tenantNifValidation.isOfficialDocument) {
+    if (tenantNifValidation.status === 'MISMATCH_THIRD_PARTY') {
+      finalScore = Math.min(finalScore, 45.0);
+      level = 'CRITICAL';
+      scoreLabel = `${finalScore.toFixed(1)}% · NIF de Terceiro (Não Pertence à Empresa)`;
+    } else {
+      finalScore = Math.min(finalScore, 70.0);
+      level = finalScore < 60 ? 'CRITICAL' : 'REVIEW_REQUIRED';
+      scoreLabel = `${finalScore.toFixed(1)}% · Sem NIF da Empresa (Não Oficial / Não Dedutível)`;
+    }
+  }
 
   return {
     score: finalScore,
-    level: finalScore < 70 ? 'CRITICAL' : 'REVIEW_REQUIRED',
-    label: `${finalScore.toFixed(1)}% · Discrepância Detectada (Requer Revisão)`,
+    level,
+    label: scoreLabel,
     needsReview: true,
     triangulation,
     lineItemsValidation,
     vatRatesValidation,
     taxIdResolution,
+    tenantNifValidation,
     qrAtValidation: {
       hasAtQr: hasValidAtQr,
       isValidAtQr: hasValidAtQr,

@@ -73,6 +73,7 @@ import { SNC_ACCOUNT_LABELS } from '../accounting/accounting.controller';
 import { proposeAccountingEntry } from '../accounting/accounting-proposal';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { OcrmypdfService } from '../extraction/ocrmypdf.service';
+import { ImageEnhancerService } from '../extraction/image-enhancer.service';
 import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
 import { NifLookupService } from '../nif-lookup/nif-lookup.service';
@@ -156,6 +157,7 @@ export class DocumentsService {
     // (security-audit H-5) that broke cross-pod delivery.
     @Inject(QUEUE_ADAPTER) private readonly queue: QueueAdapter,
     @Optional() private readonly ocrmypdf?: OcrmypdfService,
+    @Optional() private readonly imageEnhancer?: ImageEnhancerService,
   ) {
     if (!extraction) {
       this.logger.error(
@@ -277,15 +279,22 @@ export class DocumentsService {
         // correção por EXIF é imediata e cobre a maioria das fotos de
         // telemóvel; a correção pelo conteúdo (fotos sem EXIF) continua
         // a correr na extração, que também usa esta mesma orientação.
-        const oriented = await autoOrientImage(file.buffer, file.mimetype, this.logger);
-        if (oriented !== file.buffer) {
-          await this.storage.put(fileKey, oriented, { contentType: file.mimetype });
+        let oriented = file.buffer;
+        let enhancedMime = file.mimetype;
+
+        if (this.imageEnhancer && this.imageEnhancer.isAvailable()) {
+          oriented = await this.imageEnhancer.processDocumentImage(file.buffer, file.mimetype);
+          enhancedMime = 'image/jpeg';
+        } else {
+          oriented = await autoOrientImage(file.buffer, file.mimetype, this.logger);
         }
-        // Converte para PDF/A legal (art. 52.º CIVA) com ocrmypdf (--deskew --clean --output-type pdfa-2 -l por),
-        // com fallback gracioso para ImageToPdfService caso o binário não esteja disponível no ambiente.
-        const pdfBuffer = this.ocrmypdf
-          ? await this.ocrmypdf.processImageOrPdf(oriented, file.mimetype)
-          : await this.imageToPdf.convert(oriented, file.mimetype);
+
+        if (oriented !== file.buffer) {
+          await this.storage.put(fileKey, oriented, { contentType: enhancedMime });
+        }
+
+        // Converte para PDF A4 vertical oficial (art. 52.º CIVA)
+        const pdfBuffer = await this.imageToPdf.convert(oriented, enhancedMime);
         await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
       } catch (err) {
         // DO NOT block the upload — the original image is already on

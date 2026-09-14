@@ -464,6 +464,16 @@ export default function DocumentDetailPage() {
 
   const onApprove = useCallback(async () => {
     if (!id) return;
+    const nifVal = (doc as any)?.metadata?.extraction?.certainty?.tenantNifValidation;
+    if (nifVal && !nifVal.isOfficialDocument) {
+      const confirmMsg =
+        nifVal.status === 'MISMATCH_THIRD_PARTY'
+          ? `ALERTA FISCAL CRÍTICO:\n\nEste documento tem o NIF de adquirente ${nifVal.customerNif}, que difere do NIF da sua empresa (${nifVal.tenantNif}).\n\nTem a certeza de que deseja aprovar um documento emitido para uma entidade terceira?`
+          : `AVISO FISCAL (art. 36.º CIVA):\n\nEste documento não tem o NIF da sua empresa (${nifVal.tenantNif ?? 'não configurado'}). De acordo com as regras fiscais, não pode ser deduzido como documento oficial da empresa sem verificação manual.\n\nTem a certeza de que deseja aprová-lo?`;
+      if (!window.confirm(confirmMsg)) {
+        return;
+      }
+    }
     try {
       await approve.mutateAsync(id);
       // The mutation already patches the cache to status='APROVADO' and the
@@ -478,7 +488,7 @@ export default function DocumentDetailPage() {
       const raw = typeof err?.message === 'string' ? err.message : '';
       toastBus.error(raw || 'Falha ao aprovar o documento.');
     }
-  }, [id, approve, qc]);
+  }, [id, approve, qc, doc]);
 
   const onAssignDebit = useCallback(
     (code: string) => assignAcc.mutate({ id, debit: code, credit: undefined }),
@@ -861,8 +871,12 @@ export default function DocumentDetailPage() {
         <aside className="xl:col-span-4 space-y-10">
           <DocumentViewer
             src={downloadUrl}
-            fileName={doc.fileName ?? `${id}.pdf`}
-            mimeType={doc.mimeType}
+            fileName={
+              (doc as any).pdfKey
+                ? (doc.fileName ? doc.fileName.replace(/\.[^.]+$/, '.pdf') : `${id}.pdf`)
+                : (doc.fileName ?? `${id}.pdf`)
+            }
+            mimeType={(doc as any).pdfKey ? 'application/pdf' : doc.mimeType}
             highlightFields={bundle.data.qrDecodedFields}
           />
 

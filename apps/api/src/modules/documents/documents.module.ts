@@ -8,6 +8,7 @@ import { ExtractionModule } from '../extraction/extraction.module';
 import { ImageToPdfService } from './image-to-pdf/image-to-pdf.service';
 import { ArchiveImageService } from './image-to-pdf/archive-image.service';
 import { OcrmypdfService } from '../extraction/ocrmypdf.service';
+import { ImageEnhancerService } from '../extraction/image-enhancer.service';
 import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
 
 /**
@@ -43,7 +44,7 @@ import { NifLookupModule } from '../nif-lookup/nif-lookup.module';
     NifLookupModule,
   ],
   controllers: [DocumentsController, SupplierController],
-  providers: [DocumentsService, FolderRulesEngine, ImageToPdfService, ArchiveImageService, OcrmypdfService],
-  exports: [DocumentsService, FolderRulesEngine, ImageToPdfService, ArchiveImageService, OcrmypdfService],
+  providers: [DocumentsService, FolderRulesEngine, ImageToPdfService, ArchiveImageService, OcrmypdfService, ImageEnhancerService],
+  exports: [DocumentsService, FolderRulesEngine, ImageToPdfService, ArchiveImageService, OcrmypdfService, ImageEnhancerService],
 })
 export class DocumentsModule {}

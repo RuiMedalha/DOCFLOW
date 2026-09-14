@@ -200,5 +200,67 @@ describe('Field Validation & Certainty Engine (95% - 99%)', () => {
       expect(scoreRes.needsReview).toBe(true);
       expect(scoreRes.warnings.some((w) => w.includes('Soma das linhas difere do total em 2.50€'))).toBe(true);
     });
+
+    it('aprova 99.9% (OFFICIAL_AT) quando o NIF da empresa adquirente está confirmado', () => {
+      const scoreRes = calculateCertaintyScore({
+        netAmount: 100.0,
+        taxAmount: 23.0,
+        total: 123.0,
+        supplierNif: '501000208',
+        atcud: 'J6Z8J3VX-2285',
+        hash4: 'J6Z8',
+        softwareCert: '2285',
+        qrOrigin: 'qr',
+        tenantNif: '502084006',
+        customerNif: '502084006',
+      });
+      expect(scoreRes.score).toBe(99.9);
+      expect(scoreRes.level).toBe('OFFICIAL_AT');
+      expect(scoreRes.tenantNifValidation?.status).toBe('CONFIRMED');
+      expect(scoreRes.tenantNifValidation?.isOfficialDocument).toBe(true);
+      expect(scoreRes.needsReview).toBe(false);
+    });
+
+    it('salvaguarda fiscal: impede OFFICIAL_AT e limita a 70% quando documento não tem NIF da empresa (art. 36.º CIVA)', () => {
+      const scoreRes = calculateCertaintyScore({
+        netAmount: 100.0,
+        taxAmount: 23.0,
+        total: 123.0,
+        supplierNif: '501000208',
+        atcud: 'J6Z8J3VX-2285',
+        hash4: 'J6Z8',
+        softwareCert: '2285',
+        qrOrigin: 'qr',
+        tenantNif: '502084006',
+        customerNif: '999999990', // Consumidor Final
+      });
+      expect(scoreRes.score).toBeLessThanOrEqual(70.0);
+      expect(scoreRes.level).toBe('REVIEW_REQUIRED');
+      expect(scoreRes.needsReview).toBe(true);
+      expect(scoreRes.tenantNifValidation?.status).toBe('MISSING_NIF');
+      expect(scoreRes.tenantNifValidation?.isOfficialDocument).toBe(false);
+      expect(scoreRes.warnings.some((w) => w.includes('art. 36.º do CIVA'))).toBe(true);
+    });
+
+    it('salvaguarda fiscal: emite alerta crítico e limita a 45% quando NIF de adquirente é de terceiro', () => {
+      const scoreRes = calculateCertaintyScore({
+        netAmount: 100.0,
+        taxAmount: 23.0,
+        total: 123.0,
+        supplierNif: '501000208',
+        atcud: 'J6Z8J3VX-2285',
+        hash4: 'J6Z8',
+        softwareCert: '2285',
+        qrOrigin: 'qr',
+        tenantNif: '502084006',
+        customerNif: '509999999', // Outra empresa qualquer
+      });
+      expect(scoreRes.score).toBeLessThanOrEqual(45.0);
+      expect(scoreRes.level).toBe('CRITICAL');
+      expect(scoreRes.needsReview).toBe(true);
+      expect(scoreRes.tenantNifValidation?.status).toBe('MISMATCH_THIRD_PARTY');
+      expect(scoreRes.tenantNifValidation?.isOfficialDocument).toBe(false);
+      expect(scoreRes.warnings.some((w) => w.includes('ALERTA FISCAL CRÍTICO'))).toBe(true);
+    });
   });
 });

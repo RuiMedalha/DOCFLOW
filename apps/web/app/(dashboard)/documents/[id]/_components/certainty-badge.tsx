@@ -46,6 +46,16 @@ export interface CertaintyData {
     ratesChecked: number[];
     invalidRates: number[];
   };
+  tenantNifValidation?: {
+    status: 'CONFIRMED' | 'MISSING_NIF' | 'MISMATCH_THIRD_PARTY' | 'NOT_CONFIGURED';
+    hasTenantNif: boolean;
+    isOfficialDocument: boolean;
+    customerNif?: string | null;
+    tenantNif?: string | null;
+    label: string;
+    warning?: string;
+    passedCheck?: string;
+  };
   passedChecks?: string[];
   warnings?: string[];
 }
@@ -116,6 +126,38 @@ export function CertaintyBadge({
       {/* Painel Expandido com Detalhes da Triangulação */}
       {expanded && (
         <div className="p-3 bg-muted/30 border-t space-y-2.5 text-[11px]" style={{ borderColor: 'var(--ed-rule)' }}>
+          {/* Salvaguarda Fiscal NIF da Empresa (art. 36.º CIVA) */}
+          {certainty?.tenantNifValidation && (
+            <div
+              className={`p-2.5 rounded-md border text-xs space-y-1 ${
+                certainty.tenantNifValidation.isOfficialDocument
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                  : certainty.tenantNifValidation.status === 'MISMATCH_THIRD_PARTY'
+                  ? 'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  : 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300'
+              }`}
+            >
+              <div className="font-semibold flex items-center gap-1.5">
+                {certainty.tenantNifValidation.isOfficialDocument ? (
+                  <CheckCircle2 size={13} className="shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertTriangle size={13} className="shrink-0" />
+                )}
+                <span>Salvaguarda Fiscal: {certainty.tenantNifValidation.label}</span>
+              </div>
+              {certainty.tenantNifValidation.warning && (
+                <p className="text-[11px] leading-relaxed opacity-95">
+                  {certainty.tenantNifValidation.warning}
+                </p>
+              )}
+              {certainty.tenantNifValidation.passedCheck && (
+                <p className="text-[11px] leading-relaxed opacity-95">
+                  {certainty.tenantNifValidation.passedCheck}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Alertas de Discrepância */}
           {certainty?.warnings && certainty.warnings.length > 0 && (
             <div className="p-2.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-300 space-y-1">

@@ -9,6 +9,16 @@ export interface ImageEnhanceOptions {
   threshold?: number;
 }
 
+export interface ProcessDocumentImageOptions {
+  autoRotate?: boolean;
+  forcePortrait?: boolean;
+  trim?: boolean;
+  normalizeContrast?: boolean;
+  sharpen?: boolean;
+  quality?: number;
+  maxDimension?: number;
+}
+
 export interface VisionPreparationResult {
   buffer: Buffer;
   mimeType: 'image/jpeg';
@@ -39,6 +49,113 @@ export class ImageEnhancerService {
       return typeof sharp === 'function';
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Pipeline completo de preparação de imagem de documento / fatura (telemóvel ou scanner):
+   * 1. Auto-orienta com base nos metadados EXIF da câmara.
+   * 2. Detecta se a imagem ficou horizontal (landscape) e roda para vertical (portrait).
+   * 3. Recorta (trim) margens escuras de mesa ou bordas excedentes em volta do papel.
+   * 4. Redimensiona fotos gigantes (max 2400px) para otimizar memória e nitidez.
+   * 5. Estica e equaliza o contraste (histogram normalization) para fundo branco e texto preto.
+   * 6. Aplica filtro de nitidez (unsharp mask) para caracteres, números e linhas de tabela.
+   * 7. Codifica em JPEG de alta qualidade com mozjpeg.
+   */
+  async processDocumentImage(
+    buffer: Buffer,
+    mime: string,
+    options: ProcessDocumentImageOptions = {},
+  ): Promise<Buffer> {
+    const {
+      autoRotate = true,
+      forcePortrait = true,
+      trim = true,
+      normalizeContrast = true,
+      sharpen: shouldSharpen = true,
+      quality = 90,
+      maxDimension = 2400,
+    } = options;
+
+    try {
+      let pipeline = sharp(buffer);
+
+      // 1. Auto-rotação física via EXIF
+      if (autoRotate) {
+        pipeline = pipeline.rotate();
+      }
+
+      let intermediate = await pipeline.toBuffer();
+      let meta = await sharp(intermediate).metadata();
+
+      // 2. Se a foto foi tirada em modo Paisagem (Landscape) onde largura > altura * 1.12,
+      // rodar 90° para ficar em sentido vertical (portrait).
+      if (forcePortrait && meta.width && meta.height && meta.width > meta.height * 1.12) {
+        this.logger.log(
+          `[processDocumentImage] Imagem na horizontal (${meta.width}x${meta.height}) — a rodar 90° para sentido vertical (portrait)`,
+        );
+        intermediate = await sharp(intermediate).rotate(90).toBuffer();
+        meta = await sharp(intermediate).metadata();
+      }
+
+      let finalPipeline = sharp(intermediate);
+
+      // 3. Recortar / Trim bordas de mesa ou margens excedentes
+      if (trim) {
+        try {
+          const trimmedBuffer = await sharp(intermediate).trim({ threshold: 12 }).toBuffer();
+          const trimmedMeta = await sharp(trimmedBuffer).metadata();
+          if (
+            trimmedMeta.width &&
+            trimmedMeta.height &&
+            meta.width &&
+            meta.height &&
+            trimmedMeta.width >= meta.width * 0.4 &&
+            trimmedMeta.height >= meta.height * 0.4
+          ) {
+            finalPipeline = sharp(trimmedBuffer);
+            meta = trimmedMeta;
+          }
+        } catch {
+          // Se o trim falhar (imagem uniforme), prossegue normalmente
+        }
+      }
+
+      // 4. Redimensionar se exceder dimensão máxima
+      const curW = meta.width || 2000;
+      const curH = meta.height || 2000;
+      if (curW > maxDimension || curH > maxDimension) {
+        finalPipeline = finalPipeline.resize({
+          width: curW >= curH ? maxDimension : undefined,
+          height: curH > curW ? maxDimension : undefined,
+          fit: 'inside',
+          withoutEnlargement: true,
+        });
+      }
+
+      // 5. Normalizar contraste para fundo branco e texto preto legível
+      if (normalizeContrast) {
+        finalPipeline = finalPipeline.normalize();
+      }
+
+      // 6. Nitidez para caracteres e números
+      if (shouldSharpen) {
+        finalPipeline = finalPipeline.sharpen({ sigma: 1.2, m1: 0.8, m2: 2.0 });
+      }
+
+      const resultBuffer = await finalPipeline
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+
+      this.logger.log(
+        `[processDocumentImage] Concluído com sucesso: ${buffer.length}B → ${resultBuffer.length}B (${meta.width}x${meta.height})`,
+      );
+      return resultBuffer;
+    } catch (err) {
+      this.logger.warn(
+        `[processDocumentImage] Falha no processamento sharp: ${(err as Error).message}. Retornando original.`,
+      );
+      return buffer;
     }
   }
 

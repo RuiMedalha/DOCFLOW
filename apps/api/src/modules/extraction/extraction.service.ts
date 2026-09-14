@@ -1611,6 +1611,15 @@ export class ExtractionService implements OnModuleDestroy {
       }
     }
 
+    let tenantIdentity: TenantIdentity | undefined;
+    try {
+      tenantIdentity = await getTenantIdentity(this.prisma, tenantId);
+    } catch (err) {
+      this.logger.warn(
+        `[processDocumentAsync] getTenantIdentity failed for tenant=${tenantId}: ${(err as Error).message}`,
+      );
+    }
+
     // ── Validação Aritmética, Fiscal e Motor de Certainty Score (Fase 5) ──
     const certaintyResult = calculateCertaintyScore({
       netAmount: fields.netAmount,
@@ -1620,6 +1629,9 @@ export class ExtractionService implements OnModuleDestroy {
       taxRate: fields.taxRate,
       supplierNif: taxIds.nif ?? fields.supplierNif,
       supplierVatId: taxIds.vatId ?? fields.supplierVatId,
+      customerNif: fields.customerNif,
+      tenantNif: tenantIdentity?.tenantNif,
+      tenantName: tenantIdentity?.tenantName,
       country: docCountry,
       viesValidated: viesValidatedForDoc,
       qrPayload: qrForFiscal ?? doc.qrPayload,
@@ -1636,10 +1648,30 @@ export class ExtractionService implements OnModuleDestroy {
       ...(fields.hints ?? []),
       `certaintyScore:${certaintyResult.score}%`,
       `certaintyLevel:${certaintyResult.level}`,
+      ...(certaintyResult.tenantNifValidation
+        ? [`tenantNifValidation:${certaintyResult.tenantNifValidation.status}`]
+        : []),
     ];
 
-    if (certaintyResult.needsReview) {
+    if (
+      certaintyResult.needsReview ||
+      (certaintyResult.tenantNifValidation && !certaintyResult.tenantNifValidation.isOfficialDocument)
+    ) {
       finalStatus = DocumentStatus.EM_REVISAO;
+
+      // Salvaguarda fiscal (art. 36.º CIVA): documento sem NIF da empresa adquirente
+      // nunca pode ser gravado como documento fiscal oficial dedutível.
+      if (certaintyResult.tenantNifValidation && !certaintyResult.tenantNifValidation.isOfficialDocument) {
+        if (certaintyResult.tenantNifValidation.status === 'MISMATCH_THIRD_PARTY') {
+          (updateData as Record<string, unknown>).fiscalStatus = 'NAO_FISCAL';
+          (updateData as Record<string, unknown>).fiscalReason = certaintyResult.tenantNifValidation.warning;
+          (updateData as Record<string, unknown>).isNonFiscalDoc = true;
+        } else if (certaintyResult.tenantNifValidation.status === 'MISSING_NIF') {
+          (updateData as Record<string, unknown>).fiscalStatus = 'DUVIDOSO';
+          (updateData as Record<string, unknown>).fiscalReason = certaintyResult.tenantNifValidation.warning;
+        }
+      }
+
       const existingWarns = new Set(fields.warnings ?? []);
       for (const w of certaintyResult.warnings) {
         if (!existingWarns.has(w)) {
@@ -5654,6 +5686,8 @@ export class ExtractionService implements OnModuleDestroy {
               label: certaintyResult.label,
               needsReview: certaintyResult.needsReview,
               triangulation: certaintyResult.triangulation,
+              taxIdResolution: certaintyResult.taxIdResolution,
+              tenantNifValidation: certaintyResult.tenantNifValidation,
               lineItemsValidation: {
                 isValid: certaintyResult.lineItemsValidation.isValid,
                 totalLines: certaintyResult.lineItemsValidation.totalLines,

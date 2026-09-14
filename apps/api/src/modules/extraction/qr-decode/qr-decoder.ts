@@ -111,6 +111,30 @@ export async function autoOrientImage(
     if (logger) logger.warn(`[autoOrientImage] ${msg}`);
   };
   if (!/^image\//i.test(mime)) return buffer;
+
+  // Sharp libvips pipeline de alta velocidade: auto-orientação EXIF + rotação landscape-to-portrait + contraste
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sharp = require('sharp');
+    let pipeline = sharp(buffer).rotate();
+    let intermediate = await pipeline.toBuffer();
+    const meta = await sharp(intermediate).metadata();
+
+    if (meta.width && meta.height && meta.width > meta.height * 1.12) {
+      log(`landscape image (${meta.width}x${meta.height}) — rotating 90° to portrait`);
+      intermediate = await sharp(intermediate).rotate(90).toBuffer();
+    }
+
+    const out = await sharp(intermediate)
+      .normalize()
+      .sharpen({ sigma: 1.2, m1: 0.8, m2: 2.0 })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+    return out;
+  } catch {
+    // Fallback gracioso para Jimp se sharp não estiver disponível
+  }
+
   const isJpeg = /^image\/(jpeg|jpg)$/i.test(mime);
   if (!isJpeg) return buffer;
 

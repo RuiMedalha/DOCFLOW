@@ -343,6 +343,11 @@ export class OutlookService {
             );
             totalProcessed++;
           }
+          this.logger.log(
+            `[OutlookService] Successfully ingested ${extracted.attachments.length} attachment(s) from '${msg.subject}'`,
+          );
+          // After processing: mark as read and move to Processado folder
+          await this.markAndMoveMessage(token, userPath, msg.id, processadoId);
         } else if (extracted.downloadLinks.length > 0) {
           // Links in body without direct attachments: register for review
           this.stats.pendingConfirmationLinks.unshift({
@@ -358,10 +363,13 @@ export class OutlookService {
           this.logger.log(
             `[OutlookService] Email '${msg.subject}' from ${msg.from?.emailAddress?.address} has ${extracted.downloadLinks.length} download links and no attachments — flagged for review`,
           );
+          await this.markAndMoveMessage(token, userPath, msg.id, processadoId);
+        } else {
+          this.logger.warn(
+            `[OutlookService] Email '${msg.subject}' (id: ${msg.id}) had no valid attachments or links — marked as read without moving`,
+          );
+          await this.markAsRead(token, userPath, msg.id);
         }
-
-        // After processing: mark as read and move to Processado folder
-        await this.markAndMoveMessage(token, userPath, msg.id, processadoId);
       } catch (err) {
         const msgError = `Message ${msg.id} processing failed: ${(err as Error).message}`;
         this.logger.error(msgError);
@@ -538,11 +546,20 @@ export class OutlookService {
       // Fetch full expanded item attachment if item is missing or not fully expanded
       let item = att.item;
       if (!item || !item.attachments) {
-        const expandUrl = `${GRAPH_BASE}/${userPath}/messages/${messageId}/attachments/${att.id}?$expand=microsoft.graph.itemAttachment/item($expand=attachments)`;
-        const res = await this.fetchWithAuth(expandUrl, token);
+        // In MS Graph OData, attachments belongs to microsoft.graph.message, not base outlookItem.
+        // Try casting to microsoft.graph.message/attachments first, then fallback to item expansion.
+        const expandUrlWithCast = `${GRAPH_BASE}/${userPath}/messages/${messageId}/attachments/${att.id}?$expand=microsoft.graph.itemAttachment/item($expand=microsoft.graph.message/attachments)`;
+        let res = await this.fetchWithAuth(expandUrlWithCast, token);
+        if (!res.ok) {
+          const fallbackUrl = `${GRAPH_BASE}/${userPath}/messages/${messageId}/attachments/${att.id}?$expand=microsoft.graph.itemAttachment/item`;
+          res = await this.fetchWithAuth(fallbackUrl, token);
+        }
         if (res.ok) {
           const detailed = (await res.json()) as any;
           item = detailed.item;
+        } else {
+          const errDetail = await res.text().catch(() => '');
+          this.logger.warn(`Failed to expand itemAttachment ${att.id} (${res.status}): ${errDetail}`);
         }
       }
 
@@ -652,6 +669,15 @@ export class OutlookService {
         body: JSON.stringify({ destinationId: processadoFolderId }),
       }).catch(() => undefined);
     }
+  }
+
+  private async markAsRead(token: string, userPath: string, messageId: string): Promise<void> {
+    const patchUrl = `${GRAPH_BASE}/${userPath}/messages/${messageId}`;
+    await this.fetchWithAuth(patchUrl, token, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isRead: true }),
+    }).catch(() => undefined);
   }
 
   private async resolveUserPath(token: string): Promise<string> {

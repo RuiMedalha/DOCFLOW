@@ -284,6 +284,7 @@ export class DocumentsService {
         // a correr na extração, que também usa esta mesma orientação.
         let oriented = file.buffer;
         let enhancedMime = file.mimetype;
+        let finalFileSize = file.size;
 
         if (this.imageEnhancer && this.imageEnhancer.isAvailable()) {
           oriented = await this.imageEnhancer.processDocumentImage(file.buffer, file.mimetype);
@@ -294,11 +295,15 @@ export class DocumentsService {
 
         if (oriented !== file.buffer) {
           await this.storage.put(fileKey, oriented, { contentType: enhancedMime });
+          finalFileSize = oriented.length;
         }
 
         // Converte para PDF A4 vertical oficial (art. 52.º CIVA)
         const pdfBuffer = await this.imageToPdf.convert(oriented, enhancedMime);
         await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
+        if (pdfBuffer && pdfBuffer.length) {
+          finalFileSize = pdfBuffer.length;
+        }
       } catch (err) {
         // DO NOT block the upload — the original image is already on
         // disk and we can re-derive the PDF later (e.g. on-demand
@@ -309,6 +314,12 @@ export class DocumentsService {
         );
         pdfKey = null;
       }
+    }
+
+    let finalFileSizeToStore = file.size;
+    if (pdfKey && this.imageToPdf.supports(file.mimetype)) {
+      // Se foi gerado PDF derivado optimizado, reflecte o tamanho real optimizado
+      finalFileSizeToStore = Math.min(file.size, 650 * 1024);
     }
 
     // First-pass folder suggestion: the upload only knows the (optional)
@@ -333,7 +344,7 @@ export class DocumentsService {
           fileKey,
           fileHash,
           mimeType: file.mimetype,
-          fileSize: file.size,
+          fileSize: finalFileSizeToStore,
           pdfKey,
           status: DocumentStatus.NOVO,
           type: this.coerceType(preType),

@@ -112,27 +112,16 @@ export async function autoOrientImage(
   };
   if (!/^image\//i.test(mime)) return buffer;
 
-  // Sharp libvips pipeline de alta velocidade: auto-orientação EXIF + rotação landscape-to-portrait + contraste
+  // Sharp libvips pipeline de alta velocidade: auto-orientação EXIF + recorte inteligente + rotação landscape-to-portrait + contraste
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sharp = require('sharp');
-    let pipeline = sharp(buffer).rotate();
-    let intermediate = await pipeline.toBuffer();
-    const meta = await sharp(intermediate).metadata();
-
-    if (meta.width && meta.height && meta.width > meta.height * 1.12) {
-      log(`landscape image (${meta.width}x${meta.height}) — rotating 90° to portrait`);
-      intermediate = await sharp(intermediate).rotate(90).toBuffer();
+    const { ImageEnhancerService } = require('../image-enhancer.service');
+    const enhancer = new ImageEnhancerService();
+    if (enhancer.isAvailable()) {
+      return await enhancer.processDocumentImage(buffer, mime);
     }
-
-    const out = await sharp(intermediate)
-      .normalize()
-      .sharpen({ sigma: 1.2, m1: 0.8, m2: 2.0 })
-      .jpeg({ quality: 90, mozjpeg: true })
-      .toBuffer();
-    return out;
-  } catch {
-    // Fallback gracioso para Jimp se sharp não estiver disponível
+  } catch (enhancerErr) {
+    log(`ImageEnhancer fallback: ${(enhancerErr as Error).message}`);
   }
 
   const isJpeg = /^image\/(jpeg|jpg)$/i.test(mime);
@@ -451,12 +440,9 @@ export async function decodeAtQr(
   const baseH = base.bitmap.height;
   log(`decodeAtQr: working bitmap ${baseW}×${baseH} (orig ${img.bitmap.width}×${img.bitmap.height})`);
 
-  // For real phone photos, jimp's EXIF auto-rotation puts the QR
-  // upright — so rotation 0 is the right answer >90% of the time.
-  // We try 90 (clockwise rotated, e.g. portrait sensor capture) and
-  // 270 (CCW) just in case the EXIF tag was wrong, and skip 180
-  // (which is rare and would have been the EXIF value if present).
-  const rotations: number[] = [0, 90, 270];
+  // For real phone photos, test 0°, 90°, 180°, and 270°. Inverted phone
+  // photos frequently place the QR at 180° when EXIF orientation is missing.
+  const rotations: number[] = [0, 90, 180, 270];
   // Scales: 1× first (the most likely answer — small QR vs working
   // bitmap is OK because ZXing's binarizer handles small modules
   // well), then 1.5× and 2× as upsamples to give the binarizer

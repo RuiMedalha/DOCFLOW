@@ -941,7 +941,7 @@ export class ExtractionService implements OnModuleDestroy {
     // supplier row. Skipped when the document is already linked to a
     // Party — that means the operator verified/corrected earlier and
     // we MUST NOT overwrite.
-    let resolvedPartyFromNif: { id: string; isRecurring: boolean } | null = null;
+    let resolvedPartyFromNif: { id: string; isRecurring: boolean; name?: string } | null = null;
     if (!doc.partyId) {
       try {
         const resolved = await this.resolveSupplierByNif(
@@ -962,7 +962,7 @@ export class ExtractionService implements OnModuleDestroy {
             ],
           };
           if (resolved.partyId) {
-            resolvedPartyFromNif = { id: resolved.partyId, isRecurring: false };
+            resolvedPartyFromNif = { id: resolved.partyId, isRecurring: false, name: resolved.supplier };
           }
         }
       } catch (err) {
@@ -1289,6 +1289,10 @@ export class ExtractionService implements OnModuleDestroy {
       // directly and skip SupplierResolver (avoids creating a duplicate
       // row keyed on the swapped-out fields).
       updateData.party = { connect: { id: resolvedPartyFromNif.id } };
+      if (resolvedPartyFromNif.name && (!updateData.supplier || !String(updateData.supplier).trim())) {
+        updateData.supplier = resolvedPartyFromNif.name;
+        fields.supplier = resolvedPartyFromNif.name;
+      }
       supplierReviewFlag = false;
       supplierResolveReason = "party-resolved-by-nif";
     } else if (this.supplierResolver && !doc.partyId) {
@@ -1316,6 +1320,10 @@ export class ExtractionService implements OnModuleDestroy {
         });
         if (resolved.party) {
           updateData.party = { connect: { id: resolved.party.id } };
+          if (resolved.party.name && (!updateData.supplier || !String(updateData.supplier).trim())) {
+            updateData.supplier = resolved.party.name;
+            fields.supplier = resolved.party.name;
+          }
           // For foreign EU suppliers, trigger VIES validateParty in background to ensure Party has official VIES data
           if (this.vies && (fields.country && fields.country !== 'PT' || fields.supplierVatId && !/^PT/i.test(fields.supplierVatId))) {
             this.vies.validateParty(tenantId, resolved.party.id).catch((viesErr) => {
@@ -1343,21 +1351,17 @@ export class ExtractionService implements OnModuleDestroy {
       resolvedPartyFromNif?.id ??
       doc.partyId ??
       null;
-    if (
-      targetPartyId &&
-      (fields.supplierAddress ||
-        fields.supplierPhone ||
-        fields.supplierEmail ||
-        fields.supplierWebsite ||
-        fields.supplierPostalCode ||
-        fields.supplierCity)
-    ) {
+    if (targetPartyId) {
       try {
         const existingParty = await this.prisma.party.findUnique({
           where: { id: targetPartyId },
-          select: { address: true, city: true, postalCode: true, phone: true, email: true, website: true },
+          select: { name: true, address: true, city: true, postalCode: true, phone: true, email: true, website: true },
         });
         if (existingParty) {
+          if (existingParty.name && (!updateData.supplier || !String(updateData.supplier).trim())) {
+            updateData.supplier = existingParty.name;
+            fields.supplier = existingParty.name;
+          }
           const partyUpdates: Record<string, string> = {};
           if (
             (!existingParty.address || /^[-–—\s/.]+$/.test(existingParty.address.trim())) &&

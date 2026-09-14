@@ -53,7 +53,7 @@ export interface SupplierResolveInput {
  */
 export interface SupplierResolveResult {
   /** Resolved Party row (existing or newly created). null on failure. */
-  party: { id: string; isRecurring: boolean } | null;
+  party: { id: string; isRecurring: boolean; name?: string } | null;
   /**
    * Whether the document needs the user to confirm the supplier.
    * True when the AI confidence was low (< 0.8) OR the NIF/VAT was
@@ -426,7 +426,7 @@ export class SupplierResolver {
       const isRecurring = await this.refreshRecurringFlag(tenantId, partyRow.id, 1);
 
       return {
-        party: { id: partyRow.id, isRecurring },
+        party: { id: partyRow.id, isRecurring, name: partyRow.name },
         supplierReview,
         reason: existing ? "found" : supplierReview ? "created_review" : "created",
       };

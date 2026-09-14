@@ -61,6 +61,7 @@ const FISCAL_OPTIONS: Array<{ value: '' | FiscalStatus; label: string }> = [
   { value: 'FISCAL', label: FISCAL_STATUS_LABEL.FISCAL },
   { value: 'NAO_FISCAL', label: FISCAL_STATUS_LABEL.NAO_FISCAL },
   { value: 'INDETERMINADO', label: FISCAL_STATUS_LABEL.INDETERMINADO },
+  { value: 'NAO_APLICAVEL', label: FISCAL_STATUS_LABEL.NAO_APLICAVEL },
 ];
 
 export function DocumentFilters({

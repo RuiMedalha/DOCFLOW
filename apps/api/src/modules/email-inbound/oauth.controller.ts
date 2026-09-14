@@ -86,40 +86,25 @@ export class OAuthController {
 
   @Get('oauth/microsoft')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Start Outlook OAuth (returns authorize URL)' })
-  async microsoftAuth(@CurrentTenant() tenant: TenantRequestContext) {
-    const { authUrl, state } = await this.outlook.generateAuthUrl(
-      tenant.tenantId,
-      tenant.userId,
+  @ApiOperation({ summary: 'Start Outlook OAuth (disabled — client credentials active)' })
+  async microsoftAuth(@CurrentTenant() _tenant: TenantRequestContext) {
+    throw new BadRequestException(
+      'O login interativo do Outlook está desativado para evitar conexões duplicadas. O DocFlow utiliza o conector de aplicação Microsoft Graph (financeiro@hotelequip.pt) para ingestão contínua.',
     );
-    return { authUrl, state };
   }
 
   @Public()
   @Get('oauth/microsoft/callback')
   @HttpCode(302)
   @Redirect()
-  @ApiOperation({ summary: 'Outlook OAuth callback (browser redirect)' })
+  @ApiOperation({ summary: 'Outlook OAuth callback (disabled)' })
   async microsoftCallback(
-    @Query('code') code: string | undefined,
-    @Query('state') state: string | undefined,
+    @Query('code') _code: string | undefined,
+    @Query('state') _state: string | undefined,
     @Res() res: Response,
   ) {
-    if (!code || !state) throw new BadRequestException('Missing code/state');
-    const session = await this.oauthStates.consume('outlook', state);
-    if (!session) {
-      throw new UnauthorizedException('Invalid or expired OAuth state');
-    }
-    try {
-      await this.outlook.handleCallback(code, state, session.tenantId, 'system');
-    } catch (err) {
-      this.logger.error(`Outlook callback failed: ${(err as Error).message}`);
-      return res.redirect(
-        `${this.frontendBase()}/documents?tab=email&connected=outlook&error=callback`,
-      );
-    }
     return res.redirect(
-      `${this.frontendBase()}/documents?tab=email&connected=outlook`,
+      `${this.frontendBase()}/documents?tab=email&error=outlook_oauth_disabled`,
     );
   }
 
@@ -160,27 +145,36 @@ export class OAuthController {
         credentials: true,
       },
     });
+    const graphStats = this.outlook.getStats();
+    const isGraphConfigured = Boolean(this.outlook.clientSecret);
+
     const out: Record<string, { connected: boolean; email?: string; lastSyncAt?: Date | null; lastSyncStatus?: string | null }> = {
       google: { connected: false },
-      microsoft: { connected: false },
+      microsoft: {
+        connected: isGraphConfigured,
+        email: isGraphConfigured ? this.outlook.mailbox : undefined,
+        lastSyncAt: graphStats.lastRunAt,
+        lastSyncStatus: graphStats.lastRunStatus,
+      },
     };
     for (const row of rows) {
-      const key = row.provider === 'gmail' ? 'google' : 'microsoft';
-      let email: string | undefined;
-      if (row.isActive) {
-        try {
-          const creds = decryptJson<{ email?: string }>(String(row.credentials));
-          email = creds.email;
-        } catch {
-          email = undefined;
+      if (row.provider === 'gmail') {
+        let email: string | undefined;
+        if (row.isActive) {
+          try {
+            const creds = decryptJson<{ email?: string }>(String(row.credentials));
+            email = creds.email;
+          } catch {
+            email = undefined;
+          }
         }
+        out.google = {
+          connected: row.isActive && process.env.GMAIL_ENABLED === 'true',
+          email,
+          lastSyncAt: row.lastSyncAt,
+          lastSyncStatus: row.lastSyncStatus,
+        };
       }
-      out[key] = {
-        connected: row.isActive,
-        email,
-        lastSyncAt: row.lastSyncAt,
-        lastSyncStatus: row.lastSyncStatus,
-      };
     }
     return out;
   }

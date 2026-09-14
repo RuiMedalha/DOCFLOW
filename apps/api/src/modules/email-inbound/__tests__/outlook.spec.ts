@@ -1,161 +1,175 @@
+import { BadRequestException } from '@nestjs/common';
 import { DocumentOrigin } from '@prisma/client';
 import { OutlookService } from '../outlook.service';
-import { encryptJson } from '../oauth-crypto';
 
 /**
- * Tests for OutlookService — Microsoft Identity Platform OAuth +
- * Microsoft Graph polling. Mirrors the Gmail test surface for
- * consistency between the two providers.
+ * Tests for OutlookService — Microsoft Graph Inbound with Client Credentials
+ * and ApplicationAccessPolicy targeting financeiro@hotelequip.pt.
  */
-
-const TENANT = 'tenant-outlook';
-
-function makeFixture() {
-  const integrations = new Map<string, any>();
-  integrations.set(`outlook:${TENANT}`, {
-    tenantId: TENANT,
-    provider: 'outlook',
-    credentials: encryptJson({
-      accessToken: 'stale',
-      refreshToken: 'refresh-1',
-      expiresAt: Date.now() - 1000 * 1000, // expired — forces refresh
-      email: 'me@example.com',
-    }),
-    isActive: true,
-  });
-
-  const prisma = {
-    integration: {
-      findUnique: jest.fn(async ({ where }: any) =>
-        integrations.get(`${where.tenantId_provider.provider}:${where.tenantId_provider.tenantId}`) ?? null,
-      ),
-      update: jest.fn(async ({ where, data }: any) => {
-        const row = integrations.get(`${where.tenantId_provider.provider}:${where.tenantId_provider.tenantId}`);
-        if (!row) throw new Error('not found');
-        Object.assign(row, data);
-        return row;
-      }),
-    },
-  } as any;
-
-  const ingestCalls: any[] = [];
-  const inbound = {
-    ingestFiles: jest.fn(async (...args: any[]) => {
-      ingestCalls.push(args);
-      return [{ id: 'doc-1' }];
-    }),
-  } as any;
-
-  return { prisma, integrations, ingestCalls, inbound };
-}
-
-describe('OutlookService.handleCallback', () => {
-  beforeEach(() => {
-    process.env.MICROSOFT_CLIENT_ID = 'cid';
-    process.env.MICROSOFT_CLIENT_SECRET = 'csecret';
-    process.env.MICROSOFT_REDIRECT_URI = 'http://localhost:4000/callback';
-    process.env.INTEGRATION_ENC_KEY = 'integration-secret-key';
-  });
-
-  it('persists Outlook tokens encrypted', async () => {
-    const fetchMock = jest.fn().mockImplementation(async (url: any) => {
-      const urlStr = String(url);
-      if (urlStr.includes('login.microsoftonline.com/common/oauth2/v2.0/token')) {
-        return new Response(
-          JSON.stringify({
-            access_token: 'outlook-access',
-            refresh_token: 'outlook-refresh',
-            expires_in: 3600,
-            scope: 'Mail.Read',
-          }),
-          { status: 200 },
-        );
-      }
-      if (urlStr.includes('graph.microsoft.com/v1.0/me') && urlStr.endsWith('/me')) {
-        return new Response(
-          JSON.stringify({ mail: 'me@example.com' }),
-          { status: 200 },
-        );
-      }
-      return new Response('not found', { status: 404 });
-    });
-
-    (globalThis as any).fetch = fetchMock;
-
-    const upsert = jest.fn(async () => undefined);
-    const prisma = {
-      integration: {
-        findUnique: jest.fn(async () => null),
-        upsert,
-        update: jest.fn(),
-      },
-    } as any;
-    const inbound = { ingestFiles: jest.fn() } as any;
-    const oauthStates = { put: jest.fn() } as any;
-    const service = new OutlookService(prisma, oauthStates, inbound);
-    const out = await service.handleCallback('code', 'state', TENANT, 'user-1');
-    expect(out.provider).toBe('outlook');
-    expect(upsert).toHaveBeenCalled();
-  });
-});
-
-describe('OutlookService.pollTenant', () => {
+describe('OutlookService — Client Credentials & Single Channel Policy', () => {
+  let service: OutlookService;
+  let prismaMock: any;
+  let inboundMock: any;
   let originalFetch: any;
+
   beforeEach(() => {
     originalFetch = (globalThis as any).fetch;
-    process.env.INTEGRATION_ENC_KEY = 'integration-secret-key';
+    process.env.MS_TENANT_ID = 'f27c295b-2490-4101-9ae3-6db45ffd9489';
+    process.env.MS_CLIENT_ID = '0dcb16b8-3214-49c2-ab13-80c7e07fa332';
+    process.env.MS_CLIENT_SECRET = 'test-client-secret';
+    process.env.MS_MAILBOX = 'financeiro@hotelequip.pt';
+    process.env.MS_MAIL_FOLDER = 'Faturas';
+
+    prismaMock = {
+      tenant: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tenant-123', nif: '515208566' }),
+      },
+    };
+
+    inboundMock = {
+      ingestFiles: jest.fn().mockResolvedValue([{ id: 'doc-1' }]),
+    };
+
+    service = new OutlookService(prismaMock, inboundMock);
   });
+
   afterEach(() => {
     (globalThis as any).fetch = originalFetch;
   });
 
-  it('ingests unread attachments as OUTLOOK origin', async () => {
-    const listJson = {
-      value: [
-        { id: 'AAMkAD', conversationId: 'conv-1', subject: 'Invoice' },
-      ],
-    };
-    const attachmentList = {
-      value: [
-        {
-          '@odata.type': '#microsoft.graph.fileAttachment',
-          id: 'att-1',
-          name: 'invoice.pdf',
-          contentType: 'application/pdf',
-          size: 128,
-        },
-      ],
-    };
-    // PDF bytes — buffer returned
-    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
-
-    const refreshJson = { access_token: 'fresh', expires_in: 3600 };
-
-    const fetchMock = jest.fn().mockImplementation(async (url: any) => {
-      const urlStr = String(url);
-      if (urlStr.includes('login.microsoftonline.com')) {
-        return new Response(JSON.stringify(refreshJson), { status: 200 });
-      }
-      if (urlStr.includes('/me/messages?') || urlStr.includes('/me/messages&')) {
-        return new Response(JSON.stringify(listJson), { status: 200 });
-      }
-      if (urlStr.endsWith('/AAMkAD/attachments')) {
-        return new Response(JSON.stringify(attachmentList), { status: 200 });
-      }
-      if (urlStr.endsWith('/AAMkAD/attachments/att-1/$value')) {
-        return new Response(pdfBytes, { status: 200 });
-      }
-      return new Response('{}', { status: 404 });
+  describe('Single-Channel Policy: Delegated OAuth Deactivated', () => {
+    it('generateAuthUrl throws BadRequestException', async () => {
+      await expect(service.generateAuthUrl('tenant-1', 'user-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
-    (globalThis as any).fetch = fetchMock;
 
-    const { prisma, ingestCalls, inbound } = makeFixture();
-    const oauthStates = { put: jest.fn() } as any;
-    const service = new OutlookService(prisma, oauthStates, inbound);
-    const out = await service.pollTenant(TENANT);
-    expect(out.processed).toBe(1);
-    expect(ingestCalls).toHaveLength(1);
-    expect(ingestCalls[0][2]).toBe(DocumentOrigin.OUTLOOK);
-    expect((ingestCalls[0][3] as any).source).toBe('outlook-poller');
+    it('handleCallback throws BadRequestException', async () => {
+      await expect(service.handleCallback('code', 'state', 'tenant-1', 'user-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('Client Credentials Token', () => {
+    it('obtains and caches an application bearer token', async () => {
+      (globalThis as any).fetch = jest.fn().mockImplementation(async (url: any) => {
+        if (String(url).includes('/oauth2/v2.0/token')) {
+          return new Response(
+            JSON.stringify({
+              access_token: 'test-app-token',
+              expires_in: 3600,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const token1 = await service.getAccessToken();
+      expect(token1).toBe('test-app-token');
+
+      // Second call uses memory cache
+      const token2 = await service.getAccessToken();
+      expect(token2).toBe('test-app-token');
+      expect((globalThis as any).fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Mailbox Polling & Attachment Ingestion (Faturas -> Faturas/Processado)', () => {
+    it('reads messages in Faturas, extracts attachments, marks as read and moves to Processado', async () => {
+      const calls: string[] = [];
+
+      (globalThis as any).fetch = jest.fn().mockImplementation(async (url: any, init: any) => {
+        const u = String(url);
+        calls.push(`${init?.method || 'GET'} ${u}`);
+
+        if (u.includes('/oauth2/v2.0/token')) {
+          return new Response(JSON.stringify({ access_token: 'token-xyz', expires_in: 3600 }), {
+            status: 200,
+          });
+        }
+        if (u.endsWith('/users/financeiro%40hotelequip.pt')) {
+          return new Response(JSON.stringify({ id: 'user-id-1' }), { status: 200 });
+        }
+        // Faturas folder resolution
+        if (u.includes('/mailFolders') && !u.includes('/messages') && !u.includes('/childFolders')) {
+          return new Response(
+            JSON.stringify({
+              value: [
+                { id: 'inbox-id', displayName: 'Inbox' },
+                { id: 'faturas-id', displayName: 'Faturas' },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        // Child folders in Faturas (Processado)
+        if (u.includes('/faturas-id/childFolders')) {
+          return new Response(
+            JSON.stringify({
+              value: [{ id: 'processado-id', displayName: 'Processado' }],
+            }),
+            { status: 200 },
+          );
+        }
+        // Unread messages in Faturas folder
+        if (u.includes('/faturas-id/messages')) {
+          return new Response(
+            JSON.stringify({
+              value: [
+                {
+                  id: 'msg-1',
+                  subject: 'Fatura Fornecedor XYZ',
+                  receivedDateTime: '2026-09-14T09:00:00Z',
+                  from: { emailAddress: { address: 'fornecedor@xyz.com' } },
+                  attachments: [
+                    {
+                      '@odata.type': '#microsoft.graph.fileAttachment',
+                      id: 'att-1',
+                      name: 'FT2026_001.pdf',
+                      contentType: 'application/pdf',
+                      size: 1024,
+                      contentBytes: Buffer.from('dummy-pdf-content').toString('base64'),
+                    },
+                  ],
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        // Mark as read PATCH
+        if (u.includes('/messages/msg-1') && init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ isRead: true }), { status: 200 });
+        }
+        // Move message POST
+        if (u.includes('/messages/msg-1/move') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ id: 'msg-1-moved' }), { status: 200 });
+        }
+
+        return new Response('{}', { status: 200 });
+      });
+
+      const res = await service.pollMailbox('tenant-123');
+      expect(res.processed).toBe(1);
+      expect(inboundMock.ingestFiles).toHaveBeenCalledWith(
+        'tenant-123',
+        expect.arrayContaining([
+          expect.objectContaining({
+            originalname: 'FT2026_001.pdf',
+            mimetype: 'application/pdf',
+          }),
+        ]),
+        DocumentOrigin.EMAIL,
+        expect.objectContaining({
+          originalSender: 'fornecedor@xyz.com',
+          originalSubject: 'Fatura Fornecedor XYZ',
+        }),
+      );
+
+      // Verify move to Processado folder was called
+      expect(calls.some((c) => c.includes('POST') && c.includes('/messages/msg-1/move'))).toBe(true);
+    });
   });
 });

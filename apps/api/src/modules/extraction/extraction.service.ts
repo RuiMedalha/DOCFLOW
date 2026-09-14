@@ -1155,6 +1155,15 @@ export class ExtractionService implements OnModuleDestroy {
     // only contributed the *inputs* (supplier NIF/VAT, doc number, date,
     // raw document type); whether the document is FISCAL is decided by the
     // QR-AT (real decode only) and by deterministic keyword rules.
+    let tenantIdentity: TenantIdentity | undefined;
+    try {
+      tenantIdentity = await getTenantIdentity(this.prisma, tenantId);
+    } catch (err) {
+      this.logger.warn(
+        `[processDocumentAsync] getTenantIdentity failed for tenant=${tenantId}: ${(err as Error).message}`,
+      );
+    }
+
     const fiscal = classifyFiscalStatus({
       qr: parsedForFiscal
         ? {
@@ -1183,6 +1192,8 @@ export class ExtractionService implements OnModuleDestroy {
         ...(fields.hints ?? []).filter((h) => /^(aiDocType|documentType|aiDocumentType|aiDocTitle):/i.test(h)),
       ].join(String.fromCharCode(10)),
       viesValidated: viesValidatedForDoc,
+      tenantNif: tenantIdentity?.tenantNif,
+      customerNif: fields.customerNif ?? null,
     });
     // ── Fase 4.1 (P2.2) — a correção manual do operador manda ────────
     // Quem marcou um documento como não fiscal (ou lhe corrigiu o tipo)
@@ -1202,7 +1213,8 @@ export class ExtractionService implements OnModuleDestroy {
     } else {
       (updateData as Record<string, unknown>).fiscalStatus = fiscal.fiscalStatus;
       (updateData as Record<string, unknown>).fiscalReason = fiscal.reason;
-      (updateData as Record<string, unknown>).isNonFiscalDoc = fiscal.fiscalStatus === "NAO_FISCAL";
+      (updateData as Record<string, unknown>).isNonFiscalDoc =
+        fiscal.fiscalStatus === "NAO_FISCAL" || fiscal.fiscalStatus === "NAO_APLICAVEL";
       if (isExplicitReextract || hasAuthoritativeQr) {
         (updateData as Record<string, unknown>).fiscalStatusManualOverride = false;
       }
@@ -1635,13 +1647,14 @@ export class ExtractionService implements OnModuleDestroy {
       }
     }
 
-    let tenantIdentity: TenantIdentity | undefined;
-    try {
-      tenantIdentity = await getTenantIdentity(this.prisma, tenantId);
-    } catch (err) {
-      this.logger.warn(
-        `[processDocumentAsync] getTenantIdentity failed for tenant=${tenantId}: ${(err as Error).message}`,
-      );
+    if (!tenantIdentity) {
+      try {
+        tenantIdentity = await getTenantIdentity(this.prisma, tenantId);
+      } catch (err) {
+        this.logger.warn(
+          `[processDocumentAsync] getTenantIdentity failed for tenant=${tenantId}: ${(err as Error).message}`,
+        );
+      }
     }
 
     // ── Validação Aritmética, Fiscal e Motor de Certainty Score (Fase 5) ──

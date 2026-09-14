@@ -83,6 +83,40 @@ describe("Fase 3 — fiscal status rules (deterministic)", () => {
       reason: "no_qr_at",
     });
   });
+
+  it("P0.2 — marks as NAO_APLICAVEL when own company NIF (515208566) is the issuer/vendor", () => {
+    const out = classifyFiscalStatus({
+      supplierNif: "515208566",
+      tenantNif: "515208566",
+      docNumber: "FT 2026/10",
+      docDate: "2026-03-01",
+    });
+    expect(out.fiscalStatus).toBe("NAO_APLICAVEL");
+    expect(out.reason).toBe("own_company_is_issuer:515208566");
+  });
+
+  it("P0.2 — marks customer order with own company NIF as NAO_APLICAVEL", () => {
+    const out = classifyFiscalStatus({
+      text: "Nota de Encomenda de Cliente nº 88",
+      supplierNif: "515208566",
+      tenantNif: "515208566",
+      docNumber: "88",
+      docDate: "2026-03-01",
+    });
+    expect(out.fiscalStatus).toBe("NAO_APLICAVEL");
+    expect(out.documentType).toBe("ENCOMENDA");
+  });
+
+  it("P0.2 — keeps purchase circuit normal when own company is the buyer", () => {
+    const out = classifyFiscalStatus({
+      qr: VALID_QR,
+      qrOrigin: "zxing",
+      supplierNif: "500842019",
+      customerNif: "515208566",
+      tenantNif: "515208566",
+    });
+    expect(out.fiscalStatus).toBe("FISCAL");
+  });
 });
 
 describe("Fase 3 — normalizeDocNumber (fiscal key)", () => {

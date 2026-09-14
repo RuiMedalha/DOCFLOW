@@ -45,6 +45,7 @@ enum DocumentOrigin {
   GMAIL
   OUTLOOK
   INBOUND_WEBHOOK
+  ONEDRIVE
 }
 
 enum DocumentType {
@@ -58,24 +59,27 @@ enum DocumentType {
   GUIA_TRANSPORTE
   OUTRO
   // Fase 3 — tipos não fiscais / simplificados detetados de forma
-  // determinística (palavras-chave ou código D: do QR-AT).
+  // determinística pelo classificador (fiscal-status.ts).
   PROFORMA
   ORCAMENTO
   AVISO_PAGAMENTO
   EXTRATO_FORNECEDOR
   FATURA_SIMPLIFICADA
+  FATURA_RECIBO
 }
 
-// Fase 3 — validade fiscal determinística (ver extraction/fiscal-status.ts).
+// Fase 3 — validade fiscal de um documento (determinística, nunca IA).
 //   FISCAL         QR-AT válido (NIF emitente mod-11, ATCUD, Q e R) ou fatura
 //                  estrangeira com NIF-IVA validado no VIES + nº + data
 //   NAO_FISCAL     proforma / orçamento / aviso / extrato — nunca vai ao TOC
 //                  nem entra no IVA
 //   INDETERMINADO  tudo o resto → revisão
+//   NAO_APLICAVEL  documento com NIF da própria empresa como emitente (encomenda de cliente / fatura emitida)
 enum FiscalStatus {
   FISCAL
   NAO_FISCAL
   INDETERMINADO
+  NAO_APLICAVEL
 }
 
 // Fase 4 — regime de IVA do fornecedor (determina autoliquidação / dedução).

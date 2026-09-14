@@ -1,28 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GmailService } from './gmail.service';
 import { OutlookService } from './outlook.service';
 
 /**
- * PollerService — every-5-minutes cron that iterates every active
- * `Integration(provider IN ['gmail','outlook'])` and calls the
- * relevant `pollTenant()`.
+ * PollerService — cron poller for automated email and cloud document ingestion.
  *
- * Each per-tenant `lastSyncAt` is updated by the provider services, so
- * a retry of the same run won't double-process. `lastSyncStatus` in the
- * `Integration` row holds the previous successful sync marker.
- *
- * Concurrency: Gmail and Outlook are polled in parallel
- * (`Promise.allSettled`) so a slow/hung provider does not starve the
- * other. Each provider has its own in-progress flag so a re-entrant
- * tick can't double-schedule the same workload.
+ * Single-channel policy (Fase B2):
+ *   - Microsoft Graph Client Credentials (financeiro@hotelequip.pt) via OutlookService runs
+ *     every 2 minutes. This ingests both the Faturas folder and OneDrive (/DocFlow/Entrada).
+ *   - Interactive Outlook OAuth polling is disabled to avoid dual connections.
+ *   - Gmail polling is deactivated unless explicitly enabled via GMAIL_ENABLED=true.
  */
 @Injectable()
 export class PollerService {
   private readonly logger = new Logger(PollerService.name);
-  private gmailRunning = false;
   private outlookRunning = false;
+  private gmailRunning = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -30,40 +25,43 @@ export class PollerService {
     private readonly outlook: OutlookService,
   ) {}
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron('*/2 * * * *')
   async pollAll() {
-    if (this.gmailRunning || this.outlookRunning) {
-      this.logger.warn('email poller still running — skipping this tick');
+    if (this.outlookRunning) {
+      this.logger.warn('Microsoft Graph / Outlook poller still running — skipping tick');
       return;
     }
-    this.gmailRunning = true;
     this.outlookRunning = true;
     try {
-      await Promise.allSettled([
-        this.pollProvider('gmail'),
-        this.pollProvider('outlook'),
-      ]);
+      await this.outlook.pollAll();
+    } catch (err) {
+      this.logger.error(`Microsoft Graph / Outlook poller error: ${(err as Error).message}`);
     } finally {
-      this.gmailRunning = false;
       this.outlookRunning = false;
+    }
+
+    // Gmail: only poll if explicitly enabled (default: false / deactivated)
+    if (process.env.GMAIL_ENABLED === 'true' && !this.gmailRunning) {
+      this.gmailRunning = true;
+      try {
+        await this.pollGmailTenants();
+      } finally {
+        this.gmailRunning = false;
+      }
     }
   }
 
-  private async pollProvider(provider: 'gmail' | 'outlook'): Promise<void> {
+  private async pollGmailTenants(): Promise<void> {
     const integrations = await this.prisma.integration.findMany({
-      where: { provider, isActive: true },
+      where: { provider: 'gmail', isActive: true },
       select: { tenantId: true },
     });
     for (const integration of integrations) {
       try {
-        if (provider === 'gmail') {
-          await this.gmail.pollTenant(integration.tenantId);
-        } else {
-          await this.outlook.pollTenant(integration.tenantId);
-        }
+        await this.gmail.pollTenant(integration.tenantId);
       } catch (err) {
         this.logger.error(
-          `poller failed for ${provider}/${integration.tenantId}: ${(err as Error).message}`,
+          `gmail poller failed for tenant ${integration.tenantId}: ${(err as Error).message}`,
         );
       }
     }

@@ -4,21 +4,17 @@ import { InboundModule } from '../inbound/inbound.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { GmailService } from './gmail.service';
 import { OutlookService } from './outlook.service';
+import { MicrosoftGraphService } from './microsoft-graph.service';
 import { PollerService } from './poller.service';
 import { OAuthController } from './oauth.controller';
 
 /**
- * EmailInboundModule — Gmail + Outlook OAuth and polling.
+ * EmailInboundModule — Gmail + Outlook / Microsoft Graph ingestion.
  *
- * Imports:
- *   - `IntegrationsModule` — reuses `OAuthStateStore` (Prisma-backed,
- *     restart-safe CSRF state) and the existing `INTEGRATION_ENC_KEY`
- *     pattern.
- *   - `InboundModule` (via `forwardRef`) — calls `ingestFiles()` to
- *     persist PDF/PNG/JPG/DOCX attachments through the standard
- *     pipeline with `origin: GMAIL|OUTLOOK`.
- *
- * Exports the provider services for testing.
+ * Ingests documents automatically from:
+ *   - Microsoft Graph Client Credentials (financeiro@hotelequip.pt -> Faturas)
+ *   - OneDrive cloud folder (/DocFlow/Entrada)
+ *   - Gmail (when configured and GMAIL_ENABLED=true)
  */
 @Module({
   imports: [
@@ -27,7 +23,13 @@ import { OAuthController } from './oauth.controller';
     forwardRef(() => InboundModule),
   ],
   controllers: [OAuthController],
-  providers: [GmailService, OutlookService, PollerService],
-  exports: [GmailService, OutlookService],
+  providers: [
+    GmailService,
+    OutlookService,
+    { provide: MicrosoftGraphService, useExisting: OutlookService },
+    PollerService,
+  ],
+  exports: [GmailService, OutlookService, MicrosoftGraphService],
 })
 export class EmailInboundModule {}
+

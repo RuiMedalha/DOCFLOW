@@ -7,7 +7,12 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { DocumentOrigin, Prisma } from '@prisma/client';
+import {
+  DocumentOrigin,
+  DocumentProcessingStatus,
+  DocumentStatus,
+  Prisma,
+} from '@prisma/client';
 import { createHash, createHmac, createVerify, timingSafeEqual, verify } from 'node:crypto';
 import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { ImapFlow } from 'imapflow';
@@ -41,14 +46,12 @@ interface InboundDocumentsPort {
     file: InboundFile;
     origin: DocumentOrigin;
     metadata?: Prisma.InputJsonValue;
-  }): Promise<{ id: string; fileName: string }>;
+  }): Promise<{ id: string; fileName: string; isDuplicate?: boolean }>;
 }
 
 /**
- * Temporary adapter until src/modules/documents/DocumentsService is delivered.
- * Persists the file bytes via the injected StorageService (L2 fix) so the
- * download route can serve them. The canonical pipeline remains
- * DocumentsService.createFromInbound().
+ * Adapter persisting file bytes via StorageService and creating Document
+ * rows with SHA-256 deduplication and async processing pipeline status.
  */
 class PrismaInboundDocumentsAdapter implements InboundDocumentsPort {
   constructor(
@@ -61,26 +64,57 @@ class PrismaInboundDocumentsAdapter implements InboundDocumentsPort {
     file: InboundFile;
     origin: DocumentOrigin;
     metadata?: Prisma.InputJsonValue;
-  }): Promise<{ id: string; fileName: string }> {
+  }): Promise<{ id: string; fileName: string; isDuplicate?: boolean }> {
     const fileHash = createHash('sha256').update(input.file.buffer).digest('hex');
+
+    // SHA-256 deduplication check: same hash in tenant = duplicate
+    let existing = null;
+    if (this.prisma?.document?.findFirst) {
+      existing = await this.prisma.document.findFirst({
+        where: { tenantId: input.tenantId, fileHash },
+        select: { id: true, fileName: true },
+      });
+    }
+    if (existing) {
+      return { id: existing.id, fileName: existing.fileName, isDuplicate: true };
+    }
+
     const safeName = input.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileKey = `inbound/${input.tenantId}/${fileHash}-${safeName}`;
     await this.storage.put(fileKey, input.file.buffer, {
       contentType: input.file.mimetype,
     });
-    return this.prisma.document.create({
-      data: {
-        tenantId: input.tenantId,
-        fileName: input.file.originalname,
-        fileKey,
-        fileHash,
-        mimeType: input.file.mimetype,
-        fileSize: input.file.size,
-        origin: input.origin,
-        metadata: input.metadata,
-      },
-      select: { id: true, fileName: true },
-    });
+
+    try {
+      const doc = await this.prisma.document.create({
+        data: {
+          tenantId: input.tenantId,
+          fileName: input.file.originalname,
+          fileKey,
+          fileHash,
+          mimeType: input.file.mimetype,
+          fileSize: input.file.size,
+          origin: input.origin,
+          status: DocumentStatus.NOVO,
+          processingStatus: DocumentProcessingStatus.RECEIVED,
+          processingStartedAt: new Date(),
+          metadata: input.metadata,
+        },
+        select: { id: true, fileName: true },
+      });
+      return doc;
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002' && this.prisma?.document?.findFirst) {
+        const raceWinner = await this.prisma.document.findFirst({
+          where: { tenantId: input.tenantId, fileHash },
+          select: { id: true, fileName: true },
+        });
+        if (raceWinner) {
+          return { id: raceWinner.id, fileName: raceWinner.fileName, isDuplicate: true };
+        }
+      }
+      throw err;
+    }
   }
 }
 
@@ -492,20 +526,210 @@ export class InboundService {
         this.documents.createFromInbound({ tenantId, file, origin, metadata }),
       ),
     );
-    // Auto-trigger extraction on every inbound file. Failures are
-    // logged and never abort the ingest — extraction is best-effort.
+    // Auto-trigger extraction only on fresh, non-duplicate documents
     if (this.extraction) {
       for (const doc of created) {
-        this.extraction
-          .enqueue({ tenantId, userId: null, documentId: doc.id })
-          .catch((err) =>
-            this.logger.warn(
-              `auto-extract failed for ${doc.id}: ${(err as Error).message}`,
-            ),
-          );
+        if (!doc.isDuplicate) {
+          this.extraction
+            .enqueue({ tenantId, userId: null, documentId: doc.id })
+            .catch((err) =>
+              this.logger.warn(
+                `auto-extract failed for ${doc.id}: ${(err as Error).message}`,
+              ),
+            );
+        }
       }
     }
     return created;
+  }
+
+  /**
+   * Ingest documents directly from multipart uploads with an explicit origin.
+   */
+  async ingestDirectUpload(
+    tenantId: string,
+    files: Express.Multer.File[],
+    origin: DocumentOrigin = DocumentOrigin.UPLOAD,
+    metadata: Prisma.InputJsonValue = {},
+  ) {
+    const accepted = files
+      .map((file) => this.fromMulter(file))
+      .filter((file): file is InboundFile => file !== null);
+    if (accepted.length === 0) {
+      throw new BadRequestException('No supported files uploaded (expected PDF, JPEG, PNG, HEIC, DOCX)');
+    }
+    const docs = await this.ingestFiles(tenantId, accepted, origin, metadata);
+    return {
+      tenantId,
+      processed: docs.length,
+      documents: docs,
+    };
+  }
+
+  /**
+   * Ingest documents received via WhatsApp (Evolution API webhook or direct submission).
+   */
+  async ingestWhatsApp(
+    payload: Record<string, unknown>,
+    file?: Express.Multer.File,
+    tenantIdOverride?: string,
+  ) {
+    const tenant = await this.resolveTenantForWhatsApp(tenantIdOverride, payload);
+    const inboundFiles: InboundFile[] = [];
+    let sender = 'WhatsApp User';
+    let phone = 'Unknown';
+    let messageId: string | undefined;
+
+    if (file) {
+      const parsed = this.fromMulter(file);
+      if (parsed) inboundFiles.push(parsed);
+      sender = (payload.senderName || payload.sender || payload.name || sender) as string;
+      phone = (payload.phone || payload.from || phone) as string;
+      messageId = payload.messageId as string | undefined;
+    } else {
+      const extracted = await this.parseWhatsAppMediaPayload(payload);
+      if (extracted.file) {
+        inboundFiles.push(extracted.file);
+      }
+      sender = extracted.senderName || sender;
+      phone = extracted.phone || phone;
+      messageId = extracted.messageId;
+    }
+
+    if (inboundFiles.length === 0) {
+      throw new BadRequestException('No supported media attachment found in WhatsApp payload');
+    }
+
+    const metadata: Prisma.InputJsonValue = {
+      source: 'whatsapp-evolution',
+      phone,
+      senderName: sender,
+      messageId,
+      receivedAt: new Date().toISOString(),
+    };
+
+    const documents = await this.ingestFiles(tenant.id, inboundFiles, DocumentOrigin.WHATSAPP, metadata);
+    return {
+      tenantId: tenant.id,
+      processed: documents.length,
+      documents,
+    };
+  }
+
+  /**
+   * Parses Evolution API webhook payload (events like messages.upsert)
+   * or raw base64 submissions.
+   */
+  private async parseWhatsAppMediaPayload(payload: Record<string, unknown>): Promise<{
+    file: InboundFile | null;
+    phone?: string;
+    senderName?: string;
+    messageId?: string;
+  }> {
+    const rawData = (payload.data || payload) as Record<string, any>;
+    const key = rawData.key || {};
+    const messageId = key.id || (payload.messageId as string | undefined);
+    const rawJid = key.remoteJid || (payload.phone as string) || (payload.from as string) || '';
+    const phone = rawJid.replace('@s.whatsapp.net', '').trim();
+    const senderName = rawData.pushName || (payload.senderName as string) || (payload.sender as string) || phone;
+
+    // 1. Direct base64 payload
+    const directBase64 = payload.base64 || rawData.base64 || rawData.message?.base64;
+    if (typeof directBase64 === 'string') {
+      const buffer = Buffer.from(directBase64, 'base64');
+      const filename = (payload.fileName || rawData.fileName || 'whatsapp-doc.pdf') as string;
+      const mimetype = (payload.mimetype || rawData.mimetype || 'application/pdf') as string;
+      const validated = this.validateFile({ buffer, originalname: filename, mimetype, size: buffer.length });
+      return { file: validated, phone, senderName, messageId };
+    }
+
+    // 2. Evolution API messages.upsert structure
+    const msg = rawData.message || {};
+    const docMsg =
+      msg.documentMessage ||
+      msg.documentWithCaptionMessage?.message?.documentMessage ||
+      msg.imageMessage;
+
+    if (docMsg) {
+      const filename = docMsg.fileName || docMsg.title || (docMsg.mimetype?.includes('image') ? 'whatsapp-image.jpg' : 'whatsapp-invoice.pdf');
+      const mimetype = docMsg.mimetype || (filename.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+
+      // If Evolution API provided base64 in media message
+      if (docMsg.base64) {
+        const buffer = Buffer.from(docMsg.base64, 'base64');
+        const validated = this.validateFile({ buffer, originalname: filename, mimetype, size: buffer.length });
+        return { file: validated, phone, senderName, messageId };
+      }
+
+      // If Evolution API provided a download URL
+      if (docMsg.url && typeof docMsg.url === 'string') {
+        try {
+          const res = await fetch(docMsg.url, { signal: AbortSignal.timeout(15000) });
+          if (res.ok) {
+            const buffer = Buffer.from(await res.arrayBuffer());
+            const validated = this.validateFile({ buffer, originalname: filename, mimetype, size: buffer.length });
+            return { file: validated, phone, senderName, messageId };
+          }
+        } catch (err) {
+          this.logger.warn(`Failed to download WhatsApp media from ${docMsg.url}: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    return { file: null, phone, senderName, messageId };
+  }
+
+  private async resolveTenantForWhatsApp(
+    tenantIdOverride?: string,
+    payload?: Record<string, unknown>,
+  ): Promise<{ id: string }> {
+    if (tenantIdOverride) {
+      const t = await this.prisma.tenant.findUnique({ where: { id: tenantIdOverride } });
+      if (t?.active) return t;
+    }
+    const fromPayload = payload?.tenantId as string | undefined;
+    if (fromPayload) {
+      const t = await this.prisma.tenant.findUnique({ where: { id: fromPayload } });
+      if (t?.active) return t;
+    }
+    // Match by demo NIF
+    const byNif = await this.prisma.tenant.findFirst({
+      where: { nif: '515208566', active: true },
+      select: { id: true },
+    });
+    if (byNif) return byNif;
+
+    // Fallback to first active tenant
+    const firstActive = await this.prisma.tenant.findFirst({
+      where: { active: true },
+      select: { id: true },
+    });
+    if (!firstActive) {
+      throw new UnauthorizedException('No active tenant found');
+    }
+    return firstActive;
+  }
+
+  async getInboundStatus() {
+    const byOrigin = await this.prisma.document.groupBy({
+      by: ['origin'],
+      _count: { id: true },
+    });
+
+    const now = new Date();
+    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const recent24hCount = await this.prisma.document.count({
+      where: { createdAt: { gte: last24h } },
+    });
+
+    return {
+      totalByOrigin: byOrigin.reduce((acc, curr) => {
+        acc[curr.origin] = curr._count.id;
+        return acc;
+      }, {} as Record<string, number>),
+      recent24hCount,
+      timestamp: now,
+    };
   }
 
   private fromMulter(file: Express.Multer.File | undefined): InboundFile | null {

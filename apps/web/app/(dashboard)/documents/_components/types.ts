@@ -26,7 +26,7 @@ export type DocumentStatus =
   | 'DUPLICADO';
 
 /** Fase 3 — validade fiscal determinística (backend `FiscalStatus`). */
-export type FiscalStatus = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO';
+export type FiscalStatus = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO' | 'NAO_APLICAVEL';
 
 /** Prisma `DocumentType`. */
 export type DocumentType =
@@ -47,7 +47,7 @@ export type DocumentType =
 
 /**
  * Mirrors the backend Prisma `DocumentOrigin` enum (Sprint F extended
- * with GMAIL / OUTLOOK / INBOUND_WEBHOOK). `EMAIL` is retained for
+ * with GMAIL / OUTLOOK / INBOUND_WEBHOOK / ONEDRIVE). `EMAIL` is retained for
  * backwards compatibility with rows ingested via the legacy IMAP path.
  */
 export type DocumentOrigin =
@@ -59,7 +59,8 @@ export type DocumentOrigin =
   | 'API'
   | 'GMAIL'
   | 'OUTLOOK'
-  | 'INBOUND_WEBHOOK';
+  | 'INBOUND_WEBHOOK'
+  | 'ONEDRIVE';
 
 export interface DocumentFolder {
   id: string;
@@ -95,6 +96,7 @@ export interface DocumentRecord {
   fiscalStatus?: FiscalStatus | null;
   fiscalReason?: string | null;
   duplicateOfId?: string | null;
+  metadata?: Record<string, any> | null;
 }
 
 export interface DocumentListResponse {
@@ -128,12 +130,14 @@ export const FISCAL_STATUS_LABEL: Record<FiscalStatus, string> = {
   FISCAL: 'Fiscal',
   NAO_FISCAL: 'Não fiscal',
   INDETERMINADO: 'Por confirmar',
+  NAO_APLICAVEL: 'Encomenda cliente',
 };
 
 export const FISCAL_STATUS_BADGE: Record<FiscalStatus, string> = {
   FISCAL: 'badge-emerald',
   NAO_FISCAL: 'badge-rose',
   INDETERMINADO: 'badge-amber',
+  NAO_APLICAVEL: 'badge-violet',
 };
 
 export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {

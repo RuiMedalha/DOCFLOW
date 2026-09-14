@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import { RefreshCw, AlertCircle, Sparkles } from 'lucide-react';
+import { RefreshCw, AlertCircle, Sparkles, Cloud, MessageSquare, ShoppingCart } from 'lucide-react';
 import type { RowSelectionState } from '@tanstack/react-table';
 import { PageHeader } from '../_components/page-header';
 import { UploadZone } from './_components/upload-zone';
@@ -29,14 +29,26 @@ import {
   useDocumentsList,
   useReExtractAllDocuments,
 } from './_components/use-documents';
-import type { DocumentFiltersState, DocumentOrigin } from './_components/types';
+import type { DocumentFiltersState, DocumentOrigin, FiscalStatus } from './_components/types';
 
 const PAGE_SIZE = 20;
 
 const TAB_ORIGINS: Record<InboxTabKey, DocumentOrigin[] | undefined> = {
-  pdf: undefined,
+  pdf: ['UPLOAD'],
   scanner: ['SCANNER'],
   email: ['EMAIL', 'GMAIL', 'OUTLOOK', 'INBOUND_WEBHOOK'],
+  onedrive: ['ONEDRIVE'],
+  whatsapp: ['WHATSAPP'],
+  nao_aplicavel: undefined,
+};
+
+const TAB_FISCAL_STATUS: Record<InboxTabKey, FiscalStatus | ''> = {
+  pdf: '',
+  scanner: '',
+  email: '',
+  onedrive: '',
+  whatsapp: '',
+  nao_aplicavel: 'NAO_APLICAVEL',
 };
 
 const INITIAL_FILTERS: DocumentFiltersState = {
@@ -55,9 +67,11 @@ export default function DocumentsPage() {
   const [selection, setSelection] = useState<RowSelectionState>({});
 
   const tabOrigins = TAB_ORIGINS[tab];
+  const tabFiscalStatus = TAB_FISCAL_STATUS[tab];
   const mergedFilters: DocumentFiltersState = {
     ...filters,
     origin: tabOrigins,
+    fiscalStatus: tabFiscalStatus || filters.fiscalStatus || '',
   };
 
   const { data, isLoading, isError, refetch, isFetching } = useDocumentsList(
@@ -134,6 +148,72 @@ export default function DocumentsPage() {
         {tab === 'pdf' && <UploadZone />}
         {tab === 'scanner' && <ScannerConfig />}
         {tab === 'email' && <EmailConfig />}
+
+        {tab === 'onedrive' && (
+          <div className="card p-4 flex items-center justify-between gap-4" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.25)' }}
+              >
+                <Cloud size={20} style={{ color: 'var(--accent)' }} />
+              </div>
+              <div>
+                <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>
+                  OneDrive Empresarial (Microsoft Graph)
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Pasta monitorizada: <code className="px-1 py-0.5 rounded bg-surface border text-xs">/DocFlow/Entrada</code>. Ficheiros processados são transferidos automaticamente para <code className="px-1 py-0.5 rounded bg-surface border text-xs">/DocFlow/Processados</code>.
+                </p>
+              </div>
+            </div>
+            <span className="badge-emerald text-xs font-medium">Sincronização 2m</span>
+          </div>
+        )}
+
+        {tab === 'whatsapp' && (
+          <div className="card p-4 flex items-center justify-between gap-4" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)' }}
+              >
+                <MessageSquare size={20} style={{ color: 'var(--emerald)' }} />
+              </div>
+              <div>
+                <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>
+                  Canal WhatsApp (Evolution API)
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Webhook de entrada: <code className="px-1 py-0.5 rounded bg-surface border text-xs">/api/v1/inbound/whatsapp</code>. PDFs e fotografias recebidos via WhatsApp convergem automaticamente no mesmo circuito com deduplicação SHA-256.
+                </p>
+              </div>
+            </div>
+            <span className="badge-emerald text-xs font-medium">Webhook Ativo</span>
+          </div>
+        )}
+
+        {tab === 'nao_aplicavel' && (
+          <div className="card p-4 flex items-center justify-between gap-4" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.25)' }}
+              >
+                <ShoppingCart size={20} style={{ color: 'var(--violet)' }} />
+              </div>
+              <div>
+                <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>
+                  Encomendas de Clientes & Documentos Próprios
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Documentos onde a empresa (NIF 515208566) figura como emitente/vendedor ou identificados como notas de encomenda de clientes. Mantidos isolados das compras para proteger o apuramento de IVA dedutível.
+                </p>
+              </div>
+            </div>
+            <span className="badge-violet text-xs font-medium">Isolado de Compras</span>
+          </div>
+        )}
 
         <DocumentFilters value={filters} onChange={(next) => {
           setFilters(next);

@@ -55,6 +55,7 @@ const ORIGIN_BADGE: Record<DocumentOrigin, { label: string; cls: string }> = {
   MOBILE: { label: 'Mobile', cls: 'badge-sky' },
   WHATSAPP: { label: 'WhatsApp', cls: 'badge-emerald' },
   API: { label: 'API', cls: 'badge-sky' },
+  ONEDRIVE: { label: 'OneDrive', cls: 'badge-sky' },
 };
 
 const columnHelper = createColumnHelper<DocumentRecord>();
@@ -228,9 +229,11 @@ export function DocumentTable({
           const v = getValue();
           const fiscal = row.original.fiscalStatus;
           const fiscalReason = row.original.fiscalReason ?? '';
+          const isNaoAplicavel = fiscal === 'NAO_APLICAVEL';
           const hasNifProblem =
-            fiscal === 'NAO_FISCAL' ||
-            (v === 'EM_REVISAO' && (!row.original.supplierNif || /nif|consumidor|civa/i.test(fiscalReason)));
+            !isNaoAplicavel &&
+            (fiscal === 'NAO_FISCAL' ||
+              (v === 'EM_REVISAO' && (!row.original.supplierNif || /nif|consumidor|civa/i.test(fiscalReason))));
 
           return (
             <span className="inline-flex flex-wrap items-center gap-1">
@@ -255,7 +258,14 @@ export function DocumentTable({
               )}
               {/* Fase 3 — validade fiscal determinística; INDETERMINADO fica implícito */}
               {fiscal && fiscal !== 'INDETERMINADO' && !hasNifProblem && (
-                <span className={FISCAL_STATUS_BADGE[fiscal]} title={fiscalReason || undefined}>
+                <span
+                  className={FISCAL_STATUS_BADGE[fiscal]}
+                  title={
+                    isNaoAplicavel
+                      ? 'Documento emitido pela própria empresa ou nota de encomenda de cliente (fora do circuito de compras/IVA dedutível).'
+                      : fiscalReason || undefined
+                  }
+                >
                   {FISCAL_STATUS_LABEL[fiscal]}
                 </span>
               )}
@@ -279,14 +289,27 @@ export function DocumentTable({
       columnHelper.accessor('origin', {
         id: 'origin',
         header: 'Canal',
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row }) => {
           const v = getValue();
           if (!v) return <span style={{ color: 'var(--text-subtle)' }}>—</span>;
           const meta = ORIGIN_BADGE[v];
+          const md = row.original.metadata as Record<string, any> | undefined;
+          let tooltip: string | undefined;
+          if (md) {
+            if (md.originalSender || md.sender) {
+              tooltip = `Remetente: ${md.originalSender || md.sender}`;
+              if (md.mailbox) tooltip += ` | Caixa: ${md.mailbox}`;
+              if (md.originalSubject) tooltip += ` | Assunto: ${md.originalSubject}`;
+            } else if (md.sourceFile || md.path) {
+              tooltip = `Caminho: ${md.sourceFile || md.path}`;
+            } else if (md.scannerId) {
+              tooltip = `Scanner: ${md.scannerId}`;
+            }
+          }
           return meta ? (
-            <span className={meta.cls}>{meta.label}</span>
+            <span className={meta.cls} title={tooltip}>{meta.label}</span>
           ) : (
-            <span className="badge-sky">{v}</span>
+            <span className="badge-sky" title={tooltip}>{v}</span>
           );
         },
       }),

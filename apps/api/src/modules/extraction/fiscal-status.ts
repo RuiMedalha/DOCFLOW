@@ -19,7 +19,7 @@
  */
 import { isValidPortugueseNif } from '../../common/validation/tax-id.validator';
 
-export type FiscalStatusValue = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO';
+export type FiscalStatusValue = 'FISCAL' | 'NAO_FISCAL' | 'INDETERMINADO' | 'NAO_APLICAVEL';
 export type NonFiscalType =
   | 'PROFORMA'
   | 'ORCAMENTO'
@@ -45,6 +45,8 @@ export interface FiscalClassificationInput {
   /** Text to scan for non-fiscal keywords (PDF text / OCR / AI type / file name). */
   text?: string | null;
   viesValidated?: boolean;
+  tenantNif?: string | null;
+  customerNif?: string | null;
 }
 
 export interface FiscalClassification {
@@ -116,6 +118,20 @@ export function isValidAtQr(qr: FiscalClassificationInput['qr']): boolean {
 export function classifyFiscalStatus(input: FiscalClassificationInput): FiscalClassification {
   const kind = detectNonFiscalKind(input.text);
   const qrTrusted = input.qrOrigin !== 'ai' && isValidAtQr(input.qr);
+
+  // P0.2 — Se o NIF da empresa (ex: 515208566) for o emitente/vendedor:
+  // trata-se de documento interno/emitido ou encomenda de cliente destinada a nós -> NAO_APLICAVEL
+  const tenantNifClean = (input.tenantNif || '').replace(/\D/g, '');
+  const issuerNifClean = (input.qr?.issuerNif || input.supplierNif || '').replace(/\D/g, '');
+
+  if (tenantNifClean && issuerNifClean && tenantNifClean === issuerNifClean) {
+    const nonFiscalType = kind ?? 'ENCOMENDA';
+    return {
+      fiscalStatus: 'NAO_APLICAVEL',
+      reason: `own_company_is_issuer:${tenantNifClean}`,
+      documentType: nonFiscalType,
+    };
+  }
 
   if (qrTrusted) {
     const rawDt = (input.qr?.documentType ?? '').toUpperCase();

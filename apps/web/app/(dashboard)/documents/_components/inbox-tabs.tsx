@@ -7,25 +7,34 @@
  * filter mismatch between tab and list cannot get out of sync.
  */
 
-import { FileText, ScanLine, Mail } from 'lucide-react';
-import type { DocumentFiltersState, DocumentOrigin } from './types';
+import { FileText, ScanLine, Mail, Cloud, MessageSquare, ShoppingCart } from 'lucide-react';
+import type { DocumentFiltersState, DocumentOrigin, FiscalStatus } from './types';
 import { useDocumentsList } from './use-documents';
 
-export type InboxTabKey = 'pdf' | 'scanner' | 'email';
+export type InboxTabKey = 'pdf' | 'scanner' | 'email' | 'onedrive' | 'whatsapp' | 'nao_aplicavel';
 
 const TAB_DEFS: Array<{
   key: InboxTabKey;
   label: string;
   icon: typeof FileText;
   origins?: DocumentOrigin[];
+  fiscalStatus?: FiscalStatus;
 }> = [
-  { key: 'pdf', label: 'PDF', icon: FileText },
+  { key: 'pdf', label: 'PDF / Upload', icon: FileText, origins: ['UPLOAD'] },
   { key: 'scanner', label: 'Scanner', icon: ScanLine, origins: ['SCANNER'] },
   {
     key: 'email',
     label: 'Email',
     icon: Mail,
     origins: ['EMAIL', 'GMAIL', 'OUTLOOK', 'INBOUND_WEBHOOK'],
+  },
+  { key: 'onedrive', label: 'OneDrive', icon: Cloud, origins: ['ONEDRIVE'] },
+  { key: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, origins: ['WHATSAPP'] },
+  {
+    key: 'nao_aplicavel',
+    label: 'Encomendas Cliente',
+    icon: ShoppingCart,
+    fiscalStatus: 'NAO_APLICAVEL',
   },
 ];
 
@@ -47,7 +56,7 @@ export function InboxTabs({
 }) {
   return (
     <div
-      className="inline-flex items-center gap-1 p-1 rounded-xl"
+      className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl"
       style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
       role="tablist"
     >
@@ -58,6 +67,7 @@ export function InboxTabs({
           Icon={tab.icon}
           active={active === tab.key}
           origins={tab.origins}
+          fiscalStatus={tab.fiscalStatus}
           onClick={() => onChange(tab.key)}
         />
       ))}
@@ -70,19 +80,24 @@ function TabButton({
   Icon,
   active,
   origins,
+  fiscalStatus,
   onClick,
 }: {
   label: string;
   Icon: typeof FileText;
   active: boolean;
   origins?: DocumentOrigin[];
+  fiscalStatus?: FiscalStatus;
   onClick: () => void;
 }) {
   // Per-tab count query. We only ask for `limit: 1` so the network cost
   // is bounded; the response includes `meta.total` which is what we
-  // render. When origins is empty the backend returns the UPLOAD default
-  // (no origin filter applied).
-  const filters: DocumentFiltersState = { ...EMPTY_FILTERS, origin: origins };
+  // render.
+  const filters: DocumentFiltersState = {
+    ...EMPTY_FILTERS,
+    origin: origins,
+    fiscalStatus: fiscalStatus ?? '',
+  };
   const { data } = useDocumentsList(filters, 1, 1);
   const count = data?.meta?.total ?? 0;
 

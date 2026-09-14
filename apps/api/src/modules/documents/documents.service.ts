@@ -13,6 +13,7 @@ import {
   DocumentProcessingStatus,
   DocumentStatus,
   DocumentType,
+  FiscalStatus,
   Prisma,
 
   CategoryNature,
@@ -520,6 +521,11 @@ export class DocumentsService {
     }
     if (query.origin && query.origin.length > 0) {
       filters.push(Prisma.sql`d.origin = ANY(${query.origin})::"DocumentOrigin"`);
+    }
+    if (query.fiscalStatus) {
+      filters.push(Prisma.sql`d."fiscalStatus" = ${query.fiscalStatus}::"FiscalStatus"`);
+    } else {
+      filters.push(Prisma.sql`d."fiscalStatus" <> 'NAO_APLICAVEL'::"FiscalStatus"`);
     }
 
     const tsquery = Prisma.sql`websearch_to_tsquery('simple', ${search})`;
@@ -3319,7 +3325,12 @@ export class DocumentsService {
     };
     if (query.status) where.status = query.status;
     if (query.type) where.type = query.type;
-    if (query.fiscalStatus) where.fiscalStatus = query.fiscalStatus;
+    if (query.fiscalStatus) {
+      where.fiscalStatus = query.fiscalStatus;
+    } else {
+      // P0.2: Exclude client orders / self-invoices (NAO_APLICAVEL) from default purchase views
+      where.fiscalStatus = { not: FiscalStatus.NAO_APLICAVEL };
+    }
     if (query.partyId) {
       where.OR = [
         { partyId: query.partyId },

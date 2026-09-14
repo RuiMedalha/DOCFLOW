@@ -101,20 +101,22 @@ export function EmailConfig() {
         </p>
       )}
       <ProviderRow
+        label="Microsoft Graph (Outlook / Exchange)"
+        Icon={Mail}
+        status={status?.microsoft}
+        busy={busy === 'microsoft'}
+        isManaged={true}
+        onConnect={() => {}}
+        onDisconnect={() => {}}
+      />
+      <ProviderRow
         label="Gmail"
         Icon={Mail}
         status={status?.google}
         busy={busy === 'google'}
+        disabledReason="Desativado: política de canal único ativa em Microsoft Graph"
         onConnect={() => connect('google')}
         onDisconnect={() => disconnect('google')}
-      />
-      <ProviderRow
-        label="Outlook"
-        Icon={Mail}
-        status={status?.microsoft}
-        busy={busy === 'microsoft'}
-        onConnect={() => connect('microsoft')}
-        onDisconnect={() => disconnect('microsoft')}
       />
     </div>
   );
@@ -125,6 +127,8 @@ function ProviderRow({
   Icon,
   status,
   busy,
+  isManaged,
+  disabledReason,
   onConnect,
   onDisconnect,
 }: {
@@ -132,6 +136,8 @@ function ProviderRow({
   Icon: typeof Mail;
   status?: ProviderStatus;
   busy: boolean;
+  isManaged?: boolean;
+  disabledReason?: string;
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
@@ -161,10 +167,14 @@ function ProviderRow({
                   ? ` · última sync ${new Date(status.lastSyncAt).toLocaleString('pt-PT')}`
                   : ''
               }`
-            : 'Desligado'}
+            : disabledReason || 'Desligado'}
         </p>
       </div>
-      {connected ? (
+      {isManaged ? (
+        <span className="badge-emerald text-xs px-2.5 py-1 font-medium">
+          Graph App-Only
+        </span>
+      ) : connected ? (
         <button
           type="button"
           className="btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
@@ -173,6 +183,10 @@ function ProviderRow({
         >
           <Unlink size={12} /> Desligar
         </button>
+      ) : disabledReason ? (
+        <span className="badge-amber text-xs px-2.5 py-1 font-medium">
+          Inativo
+        </span>
       ) : (
         <button
           type="button"

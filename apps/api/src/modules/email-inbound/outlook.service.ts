@@ -72,6 +72,7 @@ export class OutlookService {
   private faturasFolderId: string | null = null;
   private processadoFolderId: string | null = null;
   private oneDriveProcessadosFolderId: string | null = null;
+  private cachedDriveBasePath: string | null = null;
   private isPolling = false;
 
   private stats: GraphPollerStats = {
@@ -379,13 +380,14 @@ export class OutlookService {
   async pollOneDrive(tenantId: string): Promise<{ processed: number; errors: string[] }> {
     const token = await this.getAccessToken();
     const userPath = await this.resolveUserPath(token);
+    const driveBase = await this.resolveDriveBasePath(token, userPath);
 
-    const entradaUrl = `${GRAPH_BASE}/${userPath}/drive/root:${this.oneDriveEntradaPath}:/children`;
+    const entradaUrl = `${GRAPH_BASE}/${driveBase}/root:${this.oneDriveEntradaPath}:/children`;
     const res = await this.fetchWithAuth(entradaUrl, token);
 
     if (res.status === 404) {
       // Folder doesn't exist yet — attempt to ensure folders exist
-      await this.ensureOneDriveFolders(token, userPath).catch(() => undefined);
+      await this.ensureOneDriveFolders(token, driveBase).catch(() => undefined);
       return { processed: 0, errors: [] };
     }
 
@@ -399,7 +401,7 @@ export class OutlookService {
     let processed = 0;
     const errors: string[] = [];
 
-    const processadosFolderId = await this.resolveOneDriveProcessadosId(token, userPath);
+    const processadosFolderId = await this.resolveOneDriveProcessadosId(token, driveBase);
 
     for (const item of items) {
       // Only process files, skip subfolders
@@ -415,7 +417,7 @@ export class OutlookService {
       }
 
       try {
-        const contentUrl = `${GRAPH_BASE}/${userPath}/drive/items/${item.id}/content`;
+        const contentUrl = `${GRAPH_BASE}/${driveBase}/items/${item.id}/content`;
         const contentRes = await this.fetchWithAuth(contentUrl, token);
         if (!contentRes.ok) {
           throw new Error(`Failed to download file ${item.name} (${contentRes.status})`);
@@ -448,7 +450,7 @@ export class OutlookService {
 
         // Move to /DocFlow/Processados if destination folder exists
         if (processadosFolderId) {
-          const moveUrl = `${GRAPH_BASE}/${userPath}/drive/items/${item.id}`;
+          const moveUrl = `${GRAPH_BASE}/${driveBase}/items/${item.id}`;
           await this.fetchWithAuth(moveUrl, token, {
             method: 'PATCH',
             headers: { 'content-type': 'application/json' },
@@ -722,10 +724,45 @@ export class OutlookService {
     return null;
   }
 
-  private async resolveOneDriveProcessadosId(token: string, userPath: string): Promise<string | null> {
+  private async resolveDriveBasePath(token: string, userPath: string): Promise<string> {
+    if (this.cachedDriveBasePath) return this.cachedDriveBasePath;
+
+    if (process.env.ONEDRIVE_DRIVE_TARGET) {
+      this.cachedDriveBasePath = process.env.ONEDRIVE_DRIVE_TARGET;
+      return this.cachedDriveBasePath;
+    }
+
+    if (process.env.ONEDRIVE_USER) {
+      this.cachedDriveBasePath = `users/${encodeURIComponent(process.env.ONEDRIVE_USER)}/drive`;
+      return this.cachedDriveBasePath;
+    }
+
+    // Try userPath drive first
+    const userDriveUrl = `${GRAPH_BASE}/${userPath}/drive`;
+    const res = await this.fetchWithAuth(userDriveUrl, token);
+    if (res.ok) {
+      this.cachedDriveBasePath = `${userPath}/drive`;
+      return this.cachedDriveBasePath;
+    }
+
+    // Fallback to organization root SharePoint/OneDrive drive
+    const siteDriveUrl = `${GRAPH_BASE}/sites/root/drive`;
+    const siteRes = await this.fetchWithAuth(siteDriveUrl, token);
+    if (siteRes.ok) {
+      this.logger.log(
+        '[OutlookService] Mailbox has no personal drive (mysite) — using organization SharePoint/OneDrive root drive (sites/root/drive)',
+      );
+      this.cachedDriveBasePath = 'sites/root/drive';
+      return this.cachedDriveBasePath;
+    }
+
+    return `${userPath}/drive`;
+  }
+
+  private async resolveOneDriveProcessadosId(token: string, driveBase: string): Promise<string | null> {
     if (this.oneDriveProcessadosFolderId) return this.oneDriveProcessadosFolderId;
 
-    const url = `${GRAPH_BASE}/${userPath}/drive/root:${this.oneDriveProcessadosPath}`;
+    const url = `${GRAPH_BASE}/${driveBase}/root:${this.oneDriveProcessadosPath}`;
     const res = await this.fetchWithAuth(url, token);
     if (res.ok) {
       const data = (await res.json()) as any;
@@ -736,7 +773,7 @@ export class OutlookService {
     // Create the folder if not found
     try {
       const parentPath = '/DocFlow';
-      const createUrl = `${GRAPH_BASE}/${userPath}/drive/root:${parentPath}:/children`;
+      const createUrl = `${GRAPH_BASE}/${driveBase}/root:${parentPath}:/children`;
       const createRes = await this.fetchWithAuth(createUrl, token, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -753,15 +790,15 @@ export class OutlookService {
     return null;
   }
 
-  private async ensureOneDriveFolders(token: string, userPath: string): Promise<void> {
-    const rootChildrenUrl = `${GRAPH_BASE}/${userPath}/drive/root/children`;
+  private async ensureOneDriveFolders(token: string, driveBase: string): Promise<void> {
+    const rootChildrenUrl = `${GRAPH_BASE}/${driveBase}/root/children`;
     await this.fetchWithAuth(rootChildrenUrl, token, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'DocFlow', folder: {} }),
     }).catch(() => undefined);
 
-    const docflowChildrenUrl = `${GRAPH_BASE}/${userPath}/drive/root:/DocFlow:/children`;
+    const docflowChildrenUrl = `${GRAPH_BASE}/${driveBase}/root:/DocFlow:/children`;
     await Promise.allSettled([
       this.fetchWithAuth(docflowChildrenUrl, token, {
         method: 'POST',

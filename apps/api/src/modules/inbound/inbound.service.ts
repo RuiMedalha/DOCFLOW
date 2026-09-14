@@ -6,6 +6,7 @@ import {
   Optional,
   ServiceUnavailableException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import {
   DocumentOrigin,
@@ -126,7 +127,9 @@ export class InboundService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Optional() private readonly extraction: ExtractionService | null,
+    @Optional()
+    @Inject(forwardRef(() => ExtractionService))
+    private readonly extraction: ExtractionService | null,
   ) {
     this.documents = new PrismaInboundDocumentsAdapter(prisma, storage);
   }
@@ -530,6 +533,7 @@ export class InboundService {
     if (this.extraction) {
       for (const doc of created) {
         if (!doc.isDuplicate) {
+          this.logger.log(`[ingestFiles] Triggering auto-extract for document=${doc.id}`);
           this.extraction
             .enqueue({ tenantId, userId: null, documentId: doc.id })
             .catch((err) =>
@@ -539,6 +543,8 @@ export class InboundService {
             );
         }
       }
+    } else {
+      this.logger.warn('[ingestFiles] ExtractionService is null — auto-extraction could not be queued');
     }
     return created;
   }

@@ -976,6 +976,7 @@ export class DocumentsService {
       data.isNonFiscalDoc = dto.fiscalStatus === 'NAO_FISCAL';
     }
     if (dto.dueDate !== undefined) data.dueDate = new Date(dto.dueDate);
+    if (dto.paymentDueDate !== undefined) data.paymentDueDate = dto.paymentDueDate ? new Date(dto.paymentDueDate) : null;
     if (suggestedFolder !== undefined) data.suggestedFolder = suggestedFolder;
     if (finalFolder !== undefined) data.finalFolder = finalFolder;
     if (metadata !== undefined) data.metadata = metadata;
@@ -1470,9 +1471,10 @@ export class DocumentsService {
     }
     if (
       existing.status !== DocumentStatus.NOVO &&
-      existing.status !== DocumentStatus.EM_REVISAO
+      existing.status !== DocumentStatus.EM_REVISAO &&
+      existing.status !== DocumentStatus.PROCESSADO
     ) {
-      // PROCESSADO / REJEITADO / ARQUIVADO — caller must move the row
+      // REJEITADO / ARQUIVADO / DUPLICADO — caller must move the row
       // back to EM_REVISAO (or NOVO) before approval is meaningful.
       throw new ConflictException(
         `Cannot approve document in status ${existing.status}; move it to EM_REVISAO first`,
@@ -1605,6 +1607,38 @@ export class DocumentsService {
         (opts?.model ? ` modelOverride=${opts.model}` : '') +
         (opts?.provider ? ` providerOverride=${opts.provider}` : ''),
     );
+
+    // Retroactive image orientation + A4 PDF generation (Paperless-ngx standard)
+    if (existing.mimeType?.startsWith('image/') || this.imageToPdf.supports(existing.mimeType)) {
+      try {
+        const fileObj = await this.storage.getBuffer(existing.fileKey);
+        const fileBuffer = fileObj?.buffer;
+        if (fileBuffer && fileBuffer.length > 0) {
+          let oriented = fileBuffer;
+          let enhancedMime = existing.mimeType;
+          if (this.imageEnhancer && this.imageEnhancer.isAvailable()) {
+            oriented = await this.imageEnhancer.processDocumentImage(fileBuffer, existing.mimeType);
+            enhancedMime = 'image/jpeg';
+            await this.storage.put(existing.fileKey, oriented, { contentType: enhancedMime });
+            this.logger.log(`[reExtract] Sharp auto-rotated & enhanced image doc=${existing.id}`);
+          }
+          if (this.imageToPdf && this.imageToPdf.supports(enhancedMime)) {
+            const pdfBuffer = await this.imageToPdf.convert(oriented, enhancedMime);
+            const pdfKey = existing.fileKey.replace(/\.[^.]+$/, '.pdf');
+            await this.storage.put(pdfKey, pdfBuffer, { contentType: 'application/pdf' });
+            await this.prisma.document.update({
+              where: { id },
+              data: { pdfKey, mimeType: enhancedMime },
+            });
+            this.logger.log(`[reExtract] generated A4 PDF derivative (${pdfKey}) for doc=${existing.id}`);
+          }
+        }
+      } catch (enhancerErr) {
+        this.logger.warn(
+          `[reExtract] image enhancer/pdf conversion error for doc=${existing.id}: ${(enhancerErr as Error).message}`,
+        );
+      }
+    }
 
     // Same payload shape as upload() — handling is identical from the
     // pipeline's perspective. Publishing `document.uploaded` (not
@@ -2945,7 +2979,11 @@ export class DocumentsService {
       const newPath = buildDocumentPath({
         partyType: doc.party.type,
         partySlug,
-        partyCategorySlug: doc.party.partyCategory?.slug ?? null,
+        // Approved supplier invoices have one canonical filing hierarchy:
+        // fornecedores/<fornecedor>/<ano>/<nome-canonico>. The category
+        // remains document metadata, rather than adding a divergent level
+        // below the supplier folder.
+        partyCategorySlug: null,
         documentDate: docDateSafe,
         documentNumber: doc.docNumber ?? 'unnumbered',
         fileId: doc.id,

@@ -21,6 +21,7 @@ import {
   DocumentType,
   FiscalStatus,
   CategoryNature,
+  PaymentStatus,
 } from '@prisma/client';
 import { EXPENSE_CATEGORIES } from '../folder-rules/folder-rules.types';
 
@@ -217,6 +218,22 @@ export class UpdateDocumentDto {
   @IsString()
   @MaxLength(50)
   partyId?: string;
+
+  @ApiPropertyOptional({ enum: PaymentStatus, description: 'Estado do pagamento da fatura' })
+  @IsOptional()
+  @IsEnum(PaymentStatus)
+  paymentStatus?: PaymentStatus;
+
+  @ApiPropertyOptional({ example: 'transfer', description: 'Método de pagamento (débito direto, transferência, etc.)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  paymentMethod?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-30', description: 'Data limite ou data de pagamento' })
+  @IsOptional()
+  @IsDateString()
+  paymentDueDate?: string;
 }
 
 /**

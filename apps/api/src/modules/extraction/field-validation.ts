@@ -623,6 +623,18 @@ export function validateLineItemsTable(
     const actualSubtotal = safeNum(item.lineTotal) ?? safeNum(item.total);
 
     if (discount > 0 || discountPct != null) {
+      // A printed discount number can be a percentage without a percent
+      // sign. Prove that interpretation directly against the printed line
+      // total before calculating the discrepancy below.
+      if (discount > 0 && price != null && actualSubtotal != null) {
+        const percentageSubtotal = qty * price * (1 - discount / 100);
+        if (Math.abs(percentageSubtotal - actualSubtotal) < 0.05) {
+          discountPct = discount;
+          discount = round2(qty * price * (discount / 100));
+          item.discountPercent = discountPct;
+          item.discount = discount;
+        }
+      }
       const classified = classifyLineDiscount({
         quantity: qty,
         unitPrice: price,
@@ -1095,4 +1107,3 @@ export function calculateCertaintyScore(input: CertaintyScoreInput): CertaintySc
     warnings,
   };
 }
-

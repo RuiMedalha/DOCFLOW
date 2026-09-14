@@ -109,8 +109,15 @@ function buildPrismaForFlow(opts: {
   // stub from approve-folder-routing.spec.ts — the production code only
   // uses `tx.document.findFirst/update` + `tx.$executeRaw`.
   const $executeRaw = jest.fn(async () => undefined);
+  const folderFindFirst = jest.fn(async () => ({
+    id: 'folder-year-1',
+    name: 'EDP Comercial - 2026',
+    pattern: '/Fornecedores/EDP Comercial/2026',
+  }));
+  const folderCreate = jest.fn();
   const txHandle = {
     document: { findFirst: documentFindFirst, update: documentUpdate },
+    folder: { findFirst: folderFindFirst, create: folderCreate },
     $executeRaw,
   };
   const $transaction = jest.fn(async (work: any) => {
@@ -126,7 +133,7 @@ function buildPrismaForFlow(opts: {
       create: documentCreate,
       update: documentUpdate,
     },
-    folder: { findFirst: jest.fn(async () => null), create: jest.fn() },
+    folder: { findFirst: folderFindFirst, create: folderCreate },
     folderRule: { findMany: jest.fn() },
     party: { findFirst: jest.fn(async () => null) },
     paymentEvent: { upsert: paymentEventUpsert },
@@ -309,7 +316,7 @@ describe('Sprint E end-to-end: upload → approve → relocate', () => {
     expect(storage.moves).toHaveLength(1);
     expect(storage.moves[0].from).toBe(inboxKey);
     expect(storage.moves[0].to).toBe(
-      'fornecedores/edp-comercial/estrategico/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf',
+      'fornecedores/edp-comercial/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf',
     );
 
     // The final fileKey update in the transaction points to the destination.

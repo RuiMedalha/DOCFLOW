@@ -29,8 +29,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Send, CheckCircle2, Plus, X, Loader2, Trash2 } from 'lucide-react';
+import { Send, CheckCircle2, Plus, X, Loader2, Trash2, ShieldCheck } from 'lucide-react';
 import { useCategories } from '../../../categories/use-categories';
+import { useParty, useVerifyIban } from '../../../parties/_components/use-parties';
 import Link from 'next/link';
 
 export interface ExtractedFields {
@@ -58,6 +59,10 @@ export interface ExtractedFields {
   totalsReconciled?: boolean | null;
   /** Fase 4.2 (P0.3) — diferença residual calculada pelo backend. */
   totalsDelta?: number | null;
+  /** Tesouraria & Pagamento */
+  paymentStatus?: 'DRAFT' | 'TO_PAY' | 'SCHEDULED' | 'PAID' | 'OVERDUE' | 'CANCELLED' | null;
+  paymentMethod?: string | null;
+  paymentDueDate?: string | null;
 }
 
 export interface FieldConfidence {
@@ -536,6 +541,27 @@ export function FieldPanel(props: FieldPanelProps) {
     setTodayLabel(fmtDate(new Date().toISOString()));
   }, []);
 
+  const partyQuery = useParty(props.partyId ?? '');
+  const verifyIbanMutation = useVerifyIban();
+  const party = partyQuery.data;
+  const isIbanVerified =
+    Boolean(party?.ibanVerified) &&
+    Boolean(party?.iban) &&
+    Boolean(fields.iban) &&
+    party!.iban!.replace(/\s+/g, '').toUpperCase() === fields.iban!.replace(/\s+/g, '').toUpperCase();
+
+  const handleVerifyIban = async () => {
+    if (!props.partyId) return;
+    try {
+      await verifyIbanMutation.mutateAsync({
+        id: props.partyId,
+        reason: 'Validado diretamente a partir da fatura ' + (fields.docNumber ?? ''),
+      });
+    } catch {
+      // handled by query client
+    }
+  };
+
   const lineSum = useMemo(
     () => lineItems.reduce((acc, li) => acc + (Number.isFinite(li.total) ? li.total : 0), 0),
     [lineItems],
@@ -743,14 +769,79 @@ export function FieldPanel(props: FieldPanelProps) {
             right={todayLabel ? `hoje · ${todayLabel}` : undefined}
             hint="IBAN destinatário — verificar com o histórico do fornecedor antes de pagar."
           >
-            <EdInput
-              type="text"
-              mono
-              value={fields.iban ?? ''}
-              onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
-              placeholder="por preencher"
-            />
+            <div className="space-y-2">
+              <EdInput
+                type="text"
+                mono
+                value={fields.iban ?? ''}
+                onChange={(e) => props.onFieldChange({ iban: e.target.value.toUpperCase() })}
+                placeholder="por preencher"
+              />
+              {fields.iban && props.partyId ? (
+                <div className="flex items-center gap-2 pt-1">
+                  {isIbanVerified ? (
+                    <span className="badge-emerald inline-flex items-center gap-1.5 text-xs py-1 px-2.5">
+                      <ShieldCheck size={14} className="text-emerald-500" />
+                      NIB / IBAN Verificado e Seguro
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={verifyIbanMutation.isPending}
+                      onClick={handleVerifyIban}
+                      className="btn btn-secondary text-xs inline-flex items-center gap-1.5 py-1 px-2.5 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300"
+                      title="Marca o NIB/IBAN como fidedigno e confirmado"
+                    >
+                      {verifyIbanMutation.isPending ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <ShieldCheck size={13} className="text-emerald-600" />
+                      )}
+                      Confirmar NIB como Correto
+                    </button>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </Field>
+        </fieldset>
+      </Group>
+
+      {/* ================================================================
+          GRUPO 2.5 — TESOURARIA & PAGAMENTO
+          ================================================================ */}
+      <Group title="Tesouraria & Pagamento">
+        <fieldset disabled={props.approved} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            <Field label="Estado do Pagamento">
+              <EdSelect
+                value={fields.paymentStatus ?? 'TO_PAY'}
+                onChange={(e) => props.onFieldChange({ paymentStatus: e.target.value as any })}
+              >
+                <option value="TO_PAY">A Pagar (Pendente)</option>
+                <option value="PAID">✓ Paga (Liquidada)</option>
+                <option value="SCHEDULED">Agendada</option>
+                <option value="OVERDUE">Vencida</option>
+                <option value="DRAFT">Rascunho</option>
+              </EdSelect>
+            </Field>
+
+            <Field label="Forma de Pagamento">
+              <EdSelect
+                value={fields.paymentMethod ?? ''}
+                onChange={(e) => props.onFieldChange({ paymentMethod: e.target.value })}
+              >
+                <option value="">— Selecionar método —</option>
+                <option value="debito_direto">Débito Direto (SEPA DD)</option>
+                <option value="transferencia">Transferência Bancária</option>
+                <option value="multibanco">Referência Multibanco</option>
+                <option value="cartao">Cartão de Crédito / Débito</option>
+                <option value="dinheiro">Dinheiro / Pronto Pagamento</option>
+                <option value="mbway">MBWay</option>
+                <option value="outro">Outro</option>
+              </EdSelect>
+            </Field>
+          </div>
         </fieldset>
       </Group>
 

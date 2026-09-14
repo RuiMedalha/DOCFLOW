@@ -59,7 +59,14 @@ export class CategoriesService {
     });
   }
 
-  list(tenantId: string) {
+  async list(tenantId: string) {
+    const categories = await this.prisma.category.findMany({
+      where: { tenantId },
+      orderBy: { name: 'asc' },
+    });
+    if (categories.length > 0) return categories;
+
+    await this.ensureSeedForTenant(tenantId);
     return this.prisma.category.findMany({
       where: { tenantId },
       orderBy: { name: 'asc' },

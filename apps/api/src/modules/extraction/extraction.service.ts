@@ -64,6 +64,26 @@ import { ViesService } from "../vies/vies.service";
 import { EcbFxService } from "../../common/fx/ecb-fx.service";
 import { pickAutoCategory } from "../parties/auto-category";
 import { decodeAtQrOffThread as decodeAtQr } from "./qr-decode/qr-decode-offthread";
+
+/** Remove postal code/city fragments duplicated in an extracted address. */
+function sanitizeExtractedSupplierAddress(
+  address: string,
+  postalCode?: string,
+  city?: string,
+): string {
+  let cleaned = address.trim();
+  for (const fragment of [postalCode, city]) {
+    const value = fragment?.trim();
+    if (!value) continue;
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    cleaned = cleaned.replace(new RegExp(`(?:^|[\\s,;|-])${escaped}(?=$|[\\s,;|-])`, "giu"), " ");
+  }
+  return cleaned
+    .replace(/\s*[,;|-]\s*(?=[,;|-]|$)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[,;|-]+|[,;|-]+$/g, "")
+    .trim();
+}
 // Fase 4.1 — estes dois eram importados com `import type`, que apaga a
 // classe em tempo de execução: o `design:paramtypes` ficava `Object`,
 // o Nest não resolvia nada e o `@Optional()` escondia a falha. O
@@ -1331,7 +1351,11 @@ export class ExtractionService implements OnModuleDestroy {
             (!existingParty.address || /^[-–—\s/.]+$/.test(existingParty.address.trim())) &&
             fields.supplierAddress
           ) {
-            partyUpdates.address = fields.supplierAddress;
+            partyUpdates.address = sanitizeExtractedSupplierAddress(
+              fields.supplierAddress,
+              fields.supplierPostalCode,
+              fields.supplierCity,
+            );
           }
           if (!existingParty.city && fields.supplierCity) partyUpdates.city = fields.supplierCity;
           if (!existingParty.postalCode && fields.supplierPostalCode) partyUpdates.postalCode = fields.supplierPostalCode;

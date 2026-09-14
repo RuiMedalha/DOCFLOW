@@ -307,6 +307,9 @@ export default function DocumentDetailPage() {
         iban: doc?.iban,
         currency: doc?.currency,
         expenseCategory: doc?.expenseCategory,
+        paymentStatus: (doc as any)?.paymentStatus ?? 'TO_PAY',
+        paymentMethod: (doc as any)?.paymentMethod ?? null,
+        paymentDueDate: (doc as any)?.paymentDueDate ?? null,
       };
       return { ...base, ...patch };
     });
@@ -341,6 +344,9 @@ export default function DocumentDetailPage() {
       'folderId',
       'expenseCategory',
       'partyId',
+      'paymentStatus',
+      'paymentMethod',
+      'paymentDueDate',
     ] as const;
     const patch: Record<string, unknown> = {};
     for (const k of allowedKeys) {

@@ -27,6 +27,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
     name: '',
     nif: '',
     email: '',
+    website: '',
     phone: '',
     mobile: '',
     iban: '',
@@ -56,6 +57,7 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         name: form.name,
         nif: form.nif?.trim() || undefined,
         email: form.email?.trim() || undefined,
+        website: form.website?.trim() || undefined,
         phone: form.phone?.trim() || undefined,
         mobile: form.mobile?.trim() || undefined,
         iban: form.iban?.trim() || undefined,
@@ -120,6 +122,15 @@ export function PartyForm({ initial, partyId, isAdmin }: { initial?: PartyInput;
         </Field>
         <Field label="Email">
           <input type="email" className="input" value={form.email ?? ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </Field>
+        <Field label="Website / Página Web">
+          <input
+            type="url"
+            className="input"
+            placeholder="https://empresa.pt"
+            value={form.website ?? ''}
+            onChange={(e) => setForm({ ...form, website: e.target.value })}
+          />
         </Field>
         <Field label="Telefone">
           <input className="input" value={form.phone ?? ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} />

@@ -46,6 +46,7 @@ export interface Party {
   city?: string | null;
   postalCode?: string | null;
   country?: string | null;
+  website?: string | null;
   ibanVerified: boolean;
   ibanVerifiedAt?: string | null;
   ibanFlagged: boolean;
@@ -216,6 +217,7 @@ export interface PartyInput {
   city?: string;
   postalCode?: string;
   country?: string;
+  website?: string;
   defaultDebitAccountId?: string;
   defaultCreditAccountId?: string;
   /** Sprint E: PartyCategory.id, or empty string to clear. */

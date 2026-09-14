@@ -20,6 +20,7 @@ import { TimelineTab } from './_components/timeline-tab';
 import { PartyEnrichmentBadge } from './_components/party-enrichment-badge';
 import { ViesPanel } from './_components/vies-panel';
 import { ProductsTab } from './_components/products-tab';
+import { PartyDetailCard } from '../_components/party-detail';
 /**
  * PartyDetailPage — Sprint G 360° file. 6 tabs:
  *   - Identity   (default) — the existing PartyForm (kept as-is)
@@ -74,6 +75,8 @@ export default function PartyDetailPage() {
     vatNumber: party.vatNumber ?? '',
     vatRegime: party.vatRegime ?? 'PT',
     email: party.email ?? '',
+    website: (party as any).website ?? '',
+    billingEmail: party.billingEmail ?? '',
     phone: party.phone ?? '',
     mobile: party.mobile ?? '',
     iban: party.iban ?? '',
@@ -84,6 +87,9 @@ export default function PartyDetailPage() {
     country: party.country ?? 'Portugal',
     defaultDebitAccountId: party.defaultDebitAccount?.id,
     defaultCreditAccountId: party.defaultCreditAccount?.id,
+    defaultCategoryId: party.defaultCategoryId ?? '',
+    paymentTermDays: party.paymentTermDays ?? 30,
+    directDebit: party.directDebit === true,
     isRecurring: party.isRecurring === true,
     isRecurringManualOverride: party.isRecurringManualOverride === true,
   };
@@ -138,15 +144,18 @@ export default function PartyDetailPage() {
       </div>
 
       {activeTab === 'identity' && (
-        <div className="grid lg:grid-cols-3 gap-5">
-          <div className="lg:col-span-2 space-y-5">
-            <PartyForm key={`${party.id}-${party.updatedAt ?? ''}`} initial={initial} partyId={params.id} isAdmin={isAdmin} />
-          </div>
-          {/* The PartyIbanPanel previously lived here on the Identity tab.
-              Sprint G moves it into the IBAN tab to avoid duplication. */}
-          <div className="space-y-5">
-            {/* Fase 4 — VIES / regime de IVA */}
-            <ViesPanel partyId={params.id} />
+        <div className="space-y-5">
+          <PartyDetailCard party={party} />
+          <div className="grid lg:grid-cols-3 gap-5">
+            <div className="lg:col-span-2 space-y-5">
+              <PartyForm key={`${party.id}-${party.updatedAt ?? ''}`} initial={initial} partyId={params.id} isAdmin={isAdmin} />
+            </div>
+            {/* The PartyIbanPanel previously lived here on the Identity tab.
+                Sprint G moves it into the IBAN tab to avoid duplication. */}
+            <div className="space-y-5">
+              {/* Fase 4 — VIES / regime de IVA */}
+              <ViesPanel partyId={params.id} />
+            </div>
           </div>
         </div>
       )}

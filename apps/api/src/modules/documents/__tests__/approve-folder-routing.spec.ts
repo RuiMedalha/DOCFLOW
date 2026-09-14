@@ -211,7 +211,7 @@ describe('DocumentsService.approve() — Sprint E folder routing', () => {
     expect(storage.move).toHaveBeenCalledTimes(1);
     const [from, to] = (storage.move as jest.Mock).mock.calls[0];
     expect(from).toBe('cmtf1scz20000g5s0n621bzef/_inbox/2026-09-04/abc-1788.pdf');
-    expect(to).toBe('fornecedores/edp-comercial/estrategico/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf');
+    expect(to).toBe('fornecedores/edp-comercial/2026/FT_EDPComercial_FT2026-123_2026-09-04.pdf');
 
     // DB update carries the new fileKey and standardized fileName.
     const updateCall = prisma.document.update.mock.calls.find(
@@ -220,6 +220,7 @@ describe('DocumentsService.approve() — Sprint E folder routing', () => {
     expect(updateCall).toBeDefined();
     expect(updateCall[0].data.fileKey).toBe(to);
     expect(updateCall[0].data.fileName).toBe('FT_EDPComercial_FT2026-123_2026-09-04.pdf');
+    expect(updateCall[0].data.folderId).toBe('folder-1');
 
     // Audit row tagged with subAction.
     const relocateRow = (audit.log as jest.Mock).mock.calls

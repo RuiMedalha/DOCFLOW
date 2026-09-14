@@ -172,11 +172,21 @@ export function DocumentTable({
       }),
       columnHelper.accessor('supplierNif', {
         header: 'NIF',
-        cell: ({ getValue }) => (
-          <span className="text-sm tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            {getValue() ?? '—'}
-          </span>
-        ),
+        cell: ({ getValue }) => {
+          const val = getValue();
+          if (!val) {
+            return (
+              <span className="text-xs font-semibold text-rose-600 inline-flex items-center gap-1 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                ⚠️ Em falta
+              </span>
+            );
+          }
+          return (
+            <span className="text-sm tabular-nums" style={{ color: 'var(--text-muted)' }}>
+              {val}
+            </span>
+          );
+        },
       }),
       // Fase 4.1 — o ATCUD estava só no detalhe; na listagem é o que
       // distingue de relance um documento certificado pela AT.
@@ -217,6 +227,11 @@ export function DocumentTable({
         cell: ({ getValue, row }) => {
           const v = getValue();
           const fiscal = row.original.fiscalStatus;
+          const fiscalReason = row.original.fiscalReason ?? '';
+          const hasNifProblem =
+            fiscal === 'NAO_FISCAL' ||
+            (v === 'EM_REVISAO' && (!row.original.supplierNif || /nif|consumidor|civa/i.test(fiscalReason)));
+
           return (
             <span className="inline-flex flex-wrap items-center gap-1">
               {row.original.duplicateOfId ? (
@@ -227,12 +242,20 @@ export function DocumentTable({
                 >
                   {DOCUMENT_STATUS_LABEL[v] ?? v}
                 </Link>
+              ) : hasNifProblem ? (
+                <span
+                  className="badge-rose font-medium inline-flex items-center gap-1"
+                  title={fiscalReason || 'Requer revisão: NIF da empresa ou fornecedor em falta/inválido'}
+                >
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                  {fiscal === 'NAO_FISCAL' ? 'Não fiscal' : 'Atenção: Sem NIF'}
+                </span>
               ) : (
                 <span className={STATUS_BADGE[v]}>{DOCUMENT_STATUS_LABEL[v] ?? v}</span>
               )}
               {/* Fase 3 — validade fiscal determinística; INDETERMINADO fica implícito */}
-              {fiscal && fiscal !== 'INDETERMINADO' && (
-                <span className={FISCAL_STATUS_BADGE[fiscal]} title={row.original.fiscalReason ?? undefined}>
+              {fiscal && fiscal !== 'INDETERMINADO' && !hasNifProblem && (
+                <span className={FISCAL_STATUS_BADGE[fiscal]} title={fiscalReason || undefined}>
                   {FISCAL_STATUS_LABEL[fiscal]}
                 </span>
               )}
@@ -364,24 +387,38 @@ export function DocumentTable({
                   </td>
                 </tr>
               ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.background = 'var(--hover)';
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.background = 'transparent';
-                    }}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3.5 py-3 align-middle">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                table.getRowModel().rows.map((row) => {
+                  const doc = row.original;
+                  const hasNifProblem =
+                    doc.fiscalStatus === 'NAO_FISCAL' ||
+                    (doc.status === 'EM_REVISAO' && (!doc.supplierNif || /nif|consumidor|civa/i.test(doc.fiscalReason ?? '')));
+
+                  return (
+                    <tr
+                      key={row.id}
+                      style={{
+                        borderBottom: '1px solid var(--border)',
+                        borderLeft: hasNifProblem ? '3px solid #F43F5E' : '3px solid transparent',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = hasNifProblem
+                          ? 'rgba(244, 63, 94, 0.08)'
+                          : 'var(--hover)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.background = hasNifProblem
+                          ? 'rgba(244, 63, 94, 0.03)'
+                          : 'transparent';
+                      }}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="px-3.5 py-3 align-middle">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

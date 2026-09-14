@@ -233,6 +233,41 @@ export function useBulkUpdateDocuments() {
   });
 }
 
+export function useReExtractAllDocuments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await authedFetch(`${API_BASE}/documents/batch/re-extract-all`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as { queuedCount: number; status: string };
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: documentKeys.all });
+    },
+  });
+}
+
+export function useReExtractBatchDocuments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.all(
+        ids.map((id) =>
+          authedFetch(`${API_BASE}/documents/${id}/re-extract`, {
+            method: 'POST',
+          }),
+        ),
+      );
+      return results.length;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: documentKeys.all });
+    },
+  });
+}
+
 // Suppress an unused-import warning from build tools that don't tree-shake
 // the apiClient reference yet (kept for future use as the endpoint set grows).
 void apiClient;

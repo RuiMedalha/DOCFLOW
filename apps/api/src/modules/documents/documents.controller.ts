@@ -198,6 +198,19 @@ export class DocumentsController {
     return this.documents.listFolders(user.tenantId);
   }
 
+  @Post('batch/re-extract-all')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  @ApiOperation({
+    summary: 'Re-run extraction and image enhancement on all active documents for the tenant',
+  })
+  async reExtractAll(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ queuedCount: number; status: string }> {
+    const result = await this.documents.reExtractAll(user.tenantId, user.id);
+    return { queuedCount: result.count, status: 'batch re-extraction queued' };
+  }
+
   // ─────────────────────────────────────────── detail ───────────────────
 
   @Post(':id/approve')

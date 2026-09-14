@@ -8,8 +8,8 @@
  */
 
 import { useState } from 'react';
-import { Folder, Tag, Trash2, X, AlertTriangle } from 'lucide-react';
-import { useBulkUpdateDocuments, useFolders } from './use-documents';
+import { Folder, Tag, Trash2, X, AlertTriangle, RefreshCw } from 'lucide-react';
+import { useBulkUpdateDocuments, useFolders, useReExtractBatchDocuments } from './use-documents';
 
 export function BulkActions({
   selectedIds,
@@ -20,11 +20,20 @@ export function BulkActions({
 }) {
   const folders = useFolders();
   const bulk = useBulkUpdateDocuments();
+  const reExtractBatch = useReExtractBatchDocuments();
   const [folderId, setFolderId] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (selectedIds.length === 0) return null;
+
+  const applyReExtract = () => {
+    reExtractBatch.mutate(selectedIds, {
+      onSuccess: () => {
+        onClear();
+      },
+    });
+  };
 
   const applyFolder = () => {
     if (!folderId) return;
@@ -121,6 +130,17 @@ export function BulkActions({
         </div>
 
         <div className="h-6 w-px" style={{ background: 'var(--border)' }} />
+
+        <button
+          type="button"
+          className="btn-secondary text-xs px-2.5 py-1.5 inline-flex items-center gap-1.5"
+          onClick={applyReExtract}
+          disabled={reExtractBatch.isPending}
+          title="Re-extrair documentos selecionados com o novo motor Sharp e salvaguarda do NIF"
+        >
+          <RefreshCw size={12} className={reExtractBatch.isPending ? 'animate-spin' : ''} />
+          {reExtractBatch.isPending ? 'A processar…' : 'Re-extrair'}
+        </button>
 
         <button
           type="button"

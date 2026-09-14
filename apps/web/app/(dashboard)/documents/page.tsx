@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, Sparkles } from 'lucide-react';
 import type { RowSelectionState } from '@tanstack/react-table';
 import { PageHeader } from '../_components/page-header';
 import { UploadZone } from './_components/upload-zone';
@@ -27,6 +27,7 @@ import { ScannerConfig } from './_components/scanner-config';
 import { EmailConfig } from './_components/email-config';
 import {
   useDocumentsList,
+  useReExtractAllDocuments,
 } from './_components/use-documents';
 import type { DocumentFiltersState, DocumentOrigin } from './_components/types';
 
@@ -74,22 +75,52 @@ export default function DocumentsPage() {
 
   const resetSelection = () => setSelection({});
 
+  const reExtractAll = useReExtractAllDocuments();
+  const handleReprocessAll = async () => {
+    if (
+      !window.confirm(
+        'Deseja reprocessar todos os documentos existentes com o novo motor Sharp e salvaguarda do NIF da empresa?\n\nIsto irá atualizar os PDFs de arquivo, endireitar fotografias e recalcular a certeza fiscal de cada documento.',
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await reExtractAll.mutateAsync();
+      alert(`Reprocessamento em lote iniciado para ${res.queuedCount} documento(s)!`);
+      refetch();
+    } catch {
+      alert('Falha ao iniciar o reprocessamento em lote.');
+    }
+  };
+
   return (
     <>
       <PageHeader
         title="Documentos"
         subtitle="Inbox documental com extração IA — faturas, recibos e notas."
         actions={
-          <button
-            type="button"
-            className="btn-secondary text-sm"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            aria-label="Atualizar lista"
-          >
-            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-            Atualizar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary text-sm inline-flex items-center gap-1.5"
+              onClick={handleReprocessAll}
+              disabled={reExtractAll.isPending || isFetching}
+              title="Reprocessar todos os documentos com Sharp e salvaguarda fiscal"
+            >
+              <Sparkles size={14} className={reExtractAll.isPending ? 'animate-spin' : ''} />
+              {reExtractAll.isPending ? 'A reprocessar…' : 'Reprocessar Todos'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm inline-flex items-center gap-1.5"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              aria-label="Atualizar lista"
+            >
+              <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+              Atualizar
+            </button>
+          </div>
         }
       />
 

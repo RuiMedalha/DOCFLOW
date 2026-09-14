@@ -1658,6 +1658,36 @@ export class DocumentsService {
     return existing;
   }
 
+  /**
+   * Dispara a re-extração em lote de todos os documentos ativos do tenant.
+   * Aplica o novo pipeline Sharp e a validação do NIF da empresa.
+   */
+  async reExtractAll(tenantId: string, userId: string) {
+    const docs = await this.prisma.document.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { not: DocumentStatus.ARQUIVADO },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    this.logger.log(`[reExtractAll] A enfileirar re-extração de ${docs.length} documentos (tenant=${tenantId})`);
+
+    let count = 0;
+    for (const doc of docs) {
+      try {
+        await this.reExtract(tenantId, userId, doc.id);
+        count++;
+      } catch (err) {
+        this.logger.warn(`[reExtractAll] Falha ao enfileirar doc=${doc.id}: ${(err as Error).message}`);
+      }
+    }
+
+    return { count };
+  }
+
   // ───────────────────────────────────────── correct-supplier ─────────────
 
   /**

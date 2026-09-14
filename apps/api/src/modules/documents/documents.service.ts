@@ -77,6 +77,8 @@ import { ImageEnhancerService } from '../extraction/image-enhancer.service';
 import { isHeic, normaliseHeic } from '../../common/images/heic';
 import { assertMimeMatchesSignature } from '../../common/validation/mime-validator';
 import { NifLookupService } from '../nif-lookup/nif-lookup.service';
+import { getTenantIdentity } from '../ai/tenant-identity';
+import { validateTenantAcquirerNif } from '../extraction/field-validation';
 
 export interface UploadedFile {
   fieldname: string;
@@ -667,7 +669,72 @@ export class DocumentsService {
       },
     });
     if (!doc) throw new NotFoundException('Document not found');
-    return this.sanitize(doc);
+    const sanitized = this.sanitize(doc);
+    return await this.enrichLegacyCertaintyWithTenantNif(tenantId, sanitized);
+  }
+
+  /**
+   * Retrocompatibilidade para documentos legados (já carregados antes da introdução
+   * da salvaguarda do NIF da empresa): caso o documento tenha sido extraído sem o
+   * campo `tenantNifValidation` nos metadados, avalia dinamicamente o NIF da empresa
+   * para assegurar que faturas sem NIF ou com NIF de terceiro não são exibidas
+   * indevidamente como "Oficial AT (99.9%)" ou dedutíveis.
+   */
+  private async enrichLegacyCertaintyWithTenantNif(tenantId: string, doc: any) {
+    if (!doc || !doc.metadata || typeof doc.metadata !== 'object') return doc;
+    const metadata = doc.metadata as Record<string, any>;
+    const extraction = metadata.extraction as Record<string, any> | undefined;
+    if (!extraction) return doc;
+
+    const certainty = extraction.certainty as Record<string, any> | undefined;
+    if (certainty && !certainty.tenantNifValidation) {
+      try {
+        const tenantIdRecord = await getTenantIdentity(this.prisma, tenantId);
+        if (tenantIdRecord?.tenantNif) {
+          const tenantNifValidation = validateTenantAcquirerNif({
+            customerNif: doc.customerNif,
+            tenantNif: tenantIdRecord.tenantNif,
+            qrPayload: doc.qrPayload,
+          });
+          certainty.tenantNifValidation = tenantNifValidation;
+
+          if (!tenantNifValidation.isOfficialDocument) {
+            certainty.needsReview = true;
+            if (tenantNifValidation.status === 'MISMATCH_THIRD_PARTY') {
+              certainty.score = Math.min(Number(certainty.score) || 45, 45.0);
+              certainty.level = 'CRITICAL';
+              certainty.label = `${certainty.score.toFixed(1)}% · NIF de Terceiro (Não Pertence à Empresa)`;
+              doc.fiscalStatus = 'NAO_FISCAL';
+              doc.fiscalReason = tenantNifValidation.warning;
+              doc.isNonFiscalDoc = true;
+            } else {
+              certainty.score = Math.min(Number(certainty.score) || 70, 70.0);
+              certainty.level = 'REVIEW_REQUIRED';
+              certainty.label = `${certainty.score.toFixed(1)}% · Sem NIF da Empresa (Não Oficial / Não Dedutível)`;
+              if (doc.fiscalStatus === 'FISCAL') {
+                doc.fiscalStatus = 'DUVIDOSO';
+                doc.fiscalReason = tenantNifValidation.warning;
+              }
+            }
+            if (tenantNifValidation.warning && !certainty.warnings?.includes(tenantNifValidation.warning)) {
+              certainty.warnings = [tenantNifValidation.warning, ...(certainty.warnings || [])];
+            }
+          } else {
+            if (tenantNifValidation.passedCheck && !certainty.passedChecks?.includes(tenantNifValidation.passedCheck)) {
+              certainty.passedChecks = [...(certainty.passedChecks || []), tenantNifValidation.passedCheck];
+            }
+          }
+          extraction.certainty = certainty;
+          extraction.certaintyScore = certainty.score;
+          extraction.certaintyLevel = certainty.level;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[enrichLegacyCertaintyWithTenantNif] failed for doc=${doc.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return doc;
   }
 
   /**
